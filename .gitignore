@@ -1,0 +1,42 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies & Build
+node_modules
+dist
+dist-ssr
+demo-records
+
+# Environment variables (never commit!)
+.env
+.env.local
+.env.*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# IDE
+*.iml
+.code-workspace
+
+# OS
+Thumbs.db
+.Spotlight-V100
+.Trashes
+
+# Misc
+*.pem
