@@ -541,6 +541,11 @@ const App: React.FC = () => {
                     <audio ref={audioRef} src={audioUrl ?? undefined} controls className="w-full" />
                   </div>
 
+                  {lyrics.modelName && (
+                    <p className="mt-3 text-right text-xs font-bold text-gray-400">
+                      model: {lyrics.modelName}
+                    </p>
+                  )}
                 </>
               ) : null}
             </div>
