@@ -73,7 +73,9 @@
 ├── components/
 │   └── PaintCanvas.tsx     # 描画キャンバスコンポーネント
 ├── services/
-│   └── geminiService.ts    # Gemini API クライアント
+│   └── geminiService.ts    # Gemini 生成 API の呼び出し
+├── server/
+│   └── geminiMiddleware.ts # Gemini API キーをサーバー側で扱う middleware
 ├── vite.config.ts          # Vite 設定
 ├── tsconfig.json           # TypeScript 設定
 ├── .env.local.example      # 環境変数テンプレート
@@ -143,11 +145,13 @@ cp .env.local.example .env.local
 - `.env.local` ファイルは `.gitignore` に登録済み
 - GitHub にアップロードする前に、必ず API キーを `.env.local` から削除
 - `.env.local.example` にはプレースホルダーのみを保持
+- Gemini API キーはブラウザ向け JS に埋め込まず、Vite middleware 側でのみ読み込みます
 
 ### 本番環境での注意
 
 - 本番環境では、環境変数を安全に管理する仕組みを構築してください
 - API キーは絶対にコード内にハードコードしないでください
+- 静的ホスティングに配置する場合は、`/api/gemini/generate-ekaki-uta` 相当のサーバー API を別途用意してください
 
 ---
 

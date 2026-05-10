@@ -4,6 +4,7 @@ import { promises as fs } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+import { createGeminiMiddleware } from "./server/geminiMiddleware";
 
 const MAX_RECORD_REQUEST_BYTES = 100 * 1024 * 1024;
 const DEFAULT_DEMO_RECORDS_DIR = path.resolve(process.cwd(), "demo-records");
@@ -353,20 +354,17 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       {
-        name: "demo-record-saver",
+        name: "local-api",
         configureServer(server) {
+          server.middlewares.use(createGeminiMiddleware(env));
           server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir));
         },
         configurePreviewServer(server) {
+          server.middlewares.use(createGeminiMiddleware(env));
           server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir));
         },
       },
     ],
-    define: {
-      "process.env.GEMINI_API_KEY": JSON.stringify(env.GEMINI_API_KEY),
-      "process.env.GEMINI_MODEL": JSON.stringify(env.GEMINI_MODEL),
-      "process.env.GEMINI_MODEL_SUB": JSON.stringify(env.GEMINI_MODEL_SUB),
-    },
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "."),

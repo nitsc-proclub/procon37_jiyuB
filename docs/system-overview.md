@@ -45,6 +45,8 @@ npm run type-check
 ├── vite.config.ts
 ├── components/
 │   └── PaintCanvas.tsx
+├── server/
+│   └── geminiMiddleware.ts
 ├── services/
 │   ├── geminiService.ts
 │   ├── melodyService.ts
@@ -63,7 +65,8 @@ npm run type-check
 | `App.tsx` | アプリ全体の状態管理、生成処理の流れ、画面表示 |
 | `components/PaintCanvas.tsx` | 描画キャンバス、年齢入力、生成ボタン |
 | `types.ts` | 描画データ、歌詞、楽譜データの型定義 |
-| `services/geminiService.ts` | Gemini API との通信 |
+| `server/geminiMiddleware.ts` | Gemini API キー管理、Gemini SDK 呼び出し、歌詞生成 API |
+| `services/geminiService.ts` | フロントエンドからローカル Gemini 生成 API を呼び出す |
 | `services/melodyService.ts` | 歌詞から VOICEVOX 用の楽譜データを作成 |
 | `services/voicevoxService.ts` | VOICEVOX Engine との通信 |
 | `services/demoRecordService.ts` | 生成結果保存 API の呼び出し |
@@ -97,14 +100,11 @@ GEMINI_MODEL_SUB=gemini-2.5-flash-lite
 | `GEMINI_MODEL_SUB` | 高負荷時などに使う予備モデル |
 | `DEMO_RECORDS_DIR` | 保存先ディレクトリを変更したい場合に使う任意設定 |
 
-`vite.config.ts` で `loadEnv` した値を、フロントエンドの `process.env.*` として埋め込んでいます。
+Gemini API キーとモデル名は `vite.config.ts` で `loadEnv` し、`server/geminiMiddleware.ts` に渡します。
+フロントエンドのビルド成果物には `GEMINI_API_KEY` を埋め込みません。
 
 ```ts
-define: {
-  "process.env.GEMINI_API_KEY": JSON.stringify(env.GEMINI_API_KEY),
-  "process.env.GEMINI_MODEL": JSON.stringify(env.GEMINI_MODEL),
-  "process.env.GEMINI_MODEL_SUB": JSON.stringify(env.GEMINI_MODEL_SUB),
-}
+server.middlewares.use(createGeminiMiddleware(env));
 ```
 
 ## 5. アプリ全体の処理フロー
@@ -179,12 +179,12 @@ VOICEVOX から返ってきた音声は `Blob` です。
 
 ### 7.1 Gemini
 
-Gemini 連携は `services/geminiService.ts` にまとまっています。
+Gemini 連携は、フロントエンドの `services/geminiService.ts` とサーバー側の `server/geminiMiddleware.ts` に分かれています。
 
 主な役割は以下です。
 
-- API key とモデル名を環境変数から読む
-- 描画データを Gemini に送る
+- `services/geminiService.ts` は `/api/gemini/generate-ekaki-uta` に描画データを送る
+- `server/geminiMiddleware.ts` は API key とモデル名を環境変数から読み、Gemini SDK を呼び出す
 - JSON schema 付きで返答形式を制御する
 - 高負荷系エラーの場合に予備モデルへ fallback する
 - 返ってきた JSON を `LyricsResponse` として扱う
@@ -264,10 +264,12 @@ middleware は開発サーバーと preview サーバーの両方に追加され
 
 ```ts
 configureServer(server) {
+  server.middlewares.use(createGeminiMiddleware(env));
   server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir));
 }
 
 configurePreviewServer(server) {
+  server.middlewares.use(createGeminiMiddleware(env));
   server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir));
 }
 ```
