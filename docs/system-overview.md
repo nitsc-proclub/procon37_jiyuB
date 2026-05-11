@@ -1,16 +1,28 @@
-# システム全体ドキュメント
+﻿# システム全体ドキュメント
 
-このドキュメントでは、絵かき歌の生成アルゴリズム以外の、プロジェクト全体の技術構成・実行フロー・外部サービス連携・保存処理をまとめます。
+このドキュメントは、お絵かき歌メーカーの構成、データの流れ、外部サービス連携、保存処理をまとめたものです。絵から歌詞を作る詳細は `docs/ekaki-uta-generation.md` も参照してください。
 
-絵から歌詞を作る方法、歌詞から歌声を作る方法の詳細は `docs/ekaki-uta-generation.md` を参照してください。
+## 1. 概要
 
-## 1. プロジェクト概要
+お絵かき歌メーカーは、ブラウザ上で描いた絵から日本語のお絵かき歌を生成し、歌声として再生する React アプリです。
 
-このプロジェクトは、ブラウザ上で絵を描き、その絵をもとに歌詞と歌声を生成する Web アプリです。
+主な流れは以下です。
 
-アプリ本体は React で実装されています。開発サーバーとビルドには Vite を使います。
-
-外部サービスとして、歌詞生成に Gemini、歌声合成に VOICEVOX Engine を使います。
+```txt
+ユーザーが絵を描く
+  ↓
+DrawingData を作成する
+  ↓
+Gemini で歌詞を生成する
+  ↓
+歌詞から SingingScore を作る
+  ↓
+VOICEVOX Engine で歌声を合成する
+  ↓
+歌詞と音声を表示する
+  ↓
+必要に応じて demo-records に保存する
+```
 
 ## 2. 技術スタック
 
@@ -22,192 +34,116 @@
 | AI API | Google Gemini API |
 | Gemini SDK | `@google/genai` |
 | 歌声合成 | VOICEVOX Engine |
-| 保存 API | Vite middleware |
-| 保存先 | ローカルの `demo-records` ディレクトリ |
+| ローカル API | Vite middleware |
+| 保存先 | `demo-records` |
 
-主な npm script は以下です。
-
-```bash
-npm run dev
-npm run build
-npm run preview
-npm run type-check
-```
-
-## 3. ディレクトリ構成
-
-```txt
-.
-├── App.tsx
-├── index.tsx
-├── index.html
-├── types.ts
-├── vite.config.ts
-├── components/
-│   └── PaintCanvas.tsx
-├── server/
-│   └── geminiMiddleware.ts
-├── services/
-│   ├── geminiService.ts
-│   ├── melodyService.ts
-│   ├── voicevoxService.ts
-│   └── demoRecordService.ts
-├── docs/
-│   ├── ekaki-uta-generation.md
-│   └── system-overview.md
-└── demo-records/
-```
-
-主な役割は以下です。
+## 3. 主要ファイル
 
 | ファイル | 役割 |
 | --- | --- |
-| `App.tsx` | アプリ全体の状態管理、生成処理の流れ、画面表示 |
-| `components/PaintCanvas.tsx` | 描画キャンバス、年齢入力、生成ボタン |
-| `types.ts` | 描画データ、歌詞、楽譜データの型定義 |
-| `server/geminiMiddleware.ts` | Gemini API キー管理、Gemini SDK 呼び出し、歌詞生成 API |
-| `services/geminiService.ts` | フロントエンドからローカル Gemini 生成 API を呼び出す |
-| `services/melodyService.ts` | 歌詞から VOICEVOX 用の楽譜データを作成 |
-| `services/voicevoxService.ts` | VOICEVOX Engine との通信 |
-| `services/demoRecordService.ts` | 生成結果保存 API の呼び出し |
-| `vite.config.ts` | Vite 設定、VOICEVOX proxy、保存用 middleware |
+| `App.tsx` | アプリ全体の状態管理、生成処理、画面表示 |
+| `components/PaintCanvas.tsx` | キャンバス描画、ストローク収集、生成ボタン |
+| `types.ts` | 描画、歌詞、楽譜、デモ保存の型定義 |
+| `services/geminiService.ts` | フロントエンドから Gemini middleware を呼び出す |
+| `server/geminiMiddleware.ts` | Gemini API キー管理、プロンプト作成、JSON schema 指定 |
+| `services/melodyService.ts` | 歌詞から VOICEVOX 用の `SingingScore` を作る |
+| `services/voicevoxService.ts` | VOICEVOX Engine と通信して歌声を合成する |
+| `services/voicevoxAccentService.ts` | VOICEVOX のアクセント解析を扱う |
+| `services/demoRecordService.ts` | 生成結果保存 API を呼び出す |
+| `vite.config.ts` | Vite 設定、VOICEVOX proxy、Gemini/demo-records middleware |
 
-## 4. 実行環境
+## 4. データ型
 
-### 4.1 必要なもの
-
-- Node.js
-- npm
-- Gemini API key
-- VOICEVOX Engine
-
-VOICEVOX Engine は、通常 `http://127.0.0.1:50021` で起動している必要があります。
-
-### 4.2 環境変数
-
-`.env.local.example` には以下の値があります。
-
-```env
-GEMINI_API_KEY=your_api_key_here
-GEMINI_MODEL=gemini-3-flash-preview
-GEMINI_MODEL_SUB=gemini-2.5-flash-lite
-```
-
-| 変数 | 用途 |
-| --- | --- |
-| `GEMINI_API_KEY` | Gemini API の認証キー |
-| `GEMINI_MODEL` | 通常使う Gemini モデル |
-| `GEMINI_MODEL_SUB` | 高負荷時などに使う予備モデル |
-| `DEMO_RECORDS_DIR` | 保存先ディレクトリを変更したい場合に使う任意設定 |
-
-Gemini API キーとモデル名は `vite.config.ts` で `loadEnv` し、`server/geminiMiddleware.ts` に渡します。
-フロントエンドのビルド成果物には `GEMINI_API_KEY` を埋め込みません。
+描画データは `types.ts` で定義されています。
 
 ```ts
-server.middlewares.use(createGeminiMiddleware(env));
+export interface Point {
+  x: number;
+  y: number;
+  timestamp: number;
+}
+
+export interface Stroke {
+  points: Point[];
+  startTime: number;
+  endTime: number;
+}
+
+export interface DrawingData {
+  strokes: Stroke[];
+  imageUri: string;
+}
 ```
 
-## 5. アプリ全体の処理フロー
-
-ユーザー操作から音声再生までの大まかな流れは以下です。
-
-```txt
-ユーザーがキャンバスに絵を描く
-  ↓
-PaintCanvas が DrawingData を作る
-  ↓
-App.handleComplete が生成処理を開始する
-  ↓
-Gemini で歌詞を生成する
-  ↓
-歌詞から SingingScore を作る
-  ↓
-VOICEVOX Engine で歌声を合成する
-  ↓
-音声 Blob から object URL を作る
-  ↓
-audio 要素で再生する
-  ↓
-必要に応じて demo-records に保存する
-```
-
-`App.tsx` の `handleComplete` が、この一連の処理の中心です。
-
-処理中は `isGenerating`、`progressValue`、`progressLabel` を更新し、画面上に進捗を表示します。
-
-## 6. フロントエンド構成
-
-### 6.1 状態管理
-
-状態管理には React の `useState` と `useRef` を使っています。
-
-`App.tsx` が持つ主な状態は以下です。
-
-| state | 内容 |
-| --- | --- |
-| `lyrics` | 生成された歌詞 |
-| `error` | エラーメッセージ |
-| `isGenerating` | 生成中かどうか |
-| `audioUrl` | 再生用の音声 URL |
-| `shouldAutoplay` | 生成後に自動再生するか |
-| `progressValue` | 進捗率 |
-| `progressLabel` | 進捗メッセージ |
-| `saveToast` | 保存結果の通知 |
-| `participantAge` | 参加者の年齢 |
-| `isDataSavingEnabled` | 生成結果を保存するか |
-
-### 6.2 音声 URL の管理
-
-VOICEVOX から返ってきた音声は `Blob` です。
-
-ブラウザで再生するため、`URL.createObjectURL` で一時 URL を作ります。
-
-古い Blob URL は `URL.revokeObjectURL` で解放するようになっています。
-
-### 6.3 画面構成
-
-画面は大きく2カラムです。
-
-| 領域 | 内容 |
-| --- | --- |
-| 左側 | 描画キャンバス、年齢入力、生成ボタン、クリアボタン |
-| 右側 | 生成中の進捗、完成した歌詞、音声プレイヤー |
-
-生成中は右側に進捗バーを表示し、完了後は歌詞と audio controls を表示します。
-
-## 7. 外部サービス連携
-
-### 7.1 Gemini
-
-Gemini 連携は、フロントエンドの `services/geminiService.ts` とサーバー側の `server/geminiMiddleware.ts` に分かれています。
-
-主な役割は以下です。
-
-- `services/geminiService.ts` は `/api/gemini/generate-ekaki-uta` に描画データを送る
-- `server/geminiMiddleware.ts` は API key とモデル名を環境変数から読み、Gemini SDK を呼び出す
-- JSON schema 付きで返答形式を制御する
-- 高負荷系エラーの場合に予備モデルへ fallback する
-- 返ってきた JSON を `LyricsResponse` として扱う
-
-生成方法の詳細は `docs/ekaki-uta-generation.md` に分けています。
-
-### 7.2 VOICEVOX Engine
-
-VOICEVOX 連携は `services/voicevoxService.ts` にまとまっています。
-
-開発時は Vite proxy 経由で `/voicevox` に送ります。
+歌詞生成の結果は `LyricsResponse` です。
 
 ```ts
-const DEV_VOICEVOX_BASE_URL = "/voicevox";
+export interface LyricsResponse {
+  title: string;
+  lines: string[];
+  singingKanaLines?: string[];
+  identifiedObject: string;
+  modelName?: string;
+}
 ```
 
-本番モードでは直接 `http://127.0.0.1:50021` に送ります。
+歌声合成には `SingingScore` を使います。
 
 ```ts
-const PROD_VOICEVOX_BASE_URL = "http://127.0.0.1:50021";
+export interface SingingNote {
+  lyric: string;
+  key: number | null;
+  frame_length: number;
+}
+
+export interface SingingScore {
+  notes: SingingNote[];
+}
 ```
 
-VOICEVOX API への送信は2段階です。
+## 5. 描画処理
+
+`PaintCanvas` は、マウスまたはタッチ操作でキャンバス上の座標を記録します。
+
+- ペンを置いた時点で現在のストロークを開始
+- 移動中に `Point` を追加
+- ペンを離した時点で `Stroke` として確定
+- 生成時にキャンバスを `image/png` の Data URI に変換
+
+生成時に `App.tsx` に渡される値は以下です。
+
+```ts
+{
+  strokes,
+  imageUri
+}
+```
+
+## 6. Gemini 連携
+
+フロントエンドは `services/geminiService.ts` から `/api/gemini/generate-ekaki-uta` に `DrawingData` を送ります。
+
+サーバー側の `server/geminiMiddleware.ts` は以下を行います。
+
+- `.env.local` から Gemini API キーとモデル名を読む
+- `DrawingData.imageUri` から base64 画像を取り出す
+- 各ストロークを bounding box と duration に要約する
+- 完成画像とストローク要約を Gemini に送る
+- JSON schema で `LyricsResponse` の形を指定する
+- 高負荷系エラー時は `GEMINI_MODEL_SUB` にフォールバックする
+
+## 7. 歌声合成
+
+`melodyService` は `LyricsResponse.singingKanaLines` をもとに `SingingScore` を作成します。
+
+現在の実装では、各歌詞行を固定長のフレーズとして扱います。
+
+- 1 行あたり `PHRASE_LENGTH = 330`
+- 先頭に短い休符を追加
+- 各モーラに音高と長さを割り当てる
+- 最終行の末尾には終止感のある音型を適用する
+
+`voicevoxService` は `SingingScore` を VOICEVOX Engine に送り、2 段階で音声を生成します。
 
 ```txt
 POST /sing_frame_audio_query?speaker=6000
@@ -217,176 +153,43 @@ POST /frame_synthesis?speaker=3003
 音声 Blob
 ```
 
-`speaker=6000` は歌唱クエリ作成用、`speaker=3003` はフレーム合成用として使われています。
+開発環境では Vite proxy により `/voicevox` が `http://127.0.0.1:50021` に転送されます。
 
-### 7.3 Vite proxy
+## 8. 保存処理
 
-ブラウザから直接 `127.0.0.1:50021` にアクセスすると CORS や Origin の問題が出る場合があります。
+保存が有効な場合、生成完了後またはエラー発生後に `demoRecordService.saveDemoRecord` が呼ばれます。
 
-開発時は `vite.config.ts` の proxy 設定で、`/voicevox` へのリクエストを VOICEVOX Engine に転送します。
-
-```ts
-"/voicevox" -> "http://127.0.0.1:50021"
-```
-
-proxy では `Origin` ヘッダーも `http://127.0.0.1:50021` に合わせています。
-
-## 8. 生成結果の保存
-
-### 8.1 保存の入口
-
-保存処理のフロント側は `services/demoRecordService.ts` です。
-
-生成完了後、または生成エラー後に、`App.tsx` から `saveDemoRecord` を呼びます。
-
-送信先は以下です。
-
-```http
-POST /api/demo-records
-Content-Type: application/json
-```
-
-送る payload は以下です。
-
-```ts
-{
-  imageDataUri: drawingData.imageUri,
-  audioDataUri: audioBlob ? await blobToDataUri(audioBlob) : null,
-  metadata
-}
-```
-
-### 8.2 保存 API の実体
-
-`/api/demo-records` は独立したバックエンドではなく、`vite.config.ts` に定義された Vite middleware です。
-
-middleware は開発サーバーと preview サーバーの両方に追加されています。
-
-```ts
-configureServer(server) {
-  server.middlewares.use(createGeminiMiddleware(env));
-  server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir));
-}
-
-configurePreviewServer(server) {
-  server.middlewares.use(createGeminiMiddleware(env));
-  server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir));
-}
-```
-
-### 8.3 保存先
-
-デフォルトでは、プロジェクトルートの `demo-records` に保存します。
-
-保存先を変更したい場合は、環境変数 `DEMO_RECORDS_DIR` を使います。
-
-### 8.4 保存されるファイル
-
-1回の生成ごとに、`demo-records` 内にディレクトリが作られます。
-
-ディレクトリ名には以下が含まれます。
-
-- 保存日時
-- 成功またはエラー
-- 歌詞タイトル
-- ランダム ID
-
-保存されるファイルは以下です。
+保存される主な内容は以下です。
 
 | ファイル | 内容 |
 | --- | --- |
-| `input.png` | 入力画像 |
-| `voice.wav` / `voice.mp3` / `voice.ogg` | 生成音声。MIME type によって拡張子が変わる |
-| `metadata.json` | 歌詞、ストローク、楽譜、エラー、年齢、モデル名など |
+| `input.png` | 入力された完成画像 |
+| `voice.wav` など | 生成された歌声 |
+| `metadata.json` | 歌詞、ストローク、楽譜、エラー、参加者年齢、モデル名など |
 
-保存 API は最大リクエストサイズを `100MB` に制限しています。
-
-```ts
-const MAX_RECORD_REQUEST_BYTES = 100 * 1024 * 1024;
-```
+`demo-records` の読み書き API は `vite.config.ts` 内の middleware として実装されています。
 
 ## 9. エラーハンドリング
 
-### 9.1 Gemini
+Gemini では主に以下を扱います。
 
-Gemini で主に扱っているエラーは以下です。
+- API key 未設定
+- quota / 429
+- network / fetch
+- 503 / high demand / overloaded
 
-| 種類 | 対応 |
-| --- | --- |
-| API key 未設定 | ユーザー向けエラーを出す |
-| 429 / quota | 利用制限のエラーとして扱う |
-| network / fetch | ネットワークエラーとして扱う |
-| 503 / high demand / overloaded | 予備モデルがあれば fallback する |
+VOICEVOX では、Engine 未起動や HTTP エラーをユーザー向けメッセージに変換します。
 
-### 9.2 VOICEVOX
+保存処理は失敗しても生成結果自体は画面に残します。保存失敗は toast と開発コンソールで通知します。
 
-VOICEVOX Engine に接続できない場合は、`fetch` が `TypeError` になるため、VOICEVOX Engine の起動確認を促すエラーに変換します。
+## 10. 今後の同期機能の入り口
 
-また、HTTP response が `ok` でない場合は、ステータスコードと response text を含めてエラーにします。
+歌詞に同期して描画軌跡を再生する機能を追加する場合、現状の自然な拡張点は以下です。
 
-### 9.3 保存処理
+- `Stroke` を前処理して `StrokeGroup` を作る
+- Gemini に raw stroke ではなく stroke group の要約を渡す
+- `LyricsResponse` に歌詞行と stroke group の対応表を追加する
+- `SingingScore` の frame 数から歌詞行ごとの再生区間を計算する
+- audio の `timeupdate` に合わせて対応 stroke group を描画する
 
-保存に失敗しても、歌詞や音声の生成結果自体は画面に残ります。
-
-保存失敗時は toast で通知し、開発環境では console に詳細を出します。
-
-## 10. データの流れ
-
-主要なデータ型の流れは以下です。
-
-```txt
-DrawingData
-  ↓ Gemini
-LyricsResponse
-  ↓ melodyService
-SingingScore
-  ↓ VOICEVOX
-Blob
-  ↓ URL.createObjectURL
-audioUrl
-```
-
-保存時は、これらの一部をまとめて `metadata.json` に残します。
-
-```txt
-DrawingData
-LyricsResponse
-SingingScore
-audioBlob
-error
-participantAge
-aiModel
-```
-
-## 11. 開発時の注意点
-
-### 11.1 VOICEVOX Engine を起動しておく
-
-歌声合成にはローカルの VOICEVOX Engine が必要です。
-
-開発時は Vite の proxy を使いますが、転送先である `127.0.0.1:50021` の VOICEVOX Engine は別途起動しておく必要があります。
-
-### 11.2 API key は `.env.local` に置く
-
-Gemini API key は `.env.local` に置きます。
-
-`.env.local` は `.gitignore` に入っているため、通常は Git 管理されません。
-
-### 11.3 一部ファイルに文字化けがある
-
-現状のソースコードや README には、一部日本語文字列が文字化けしている箇所があります。
-
-処理の構造自体は読み取れますが、UI 表示文言やエラーメッセージを整備する場合は、文字コードまたは元文言の復元が必要です。
-
-### 11.4 保存 API は Vite middleware
-
-`/api/demo-records` は本番用の独立 API サーバーではありません。
-
-Vite dev / preview では動きますが、静的ホスティングにそのまま置くだけでは保存 API は動きません。
-
-本番運用で保存機能を使う場合は、別途 API サーバーや serverless function などに移す必要があります。
-
-## 12. 関連ドキュメント
-
-- `docs/ekaki-uta-generation.md`: 絵から歌詞を作り、歌詞から歌声を作る生成方法の詳細
-- `README.md`: セットアップや基本的な開発コマンド
+既存の「完成画像 + ストローク要約で歌詞を作る」構造を保ったまま追加できます。
