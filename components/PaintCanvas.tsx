@@ -1,5 +1,6 @@
 
 import React, { useRef, useEffect, useState } from 'react';
+import DrawingPlaybackCanvas, { DrawingDisplayMode } from './DrawingPlaybackCanvas';
 import { Point, Stroke, DrawingData } from '../types';
 
 interface PaintCanvasProps {
@@ -10,6 +11,11 @@ interface PaintCanvasProps {
   onAgeChange: React.Dispatch<React.SetStateAction<number | null>>;
   isAgeSelectorVisible: boolean;
   initialDrawing?: DrawingData | null;
+  playbackDrawing?: DrawingData | null;
+  playbackAudioRef?: React.RefObject<HTMLAudioElement | null>;
+  playbackDisplayMode?: DrawingDisplayMode;
+  playbackAnimationEndProgress?: number;
+  isPlaybackActive?: boolean;
 }
 
 const MIN_AGE = 0;
@@ -25,6 +31,11 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   onAgeChange,
   isAgeSelectorVisible,
   initialDrawing,
+  playbackDrawing,
+  playbackAudioRef,
+  playbackDisplayMode = "animated",
+  playbackAnimationEndProgress = 1,
+  isPlaybackActive = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -38,6 +49,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const lastPointRef = useRef<Point | null>(null);
   const repeatTimerRef = useRef<number | null>(null);
   const repeatIntervalRef = useRef<number | null>(null);
+  const isCanvasLocked = isGenerating || isPlaybackActive;
 
   const setupCanvas = () => {
     const canvas = canvasRef.current;
@@ -164,7 +176,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
-    if (isGenerating) return;
+    if (isCanvasLocked) return;
     if ('button' in e && e.button !== 0) return;
     e.preventDefault();
     const point = getCoordinates(e);
@@ -175,7 +187,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const draw = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isDrawing || isGenerating) return;
+    if (!isDrawing || isCanvasLocked) return;
     e.preventDefault();
     const point = getCoordinates(e);
     const canvas = canvasRef.current!;
@@ -193,6 +205,12 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const endDrawing = () => {
     if (!isDrawing) return;
     setIsDrawing(false);
+
+    if (isCanvasLocked || currentStrokeRef.current.length === 0) {
+      currentStrokeRef.current = [];
+      lastPointRef.current = null;
+      return;
+    }
     
     const newStroke: Stroke = {
       points: [...currentStrokeRef.current],
@@ -223,7 +241,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const handleClear = () => {
-    if (isGenerating) return;
+    if (isCanvasLocked) return;
     setIsClearConfirmOpen(true);
   };
 
@@ -241,7 +259,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const handleGenerate = () => {
-    if (strokes.length === 0 || isGenerating) return;
+    if (strokes.length === 0 || isCanvasLocked) return;
 
     if (hasGeneratedSong) {
       setIsGenerateConfirmOpen(true);
@@ -256,7 +274,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const handleUndo = () => {
-    if (isGenerating || strokes.length === 0) return;
+    if (isCanvasLocked || strokes.length === 0) return;
 
     const nextStrokes = strokes.slice(0, -1);
     const undoneStroke = strokes[strokes.length - 1];
@@ -266,7 +284,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const handleRedo = () => {
-    if (isGenerating || undoneStrokes.length === 0) return;
+    if (isCanvasLocked || undoneStrokes.length === 0) return;
 
     const redoneStroke = undoneStrokes[0];
     const nextStrokes = [...strokes, redoneStroke];
@@ -296,7 +314,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [strokes, undoneStrokes, isGenerating, isClearConfirmOpen, isGenerateConfirmOpen]);
+  }, [strokes, undoneStrokes, isCanvasLocked, isClearConfirmOpen, isGenerateConfirmOpen]);
 
   useEffect(() => {
     if (!isClearConfirmOpen && !isGenerateConfirmOpen) return;
@@ -313,6 +331,16 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isClearConfirmOpen, isGenerateConfirmOpen]);
 
+  useEffect(() => {
+    if (!isPlaybackActive) return;
+
+    setIsDrawing(false);
+    currentStrokeRef.current = [];
+    lastPointRef.current = null;
+    setIsClearConfirmOpen(false);
+    setIsGenerateConfirmOpen(false);
+  }, [isPlaybackActive]);
+
   const stopRepeatingAgeChange = () => {
     if (repeatTimerRef.current !== null) {
       window.clearTimeout(repeatTimerRef.current);
@@ -326,7 +354,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const changeAge = (delta: number) => {
-    if (isGenerating) return;
+    if (isCanvasLocked) return;
     onAgeChange((currentAge) => {
       if (currentAge === null) {
         return delta > 0 ? 1 : 0;
@@ -337,7 +365,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const startRepeatingAgeChange = (delta: number) => {
-    if (isGenerating) return;
+    if (isCanvasLocked) return;
 
     stopRepeatingAgeChange();
     changeAge(delta);
@@ -356,10 +384,10 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   useEffect(() => {
-    if (!isAgeSelectorVisible || isGenerating) {
+    if (!isAgeSelectorVisible || isCanvasLocked) {
       stopRepeatingAgeChange();
     }
-  }, [isAgeSelectorVisible, isGenerating]);
+  }, [isAgeSelectorVisible, isCanvasLocked]);
 
   const ageSelector = (
     <div className="flex w-full flex-row flex-wrap items-stretch justify-center gap-2 md:w-28 md:flex-col md:flex-nowrap md:self-start">
@@ -369,7 +397,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         onPointerUp={stopRepeatingAgeChange}
         onPointerCancel={stopRepeatingAgeChange}
         onPointerLeave={stopRepeatingAgeChange}
-        disabled={isGenerating || age === MAX_AGE}
+        disabled={isCanvasLocked || age === MAX_AGE}
         className="flex h-14 w-16 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
         title="年齢を10上げる"
       >
@@ -381,7 +409,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         onPointerUp={stopRepeatingAgeChange}
         onPointerCancel={stopRepeatingAgeChange}
         onPointerLeave={stopRepeatingAgeChange}
-        disabled={isGenerating || age === MAX_AGE}
+        disabled={isCanvasLocked || age === MAX_AGE}
         className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
         title="年齢を上げる"
       >
@@ -397,7 +425,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         onPointerUp={stopRepeatingAgeChange}
         onPointerCancel={stopRepeatingAgeChange}
         onPointerLeave={stopRepeatingAgeChange}
-        disabled={isGenerating || age === MIN_AGE}
+        disabled={isCanvasLocked || age === MIN_AGE}
         className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
         title="年齢を下げる"
       >
@@ -409,7 +437,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         onPointerUp={stopRepeatingAgeChange}
         onPointerCancel={stopRepeatingAgeChange}
         onPointerLeave={stopRepeatingAgeChange}
-        disabled={isGenerating || age === MIN_AGE}
+        disabled={isCanvasLocked || age === MIN_AGE}
         className="flex h-14 w-16 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
         title="年齢を10下げる"
       >
@@ -418,7 +446,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
       <button
         type="button"
         onClick={() => onAgeChange(null)}
-        disabled={isGenerating || age === null}
+        disabled={isCanvasLocked || age === null}
         className="flex h-14 min-w-24 items-center justify-center rounded-2xl border-2 border-gray-200 bg-white px-3 text-sm font-black text-gray-600 shadow-md transition-all hover:bg-gray-50 disabled:opacity-40 active:scale-95 md:w-full"
         title="年齢を未設定にする"
       >
@@ -451,6 +479,16 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
               onTouchEnd={endDrawing}
               className="w-full h-full cursor-crosshair touch-none"
             />
+            {isPlaybackActive && playbackDrawing && playbackAudioRef && (
+              <div className="absolute inset-0 z-10 bg-white">
+                <DrawingPlaybackCanvas
+                  drawingData={playbackDrawing}
+                  audioRef={playbackAudioRef}
+                  mode={playbackDisplayMode}
+                  animationEndProgress={playbackAnimationEndProgress}
+                />
+              </div>
+            )}
             {isGenerating && (
               <div className="absolute inset-0 bg-white/80 flex flex-col items-center justify-center backdrop-blur-sm z-20">
                 <div className="w-16 h-16 border-4 border-yellow-400 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -462,7 +500,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         <div className="flex w-full max-w-full gap-2 sm:gap-3 md:col-start-2">
           <button
             onClick={handleClear}
-            disabled={isGenerating}
+            disabled={isCanvasLocked}
             className="flex h-14 min-w-[7.5rem] flex-[1.15] items-center justify-center whitespace-nowrap px-3 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-2xl font-bold transition-all disabled:opacity-50 text-base sm:text-lg shadow-md active:scale-95"
           >
             ぜんぶ消す
@@ -470,7 +508,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           <button
             type="button"
             onClick={handleUndo}
-            disabled={strokes.length === 0 || isGenerating}
+            disabled={strokes.length === 0 || isCanvasLocked}
             className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-gray-700 shadow-md border-2 border-gray-200 transition-all hover:bg-gray-50 disabled:opacity-40 active:scale-95"
             title="戻す"
             aria-label="戻す"
@@ -495,7 +533,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           <button
             type="button"
             onClick={handleRedo}
-            disabled={undoneStrokes.length === 0 || isGenerating}
+            disabled={undoneStrokes.length === 0 || isCanvasLocked}
             className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-gray-700 shadow-md border-2 border-gray-200 transition-all hover:bg-gray-50 disabled:opacity-40 active:scale-95"
             title="進める"
             aria-label="進める"
@@ -519,7 +557,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           </button>
           <button
             onClick={handleGenerate}
-            disabled={strokes.length === 0 || isGenerating}
+            disabled={strokes.length === 0 || isCanvasLocked}
             className="flex h-14 min-w-[8rem] flex-[1.15] items-center justify-center whitespace-nowrap px-3 bg-yellow-400 hover:bg-yellow-500 text-white rounded-2xl font-bold transition-all disabled:opacity-50 disabled:bg-gray-300 text-base sm:text-lg shadow-md active:scale-95"
           >
             歌をつくる！
