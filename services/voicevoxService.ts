@@ -1,7 +1,6 @@
 import { SingingScore } from "../types";
+import { ensureVoicevoxOk, getVoicevoxBaseUrl } from "./voicevoxHttp";
 
-const DEV_VOICEVOX_BASE_URL = "/voicevox";
-const PROD_VOICEVOX_BASE_URL = "http://127.0.0.1:50021";
 const SING_QUERY_SPEAKER = 6000;
 const FRAME_SYNTHESIS_SPEAKER = 3003;
 
@@ -10,26 +9,6 @@ export type VoicevoxProgressStage =
   | "query_ready"
   | "synthesis_requested"
   | "synthesis_ready";
-
-const getVoicevoxBaseUrl = () => (import.meta.env.DEV ? DEV_VOICEVOX_BASE_URL : PROD_VOICEVOX_BASE_URL);
-
-const readErrorText = async (response: Response) => {
-  try {
-    return await response.text();
-  } catch {
-    return "";
-  }
-};
-
-const ensureOk = async (response: Response, defaultMessage: string) => {
-  if (response.ok) {
-    return;
-  }
-
-  const details = await readErrorText(response);
-  const suffix = details ? ` ${details}` : "";
-  throw new Error(`${defaultMessage} (${response.status})${suffix}`);
-};
 
 export const synthesizeSingingVoice = async (
   score: SingingScore,
@@ -57,7 +36,7 @@ export const synthesizeSingingVoice = async (
     throw error;
   }
 
-  await ensureOk(queryResponse, "VOICEVOX の歌唱クエリ生成に失敗しました。");
+  await ensureVoicevoxOk(queryResponse, "VOICEVOX の歌唱クエリ生成に失敗しました。");
   onProgress?.("query_ready");
 
   const queryPayload = await queryResponse.json();
@@ -71,7 +50,7 @@ export const synthesizeSingingVoice = async (
     body: JSON.stringify(queryPayload),
   });
 
-  await ensureOk(synthesisResponse, "VOICEVOX の音声合成に失敗しました。");
+  await ensureVoicevoxOk(synthesisResponse, "VOICEVOX の音声合成に失敗しました。");
   onProgress?.("synthesis_ready");
 
   return synthesisResponse.blob();
