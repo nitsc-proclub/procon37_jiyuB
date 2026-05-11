@@ -1,7 +1,6 @@
 import type { MelodyAccentLineHint, MelodyAccentLevel } from "./melodyService";
+import { ensureVoicevoxOk, getVoicevoxBaseUrl } from "./voicevoxHttp";
 
-const DEV_VOICEVOX_BASE_URL = "/voicevox";
-const PROD_VOICEVOX_BASE_URL = "http://127.0.0.1:50021";
 const TALK_ACCENT_SPEAKER = 3;
 
 type VoicevoxMora = {
@@ -18,26 +17,6 @@ type VoicevoxAccentPhrase = {
 export type VoicevoxAccentAnalysis = {
   hints: MelodyAccentLineHint[];
   phrasesByLine: VoicevoxAccentPhrase[][];
-};
-
-const getVoicevoxBaseUrl = () => (import.meta.env.DEV ? DEV_VOICEVOX_BASE_URL : PROD_VOICEVOX_BASE_URL);
-
-const readErrorText = async (response: Response) => {
-  try {
-    return await response.text();
-  } catch {
-    return "";
-  }
-};
-
-const ensureOk = async (response: Response, defaultMessage: string) => {
-  if (response.ok) {
-    return;
-  }
-
-  const details = await readErrorText(response);
-  const suffix = details ? ` ${details}` : "";
-  throw new Error(`${defaultMessage} (${response.status})${suffix}`);
 };
 
 const toAccentLevel = (pitch: number, lowThreshold: number, highThreshold: number): MelodyAccentLevel => {
@@ -90,7 +69,7 @@ const analyzeAccentLine = async (line: string) => {
     method: "POST",
   });
 
-  await ensureOk(response, "VOICEVOX のアクセント解析に失敗しました。");
+  await ensureVoicevoxOk(response, "VOICEVOX のアクセント解析に失敗しました。");
 
   return (await response.json()) as VoicevoxAccentPhrase[];
 };
