@@ -53,6 +53,12 @@ type ParsedLine = {
 
 type RhythmTemplateMap = Map<number, number[]>;
 
+export type MelodyAccentLevel = "low" | "mid" | "high" | "neutral";
+
+export type MelodyAccentLineHint = {
+  levels: MelodyAccentLevel[];
+};
+
 const normalizeKana = (text: string) =>
   text
     .normalize("NFKC")
@@ -82,6 +88,22 @@ const createSeededRandom = (seed: string) => {
 };
 
 const pickRandom = <T>(items: T[], random: () => number) => items[Math.floor(random() * items.length)];
+
+const pickWeighted = <T>(items: T[], getWeight: (item: T) => number, random: () => number) => {
+  const weights = items.map((item) => Math.max(0.001, getWeight(item)));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  let cursor = random() * totalWeight;
+
+  for (let index = 0; index < items.length; index += 1) {
+    cursor -= weights[index];
+
+    if (cursor <= 0) {
+      return items[index];
+    }
+  }
+
+  return items[items.length - 1];
+};
 
 const splitIntoPhraseUnits = (line: string) => {
   const units: PhraseUnit[] = [];
@@ -246,31 +268,41 @@ const allocateRhythmicPhraseLengths = (
   });
 };
 
-const getNearestNotePoolIndex = (key: number) =>
-  NOTE_POOL.reduce((nearestIndex, note, index) => {
-    const nearestDistance = Math.abs(NOTE_POOL[nearestIndex] - key);
-    const distance = Math.abs(note - key);
-    return distance < nearestDistance ? index : nearestIndex;
-  }, 0);
-
-const chooseStepwisePitch = (previousKey: number | null, random: () => number) => {
-  if (previousKey === null) {
-    return pickRandom(NOTE_POOL, random);
+const getAccentTargetKey = (accentLevel: MelodyAccentLevel | undefined) => {
+  if (accentLevel === "low") {
+    return 64;
   }
 
-  const nearestIndex = getNearestNotePoolIndex(previousKey);
-  const candidateIndexes = [nearestIndex, nearestIndex];
-
-  if (nearestIndex > 0) {
-    candidateIndexes.push(nearestIndex - 1);
+  if (accentLevel === "mid") {
+    return 65;
   }
 
-  if (nearestIndex < NOTE_POOL.length - 1) {
-    candidateIndexes.push(nearestIndex + 1);
+  if (accentLevel === "high") {
+    return 67;
   }
 
-  return NOTE_POOL[pickRandom(candidateIndexes, random)];
+  return null;
 };
+
+const getPitchCandidateWeight = (candidateKey: number, previousKey: number | null, accentLevel: MelodyAccentLevel | undefined) => {
+  const movementScore = previousKey === null ? 3 : 5 - Math.abs(candidateKey - previousKey);
+  const accentTargetKey = getAccentTargetKey(accentLevel);
+  const accentScore = accentTargetKey === null ? 0 : 4 - Math.abs(candidateKey - accentTargetKey) * 1.8;
+  const neutralPenalty = accentLevel === "neutral" || accentLevel === undefined ? 0 : 0.4;
+
+  return movementScore + accentScore - neutralPenalty;
+};
+
+const chooseStepwisePitch = (
+  previousKey: number | null,
+  random: () => number,
+  accentLevel: MelodyAccentLevel | undefined,
+) =>
+  pickWeighted(
+    NOTE_POOL,
+    (candidateKey) => getPitchCandidateWeight(candidateKey, previousKey, accentLevel),
+    random,
+  );
 
 const getCadenceMovementScore = (cadence: number[], previousKey: number | null) => {
   let movementScore = 0;
@@ -348,6 +380,7 @@ const buildPhraseForLine = (
   isFinalLine: boolean,
   previousKey: number | null,
   rhythmTemplates: RhythmTemplateMap,
+  accentLineHint: MelodyAccentLineHint | undefined,
 ): SingingNote[] => {
   const phraseUnits = parsedLine.units;
   const moras = phraseUnits.filter((unit): unit is MoraUnit => unit.type === "mora");
@@ -374,7 +407,8 @@ const buildPhraseForLine = (
       };
     }
 
-    const key = chooseStepwisePitch(currentKey, random);
+    const accentLevel = accentLineHint?.levels[moraIndex];
+    const key = chooseStepwisePitch(currentKey, random, accentLevel);
     const frameLength = noteLengths[moraIndex];
     currentKey = key;
     moraIndex += 1;
@@ -404,7 +438,11 @@ const buildPhraseForLine = (
 export const createSingingSeed = (lyrics: LyricsResponse, variant = 0) =>
   `${lyrics.title}::${lyrics.identifiedObject}::${lyrics.lines.join("|")}::${variant}`;
 
-export const buildSingingScore = (lyrics: LyricsResponse, seed: string): SingingScore => {
+export const buildSingingScore = (
+  lyrics: LyricsResponse,
+  seed: string,
+  accentLineHints?: MelodyAccentLineHint[],
+): SingingScore => {
   const sourceLines = lyrics.singingKanaLines?.filter((line) => line.trim().length > 0) ?? [];
 
   if (sourceLines.length === 0) {
@@ -430,6 +468,7 @@ export const buildSingingScore = (lyrics: LyricsResponse, seed: string): Singing
       index === parsedLines.length - 1,
       previousKey,
       rhythmTemplates,
+      accentLineHints?.[index],
     );
     notes.push(...phraseNotes);
     previousKey = getLastPitchedKey(phraseNotes) ?? previousKey;

@@ -3,6 +3,7 @@ import PaintCanvas from "./components/PaintCanvas";
 import { getDemoRecord, listDemoRecords, saveDemoRecord } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
+import { analyzeAccentLines } from "./services/voicevoxAccentService";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
 import { DemoRecordSummary, DrawingData, LyricsResponse, SingingScore } from "./types";
 
@@ -28,6 +29,43 @@ const EXPERIMENT_LYRICS: LyricsResponse = {
   identifiedObject: "ネコ",
   modelName: "fixed-experiment-lyrics",
 };
+
+const NOTE_LABELS: Record<number, string> = {
+  60: "ド",
+  64: "ミ",
+  65: "ファ",
+  67: "ソ",
+};
+
+const getExperimentNoteLabel = (key: number | null) => {
+  if (key === null) {
+    return "休符";
+  }
+
+  return NOTE_LABELS[key] ?? `key ${key}`;
+};
+
+const getExperimentNoteToneClass = (key: number | null) => {
+  if (key === null) {
+    return "border-gray-200 bg-gray-100 text-gray-500";
+  }
+
+  if (key === 60) {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+
+  if (key === 64) {
+    return "border-orange-200 bg-orange-50 text-orange-700";
+  }
+
+  if (key === 65) {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  return "border-emerald-200 bg-emerald-50 text-emerald-700";
+};
+
+const getExperimentNoteWidth = (frameLength: number) => Math.max(44, Math.min(150, frameLength * 1.85));
 
 const getProgressTickDelay = (currentValue: number) => {
   if (currentValue < 50) {
@@ -297,6 +335,24 @@ const App: React.FC = () => {
     setExperimentProgressLabel("音声データを準備中...");
   };
 
+  const analyzeLyricsAccents = async (targetLyrics: LyricsResponse) => {
+    const sourceLines = targetLyrics.singingKanaLines?.filter((line) => line.trim().length > 0) ?? [];
+
+    if (sourceLines.length === 0) {
+      return undefined;
+    }
+
+    try {
+      return (await analyzeAccentLines(sourceLines)).hints;
+    } catch (accentError) {
+      if (import.meta.env.DEV) {
+        console.warn("Failed to analyze VOICEVOX accent phrases. Falling back to melody generation without accents.", accentError);
+      }
+
+      return undefined;
+    }
+  };
+
   const handleGenerateExperimentVoice = async () => {
     const nextVariant = experimentVariant + 1;
 
@@ -308,8 +364,11 @@ const App: React.FC = () => {
     replaceExperimentAudioUrl(null);
 
     try {
+      setExperimentProgressLabel("VOICEVOX でアクセントを解析しています...");
+      const accentLineHints = await analyzeLyricsAccents(experimentLyrics);
       const seed = createSingingSeed(experimentLyrics, nextVariant);
-      const score = buildSingingScore(experimentLyrics, seed);
+      setExperimentProgressLabel("メロディを組み立てています...");
+      const score = buildSingingScore(experimentLyrics, seed, accentLineHints);
       setExperimentScore(score);
 
       const audioBlob = await synthesizeSingingVoice(score, handleExperimentVoicevoxProgress);
@@ -384,9 +443,12 @@ const App: React.FC = () => {
       generatedLyrics = await generateEkakiUta(data);
       setLyrics(generatedLyrics);
 
+      updateProgress("VOICEVOX でアクセントを解析しています...", 53);
+      const accentLineHints = await analyzeLyricsAccents(generatedLyrics);
+
       updateProgress("メロディを組み立てています...", 55);
       const seed = createSingingSeed(generatedLyrics, 0);
-      generatedScore = buildSingingScore(generatedLyrics, seed);
+      generatedScore = buildSingingScore(generatedLyrics, seed, accentLineHints);
 
       generatedAudioBlob = await synthesizeSingingVoice(generatedScore, handleVoicevoxProgress);
       updateProgress("音声データを準備中...", 97);
@@ -733,23 +795,59 @@ const App: React.FC = () => {
             )}
 
             {experimentScore && (
-              <div className="mt-5 overflow-hidden rounded-2xl border-2 border-orange-100">
-                <div className="grid grid-cols-[1fr_1fr_1fr] bg-orange-50 px-4 py-2 text-xs font-black text-orange-600">
-                  <span>lyric</span>
-                  <span>key</span>
-                  <span>frame</span>
+              <div className="mt-5 rounded-2xl border-2 border-orange-100 bg-white p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-black text-gray-800">生成楽譜</h3>
+                    <p className="text-xs font-bold text-gray-400">横幅が frame、色が key、灰色が休符です。</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs font-black">
+                    {[60, 64, 65, 67].map((key) => (
+                      <span key={key} className={`rounded-full border px-3 py-1 ${getExperimentNoteToneClass(key)}`}>
+                        {key}: {getExperimentNoteLabel(key)}
+                      </span>
+                    ))}
+                    <span className={`rounded-full border px-3 py-1 ${getExperimentNoteToneClass(null)}`}>休符</span>
+                  </div>
                 </div>
-                <div className="max-h-72 divide-y divide-orange-50 overflow-auto bg-white">
-                  {experimentScore.notes.map((note, index) => (
-                    <div
-                      key={`${note.lyric}-${note.key ?? "rest"}-${note.frame_length}-${index}`}
-                      className="grid grid-cols-[1fr_1fr_1fr] px-4 py-2 text-sm font-semibold text-gray-600"
-                    >
-                      <span>{note.lyric || "休符"}</span>
-                      <span>{note.key ?? "-"}</span>
-                      <span>{note.frame_length}</span>
-                    </div>
-                  ))}
+
+                <div className="overflow-x-auto rounded-2xl border border-orange-50 bg-orange-50/40 p-3">
+                  <div className="flex min-h-40 items-end gap-1">
+                    {experimentScore.notes.map((note, index) => (
+                      <div
+                        key={`${note.lyric}-${note.key ?? "rest"}-${note.frame_length}-${index}`}
+                        className={`flex h-32 shrink-0 flex-col justify-between rounded-lg border px-2 py-2 text-center shadow-sm ${getExperimentNoteToneClass(
+                          note.key,
+                        )}`}
+                        style={{ width: `${getExperimentNoteWidth(note.frame_length)}px` }}
+                        title={`${note.lyric || "休符"} / key: ${note.key ?? "-"} / frame: ${note.frame_length}`}
+                      >
+                        <span className="truncate text-base font-black">{note.lyric || "休"}</span>
+                        <span className="text-xs font-black">{getExperimentNoteLabel(note.key)}</span>
+                        <span className="text-[11px] font-black tabular-nums">{note.frame_length}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-4 overflow-hidden rounded-2xl border border-orange-100">
+                  <div className="grid grid-cols-[1fr_1fr_1fr] bg-orange-50 px-4 py-2 text-xs font-black text-orange-600">
+                    <span>lyric</span>
+                    <span>key</span>
+                    <span>frame</span>
+                  </div>
+                  <div className="max-h-72 divide-y divide-orange-50 overflow-auto bg-white">
+                    {experimentScore.notes.map((note, index) => (
+                      <div
+                        key={`${note.lyric}-${note.key ?? "rest"}-${note.frame_length}-${index}`}
+                        className="grid grid-cols-[1fr_1fr_1fr] px-4 py-2 text-sm font-semibold text-gray-600"
+                      >
+                        <span>{note.lyric || "休符"}</span>
+                        <span>{note.key ?? "-"}</span>
+                        <span>{note.frame_length}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
