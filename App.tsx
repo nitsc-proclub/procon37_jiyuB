@@ -8,8 +8,26 @@ import { DemoRecordSummary, DrawingData, LyricsResponse, SingingScore } from "./
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
 
-type AppView = "maker" | "demoRecords";
+type AppView = "maker" | "demoRecords" | "melodyExperiment";
 type DemoBrowseMode = "drawings" | "songs";
+
+const EXPERIMENT_LYRICS: LyricsResponse = {
+  title: "ネコの絵描き歌",
+  lines: [
+    "お山が二つ ありました",
+    "縦棒二本 目が出てね",
+    "なみなみお口 描いたなら",
+    "おヒゲをぴっぴで ネコですよ",
+  ],
+  singingKanaLines: [
+    "おやまがふたつ ありました",
+    "たてぼうにほん めがでてね",
+    "なみなみおくち かいたなら",
+    "おひげをぴっぴで ねこですよ",
+  ],
+  identifiedObject: "ネコ",
+  modelName: "fixed-experiment-lyrics",
+};
 
 const getProgressTickDelay = (currentValue: number) => {
   if (currentValue < 50) {
@@ -65,14 +83,29 @@ const App: React.FC = () => {
   const [loadingDemoRecordId, setLoadingDemoRecordId] = useState<string | null>(null);
   const [selectedDemoDrawing, setSelectedDemoDrawing] = useState<DrawingData | null>(null);
   const [selectedDemoRecordId, setSelectedDemoRecordId] = useState<string | null>(null);
+  const [experimentVariant, setExperimentVariant] = useState(0);
+  const [experimentLyricsSource, setExperimentLyricsSource] = useState("fixed");
+  const [experimentLyrics, setExperimentLyrics] = useState<LyricsResponse>(EXPERIMENT_LYRICS);
+  const [experimentScore, setExperimentScore] = useState<SingingScore | null>(null);
+  const [experimentAudioUrl, setExperimentAudioUrl] = useState<string | null>(null);
+  const [experimentError, setExperimentError] = useState<string | null>(null);
+  const [experimentProgressLabel, setExperimentProgressLabel] = useState("待機中");
+  const [isExperimentGenerating, setIsExperimentGenerating] = useState(false);
+  const [loadingExperimentRecordId, setLoadingExperimentRecordId] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioUrlRef = useRef<string | null>(null);
+  const experimentAudioRef = useRef<HTMLAudioElement>(null);
+  const experimentAudioUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
       if (isBlobUrl(audioUrlRef.current)) {
         URL.revokeObjectURL(audioUrlRef.current);
+      }
+
+      if (isBlobUrl(experimentAudioUrlRef.current)) {
+        URL.revokeObjectURL(experimentAudioUrlRef.current);
       }
     };
   }, []);
@@ -133,7 +166,7 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    if (appView !== "demoRecords" || demoRecords.length > 0 || isDemoRecordsLoading) {
+    if ((appView !== "demoRecords" && appView !== "melodyExperiment") || demoRecords.length > 0 || isDemoRecordsLoading) {
       return;
     }
 
@@ -149,6 +182,15 @@ const App: React.FC = () => {
     setAudioUrl(nextUrl);
   };
 
+  const replaceExperimentAudioUrl = (nextUrl: string | null) => {
+    if (isBlobUrl(experimentAudioUrlRef.current)) {
+      URL.revokeObjectURL(experimentAudioUrlRef.current);
+    }
+
+    experimentAudioUrlRef.current = nextUrl;
+    setExperimentAudioUrl(nextUrl);
+  };
+
   const stopAudioPlayback = () => {
     if (!audioRef.current) {
       return;
@@ -156,6 +198,15 @@ const App: React.FC = () => {
 
     audioRef.current.pause();
     audioRef.current.currentTime = 0;
+  };
+
+  const stopExperimentAudioPlayback = () => {
+    if (!experimentAudioRef.current) {
+      return;
+    }
+
+    experimentAudioRef.current.pause();
+    experimentAudioRef.current.currentTime = 0;
   };
 
   const resetAudioState = () => {
@@ -225,6 +276,92 @@ const App: React.FC = () => {
     }
 
     updateProgress("仕上げ中...", 92);
+  };
+
+  const handleExperimentVoicevoxProgress = (stage: VoicevoxProgressStage) => {
+    if (stage === "query_requested") {
+      setExperimentProgressLabel("VOICEVOX に歌唱クエリを送信中...");
+      return;
+    }
+
+    if (stage === "query_ready") {
+      setExperimentProgressLabel("歌唱クエリを受け取りました。音声を組み立てています...");
+      return;
+    }
+
+    if (stage === "synthesis_requested") {
+      setExperimentProgressLabel("歌声を合成中...");
+      return;
+    }
+
+    setExperimentProgressLabel("音声データを準備中...");
+  };
+
+  const handleGenerateExperimentVoice = async () => {
+    const nextVariant = experimentVariant + 1;
+
+    setExperimentVariant(nextVariant);
+    setIsExperimentGenerating(true);
+    setExperimentError(null);
+    setExperimentProgressLabel("メロディを組み立てています...");
+    stopExperimentAudioPlayback();
+    replaceExperimentAudioUrl(null);
+
+    try {
+      const seed = createSingingSeed(experimentLyrics, nextVariant);
+      const score = buildSingingScore(experimentLyrics, seed);
+      setExperimentScore(score);
+
+      const audioBlob = await synthesizeSingingVoice(score, handleExperimentVoicevoxProgress);
+      const nextAudioUrl = URL.createObjectURL(audioBlob);
+      replaceExperimentAudioUrl(nextAudioUrl);
+      setExperimentProgressLabel("完成しました");
+
+      window.setTimeout(() => {
+        void experimentAudioRef.current?.play().catch((playError) => {
+          if (import.meta.env.DEV) {
+            console.error("Failed to autoplay experiment singing voice", playError);
+          }
+        });
+      }, 0);
+    } catch (generationError) {
+      setExperimentError(generationError instanceof Error ? generationError.message : "実験用の歌声生成に失敗しました。");
+      setExperimentProgressLabel("エラーで終了しました");
+    } finally {
+      setIsExperimentGenerating(false);
+    }
+  };
+
+  const resetExperimentResult = () => {
+    setExperimentVariant(0);
+    setExperimentScore(null);
+    setExperimentError(null);
+    setExperimentProgressLabel("待機中");
+    stopExperimentAudioPlayback();
+    replaceExperimentAudioUrl(null);
+  };
+
+  const handleSelectExperimentLyrics = async (recordId: string) => {
+    if (recordId === "fixed") {
+      setExperimentLyricsSource("fixed");
+      setExperimentLyrics(EXPERIMENT_LYRICS);
+      resetExperimentResult();
+      return;
+    }
+
+    setLoadingExperimentRecordId(recordId);
+    setExperimentError(null);
+
+    try {
+      const demoRecord = await getDemoRecord(recordId);
+      setExperimentLyricsSource(recordId);
+      setExperimentLyrics(demoRecord.lyrics);
+      resetExperimentResult();
+    } catch (loadError) {
+      setExperimentError(loadError instanceof Error ? loadError.message : "実験用の歌詞を読み込めませんでした。");
+    } finally {
+      setLoadingExperimentRecordId(null);
+    }
   };
 
   const handleComplete = async (data: DrawingData) => {
@@ -306,6 +443,10 @@ const App: React.FC = () => {
     resetAudioState();
   };
 
+  const experimentPitchedNotes = experimentScore?.notes.filter((note) => note.key !== null) ?? [];
+  const experimentLastKey = experimentPitchedNotes.at(-1)?.key ?? null;
+  const experimentTotalFrames = experimentScore?.notes.reduce((sum, note) => sum + note.frame_length, 0) ?? 0;
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-amber-50 via-yellow-50 to-orange-100 p-4 md:p-8 flex flex-col items-center">
       <button
@@ -373,6 +514,15 @@ const App: React.FC = () => {
             }`}
           >
             メーカー
+          </button>
+          <button
+            type="button"
+            onClick={() => setAppView("melodyExperiment")}
+            className={`rounded-full px-5 py-2 text-sm font-black transition-all ${
+              appView === "melodyExperiment" ? "bg-orange-400 text-white shadow-sm" : "text-gray-600 hover:bg-orange-50"
+            }`}
+          >
+            実験
           </button>
           <button
             type="button"
@@ -479,6 +629,128 @@ const App: React.FC = () => {
                     </span>
                   </button>
                 ))}
+              </div>
+            )}
+          </section>
+        </main>
+      ) : appView === "melodyExperiment" ? (
+        <main className="mb-16 grid w-full max-w-6xl grid-cols-1 gap-8 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+          <section className="rounded-3xl border-8 border-orange-100 bg-white p-6 shadow-xl md:p-7">
+            <div className="mb-5 border-b-2 border-orange-50 pb-4">
+              <span className="inline-block rounded-full bg-orange-100 px-4 py-1 text-sm font-bold text-orange-600">
+                {experimentLyricsSource === "fixed" ? "固定歌詞デモ" : "demo-records"}
+              </span>
+              <h2 className="mt-3 text-2xl font-black text-gray-800">{experimentLyrics.title}</h2>
+              <p className="mt-1 text-sm font-semibold text-gray-500">
+                Gemini を通さず、この歌詞だけでメロディ生成と歌声合成を試します。
+              </p>
+            </div>
+
+            <label className="mb-5 block">
+              <span className="mb-2 block text-sm font-black text-gray-600">実験する歌詞</span>
+              <select
+                value={experimentLyricsSource}
+                onChange={(event) => void handleSelectExperimentLyrics(event.target.value)}
+                disabled={loadingExperimentRecordId !== null || isExperimentGenerating}
+                className="w-full rounded-2xl border-2 border-orange-100 bg-white px-4 py-3 text-sm font-bold text-gray-700 shadow-sm outline-none transition-all focus:border-orange-300 disabled:opacity-60"
+              >
+                <option value="fixed">固定デモ: {EXPERIMENT_LYRICS.title}</option>
+                {demoRecords.map((record) => (
+                  <option key={record.recordId} value={record.recordId}>
+                    {record.title} / {record.identifiedObject}
+                  </option>
+                ))}
+              </select>
+              {loadingExperimentRecordId && (
+                <span className="mt-2 block text-xs font-bold text-orange-500">読み込み中...</span>
+              )}
+            </label>
+
+            <div className="space-y-4 text-center">
+              {experimentLyrics.lines.map((line, index) => (
+                <p key={`${line}-${index}`} className="text-xl font-bold leading-relaxed text-gray-700 md:text-2xl">
+                  {line}
+                </p>
+              ))}
+            </div>
+
+            <div className="mt-6 rounded-2xl border-2 border-yellow-100 bg-yellow-50 p-4">
+              <p className="mb-2 text-sm font-black text-gray-600">歌声合成用かな</p>
+              <div className="space-y-1">
+                {experimentLyrics.singingKanaLines?.map((line, index) => (
+                  <p key={`${line}-${index}`} className="text-sm font-semibold text-gray-500">
+                    {line}
+                  </p>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-3xl border-8 border-orange-100 bg-white p-6 shadow-xl md:p-7">
+            <div className="mb-5 flex flex-col gap-4 border-b-2 border-orange-50 pb-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-2xl font-black text-gray-800">メロディ実験</h2>
+                <p className="text-sm font-semibold text-gray-500">押すたびに同じ歌詞の別 variant を生成します。</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleGenerateExperimentVoice()}
+                disabled={isExperimentGenerating}
+                className="rounded-full bg-orange-400 px-6 py-3 text-sm font-black text-white shadow-md transition-all hover:bg-orange-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isExperimentGenerating ? "生成中..." : "生成して聴く"}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div className="rounded-2xl bg-orange-50 p-4 text-center">
+                <p className="text-xs font-black text-orange-500">variant</p>
+                <p className="mt-1 text-2xl font-black text-gray-800">{experimentVariant}</p>
+              </div>
+              <div className="rounded-2xl bg-yellow-50 p-4 text-center">
+                <p className="text-xs font-black text-orange-500">notes</p>
+                <p className="mt-1 text-2xl font-black text-gray-800">{experimentScore?.notes.length ?? 0}</p>
+              </div>
+              <div className="rounded-2xl bg-orange-50 p-4 text-center">
+                <p className="text-xs font-black text-orange-500">frames</p>
+                <p className="mt-1 text-2xl font-black text-gray-800">{experimentTotalFrames}</p>
+              </div>
+              <div className="rounded-2xl bg-yellow-50 p-4 text-center">
+                <p className="text-xs font-black text-orange-500">last key</p>
+                <p className="mt-1 text-2xl font-black text-gray-800">{experimentLastKey ?? "-"}</p>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5">
+              <p className="mb-3 text-sm font-black text-gray-600">{experimentProgressLabel}</p>
+              <audio ref={experimentAudioRef} src={experimentAudioUrl ?? undefined} controls className="w-full" />
+            </div>
+
+            {experimentError && (
+              <div className="mt-4 rounded-2xl border-2 border-red-200 bg-red-50 p-4 text-center font-bold text-red-700">
+                エラー: {experimentError}
+              </div>
+            )}
+
+            {experimentScore && (
+              <div className="mt-5 overflow-hidden rounded-2xl border-2 border-orange-100">
+                <div className="grid grid-cols-[1fr_1fr_1fr] bg-orange-50 px-4 py-2 text-xs font-black text-orange-600">
+                  <span>lyric</span>
+                  <span>key</span>
+                  <span>frame</span>
+                </div>
+                <div className="max-h-72 divide-y divide-orange-50 overflow-auto bg-white">
+                  {experimentScore.notes.map((note, index) => (
+                    <div
+                      key={`${note.lyric}-${note.key ?? "rest"}-${note.frame_length}-${index}`}
+                      className="grid grid-cols-[1fr_1fr_1fr] px-4 py-2 text-sm font-semibold text-gray-600"
+                    >
+                      <span>{note.lyric || "休符"}</span>
+                      <span>{note.key ?? "-"}</span>
+                      <span>{note.frame_length}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </section>
