@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import PaintCanvas from "./components/PaintCanvas";
+import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { getDemoRecord, listDemoRecords, saveDemoRecord } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
+import { groupStrokes } from "./services/strokeGroupingService";
 import { analyzeAccentLines } from "./services/voicevoxAccentService";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
 import { DemoRecordSummary, DrawingData, LyricsResponse, SingingScore } from "./types";
@@ -101,12 +103,38 @@ const getProgressStep = (currentValue: number, targetValue: number) => {
   return 1;
 };
 
+const getSingingLineCount = (lyrics: LyricsResponse | null) => {
+  const singingLineCount = lyrics?.singingKanaLines?.filter((line) => line.trim().length > 0).length ?? 0;
+  return singingLineCount || lyrics?.lines.filter((line) => line.trim().length > 0).length || 0;
+};
+
+const getDrawingAnimationEndProgress = (lyrics: LyricsResponse | null, score: SingingScore | null) => {
+  const lineCount = getSingingLineCount(lyrics);
+
+  if (!score || lineCount <= 1) {
+    return 1;
+  }
+
+  const totalFrames = score.notes.reduce((sum, note) => sum + note.frame_length, 0);
+
+  if (totalFrames <= 0) {
+    return 1;
+  }
+
+  const leadingRestFrames = score.notes[0]?.key === null && score.notes[0]?.lyric === "" ? score.notes[0].frame_length : 0;
+  const phraseFrames = (totalFrames - leadingRestFrames) / lineCount;
+  const lastLineStartFrame = leadingRestFrames + phraseFrames * (lineCount - 1);
+
+  return Math.min(1, Math.max(0.1, lastLineStartFrame / totalFrames));
+};
+
 const App: React.FC = () => {
   const [lyrics, setLyrics] = useState<LyricsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [shouldAutoplay, setShouldAutoplay] = useState(false);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [progressValue, setProgressValue] = useState(0);
   const [progressTarget, setProgressTarget] = useState(0);
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
@@ -121,6 +149,9 @@ const App: React.FC = () => {
   const [loadingDemoRecordId, setLoadingDemoRecordId] = useState<string | null>(null);
   const [selectedDemoDrawing, setSelectedDemoDrawing] = useState<DrawingData | null>(null);
   const [selectedDemoRecordId, setSelectedDemoRecordId] = useState<string | null>(null);
+  const [generatedDrawing, setGeneratedDrawing] = useState<DrawingData | null>(null);
+  const [playbackScore, setPlaybackScore] = useState<SingingScore | null>(null);
+  const [drawingDisplayMode, setDrawingDisplayMode] = useState<DrawingDisplayMode>("animated");
   const [experimentVariant, setExperimentVariant] = useState(0);
   const [experimentLyricsSource, setExperimentLyricsSource] = useState("fixed");
   const [experimentLyrics, setExperimentLyrics] = useState<LyricsResponse>(EXPERIMENT_LYRICS);
@@ -218,6 +249,7 @@ const App: React.FC = () => {
 
     audioUrlRef.current = nextUrl;
     setAudioUrl(nextUrl);
+    setIsAudioPlaying(false);
   };
 
   const replaceExperimentAudioUrl = (nextUrl: string | null) => {
@@ -236,6 +268,7 @@ const App: React.FC = () => {
 
     audioRef.current.pause();
     audioRef.current.currentTime = 0;
+    setIsAudioPlaying(false);
   };
 
   const stopExperimentAudioPlayback = () => {
@@ -251,6 +284,7 @@ const App: React.FC = () => {
     stopAudioPlayback();
     replaceAudioUrl(null);
     setShouldAutoplay(false);
+    setIsAudioPlaying(false);
   };
 
   const handleSelectDemoRecord = async (recordId: string) => {
@@ -270,6 +304,9 @@ const App: React.FC = () => {
       setParticipantAge(demoRecord.participantAge);
       setSelectedDemoDrawing(demoRecord.drawingData);
       setSelectedDemoRecordId(demoRecord.recordId);
+      setGeneratedDrawing(null);
+      setPlaybackScore(demoRecord.singingScore);
+      setDrawingDisplayMode("animated");
       setAppView("maker");
       setSaveToast({ message: "デモ記録を読み込みました", tone: "success" });
     } catch (loadError) {
@@ -424,6 +461,10 @@ const App: React.FC = () => {
   };
 
   const handleComplete = async (data: DrawingData) => {
+    const groupedDrawingData = {
+      ...data,
+      strokeGroups: groupStrokes(data.strokes),
+    };
     const startedAt = new Date().toISOString();
     let generatedLyrics: LyricsResponse | null = null;
     let generatedScore: SingingScore | null = null;
@@ -435,12 +476,15 @@ const App: React.FC = () => {
     setSaveToast(null);
     setSelectedDemoRecordId(null);
     setSelectedDemoDrawing(null);
+    setGeneratedDrawing(groupedDrawingData);
+    setPlaybackScore(null);
+    setDrawingDisplayMode("animated");
     resetAudioState();
     startProgress("準備中...", 8);
 
     try {
       updateProgress("AI が絵を読み取って歌詞を考えています...", 50);
-      generatedLyrics = await generateEkakiUta(data);
+      generatedLyrics = await generateEkakiUta(groupedDrawingData);
       setLyrics(generatedLyrics);
 
       updateProgress("VOICEVOX でアクセントを解析しています...", 53);
@@ -449,6 +493,7 @@ const App: React.FC = () => {
       updateProgress("メロディを組み立てています...", 55);
       const seed = createSingingSeed(generatedLyrics, 0);
       generatedScore = buildSingingScore(generatedLyrics, seed, accentLineHints);
+      setPlaybackScore(generatedScore);
 
       generatedAudioBlob = await synthesizeSingingVoice(generatedScore, handleVoicevoxProgress);
       updateProgress("音声データを準備中...", 97);
@@ -468,7 +513,7 @@ const App: React.FC = () => {
       if (isDataSavingEnabled) {
         try {
           await saveDemoRecord({
-            drawingData: data,
+            drawingData: groupedDrawingData,
             lyrics: generatedLyrics,
             audioBlob: generatedAudioBlob,
             singingScore: generatedScore,
@@ -502,12 +547,17 @@ const App: React.FC = () => {
     setProgressLabel("準備中...");
     setSelectedDemoDrawing(null);
     setSelectedDemoRecordId(null);
+    setGeneratedDrawing(null);
+    setPlaybackScore(null);
     resetAudioState();
   };
 
   const experimentPitchedNotes = experimentScore?.notes.filter((note) => note.key !== null) ?? [];
   const experimentLastKey = experimentPitchedNotes.at(-1)?.key ?? null;
   const experimentTotalFrames = experimentScore?.notes.reduce((sum, note) => sum + note.frame_length, 0) ?? 0;
+  const playbackDrawing = selectedDemoDrawing ?? generatedDrawing;
+  const playbackLyricLineCount = getSingingLineCount(lyrics);
+  const playbackAnimationEndProgress = getDrawingAnimationEndProgress(lyrics, playbackScore);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-amber-50 via-yellow-50 to-orange-100 p-4 md:p-8 flex flex-col items-center">
@@ -864,6 +914,14 @@ const App: React.FC = () => {
             onAgeChange={setParticipantAge}
             isAgeSelectorVisible={isDataSavingEnabled}
             initialDrawing={selectedDemoDrawing}
+            playbackDrawing={playbackDrawing}
+            playbackAudioRef={audioRef}
+            playbackDisplayMode={drawingDisplayMode}
+            playbackAnimationEndProgress={playbackAnimationEndProgress}
+            playbackLineStrokeMappings={lyrics?.lineStrokeMappings}
+            playbackScore={playbackScore}
+            playbackLyricLineCount={playbackLyricLineCount}
+            isPlaybackActive={isAudioPlaying}
           />
 
           {error && (
@@ -901,14 +959,50 @@ const App: React.FC = () => {
 
                   <div className="space-y-4 text-center">
                     {lyrics.lines.map((line, index) => (
-                      <p key={`${line}-${index}`} className="text-xl md:text-2xl text-gray-700 leading-relaxed font-medium">
-                        {line}
-                      </p>
+                      <div key={`${line}-${index}`}>
+                        <p className="text-xl md:text-2xl text-gray-700 leading-relaxed font-medium">{line}</p>
+                        {lyrics.lineStrokeMappings?.[index] && (
+                          <p className="mt-1 text-xs font-bold text-gray-400">
+                            strokes: {lyrics.lineStrokeMappings[index].strokeGroupIds.join(", ") || "none"}
+                          </p>
+                        )}
+                      </div>
                     ))}
                   </div>
 
                   <div className="mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5">
-                    <audio ref={audioRef} src={audioUrl ?? undefined} controls className="w-full" />
+                    <div className="mb-4 flex justify-end">
+                      <div className="flex rounded-full bg-white p-1 shadow-sm">
+                        <button
+                          type="button"
+                          onClick={() => setDrawingDisplayMode("animated")}
+                          className={`rounded-full px-4 py-2 text-sm font-black transition-all ${
+                            drawingDisplayMode === "animated" ? "bg-orange-400 text-white shadow-sm" : "text-gray-500"
+                          }`}
+                        >
+                          アニメーション
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDrawingDisplayMode("static")}
+                          className={`rounded-full px-4 py-2 text-sm font-black transition-all ${
+                            drawingDisplayMode === "static" ? "bg-orange-400 text-white shadow-sm" : "text-gray-500"
+                          }`}
+                        >
+                          完成絵
+                        </button>
+                      </div>
+                    </div>
+                    <audio
+                      ref={audioRef}
+                      src={audioUrl ?? undefined}
+                      controls
+                      className="w-full"
+                      onPlay={() => setIsAudioPlaying(true)}
+                      onPause={() => setIsAudioPlaying(false)}
+                      onEnded={() => setIsAudioPlaying(false)}
+                      onEmptied={() => setIsAudioPlaying(false)}
+                    />
                   </div>
 
                   {lyrics.modelName && (

@@ -99,10 +99,12 @@ type StoredDemoRecordMetadata = {
     lines?: string[];
     singingKanaLines?: string[];
     identifiedObject?: string;
+    lineStrokeMappings?: unknown[];
     modelName?: string;
   } | null;
   drawing?: {
     strokes?: unknown[];
+    strokeGroups?: unknown[];
   };
   participantAge?: number | null;
   participant?: {
@@ -243,6 +245,7 @@ const createDemoRecordMiddleware =
             lyrics: metadata.lyrics,
             drawingData: {
               strokes: metadata.drawing?.strokes ?? [],
+              strokeGroups: metadata.drawing?.strokeGroups,
               imageUri: `/api/demo-records/${encodeURIComponent(recordId)}/image`,
             },
             singingScore: metadata.singingScore ?? null,

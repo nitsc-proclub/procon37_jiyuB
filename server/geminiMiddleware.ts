@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { IncomingMessage, ServerResponse } from "http";
-import type { DrawingData, LyricsResponse } from "../types";
+import { groupStrokes } from "../services/strokeGroupingService";
+import type { DrawingData, LyricsResponse, StrokeGroup } from "../types";
 
 const DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite";
 const MAX_GEMINI_REQUEST_BYTES = 15 * 1024 * 1024;
@@ -84,45 +85,82 @@ const getBase64Image = (imageUri: string) => {
   return base64Image;
 };
 
-const buildStrokeDescriptions = (drawingData: DrawingData) =>
-  drawingData.strokes.map((stroke, index) => {
-    if (!stroke.points.length) {
-      return `Stroke ${index + 1}, Empty stroke, Duration: ${stroke.endTime - stroke.startTime}ms`;
-    }
+const getStrokeGroups = (drawingData: DrawingData) =>
+  Array.isArray(drawingData.strokeGroups) && drawingData.strokeGroups.length > 0
+    ? drawingData.strokeGroups
+    : groupStrokes(drawingData.strokes);
 
-    const minX = Math.min(...stroke.points.map((point) => point.x));
-    const maxX = Math.max(...stroke.points.map((point) => point.x));
-    const minY = Math.min(...stroke.points.map((point) => point.y));
-    const maxY = Math.max(...stroke.points.map((point) => point.y));
+const formatRawStrokeIndexes = (rawStrokeIndexes: number[]) => rawStrokeIndexes.map((index) => index + 1).join(",");
+
+const buildStrokeGroupDescriptions = (strokeGroups: StrokeGroup[]) =>
+  strokeGroups.map((group) => {
+    const width = group.bounds.maxX - group.bounds.minX;
+    const height = group.bounds.maxY - group.bounds.minY;
+    const centerX = group.bounds.minX + width / 2;
+    const centerY = group.bounds.minY + height / 2;
 
     return [
-      `Stroke ${index + 1}`,
-      `Bounding Box(${Math.round(minX)},${Math.round(minY)} to ${Math.round(maxX)},${Math.round(maxY)})`,
-      `Duration: ${stroke.endTime - stroke.startTime}ms`,
+      `Group ${group.id}`,
+      `Raw strokes: ${formatRawStrokeIndexes(group.rawStrokeIndexes)}`,
+      `Bounding Box(${Math.round(group.bounds.minX)},${Math.round(group.bounds.minY)} to ${Math.round(group.bounds.maxX)},${Math.round(group.bounds.maxY)})`,
+      `Center(${Math.round(centerX)},${Math.round(centerY)})`,
+      `Size(${Math.round(width)}x${Math.round(height)})`,
+      `Duration: ${group.endTime - group.startTime}ms`,
     ].join(", ");
   });
 
 const buildPrompt = (drawingData: DrawingData) => {
-  const strokeDescriptions = buildStrokeDescriptions(drawingData);
+  const strokeGroups = getStrokeGroups(drawingData);
+  const strokeGroupDescriptions = buildStrokeGroupDescriptions(strokeGroups);
 
   return `
-あなたは日本語の絵かき歌を作る作詞家です。
-入力された絵とストローク情報を見て、子ども向けの短い絵かき歌を作ってください。
+あなたは日本語の「お絵かき歌」を作る作詞家です。
+入力された完成画像と stroke group 情報を見て、子どもにも歌いやすい短いお絵かき歌を作ってください。
 
-出力ルール:
-1. 4〜6行の歌詞にしてください。
-2. 歌詞とは別に、歌声合成向けのひらがな行も用意してください。
-3. singingKanaLines は lines と同じ行数にし、漢字や英字を使わず、ひらがな・ー・っ・ゃゅょ・句読点程度にしてください。
-4. 各行は短めで、リズムに乗せやすい自然な文章にしてください。
-5. title は楽しいタイトル、identifiedObject は何の絵に見えたかを簡潔に書いてください。
+歌詞ルール:
+1. lines は4行程度にしてください。
+2. singingKanaLines は lines と同じ行数にしてください。
+3. singingKanaLines は VOICEVOX が歌いやすいよう、漢字や英字を避け、ひらがな中心にしてください。
+4. 各行は短く、リズムに乗せやすい自然な文にしてください。
+5. title と identifiedObject も返してください。
 
-ストローク数: ${drawingData.strokes.length}
-ストローク情報:
-${strokeDescriptions.join("\n")}
+ストローク対応ルール:
+6. lineStrokeMappings を必ず返してください。歌詞1行につき1件です。
+7. 各行に、その行を歌っている間に描かれる stroke group id を割り当ててください。
+8. 1行には1つ、複数、または0個の stroke group を割り当てられます。
+9. 最後の行が「できあがり」「これは○○」のような完成宣言だけなら、strokeGroupIds は空配列で構いません。
+10. 存在する group id だけを使ってください。基本的に描画順を尊重し、同じ group id を複数行に割り当てないでください。
+
+Stroke group count: ${strokeGroups.length}
+Stroke group information:
+${strokeGroupDescriptions.join("\n")}
 `;
 };
 
-const validateLyricsResponse = (result: LyricsResponse) => {
+const normalizeLineStrokeMappings = (result: LyricsResponse, strokeGroups: StrokeGroup[]) => {
+  const validGroupIds = new Set(strokeGroups.map((group) => group.id));
+  const usedGroupIds = new Set<string>();
+  const sourceMappings = Array.isArray(result.lineStrokeMappings) ? result.lineStrokeMappings : [];
+
+  result.lineStrokeMappings = result.lines.map((_, lineIndex) => {
+    const sourceMapping = sourceMappings.find((mapping) => mapping?.lineIndex === lineIndex);
+    const strokeGroupIds = Array.isArray(sourceMapping?.strokeGroupIds) ? sourceMapping.strokeGroupIds : [];
+
+    return {
+      lineIndex,
+      strokeGroupIds: strokeGroupIds.filter((groupId) => {
+        if (typeof groupId !== "string" || !validGroupIds.has(groupId) || usedGroupIds.has(groupId)) {
+          return false;
+        }
+
+        usedGroupIds.add(groupId);
+        return true;
+      }),
+    };
+  });
+};
+
+const validateLyricsResponse = (result: LyricsResponse, strokeGroups: StrokeGroup[]) => {
   if (!Array.isArray(result.lines) || result.lines.length === 0) {
     throw new Error("歌詞の生成結果が空でした。");
   }
@@ -130,11 +168,13 @@ const validateLyricsResponse = (result: LyricsResponse) => {
   if (!Array.isArray(result.singingKanaLines) || result.singingKanaLines.length !== result.lines.length) {
     throw new Error("歌声合成向けの歌詞が正しく生成されませんでした。");
   }
+
+  normalizeLineStrokeMappings(result, strokeGroups);
 };
 
 const toClientError = (error: unknown) => {
   if (!(error instanceof Error)) {
-    return "絵かき歌の生成に失敗しました。もう一度試してください。";
+    return "お絵かき歌の生成に失敗しました。もう一度試してください。";
   }
 
   if (error.message.includes("API key")) {
@@ -163,6 +203,7 @@ const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promi
 
   const ai = new GoogleGenAI({ apiKey });
   const base64Image = getBase64Image(drawingData.imageUri);
+  const strokeGroups = getStrokeGroups(drawingData);
   const prompt = buildPrompt(drawingData);
 
   const generateWithModel = async (targetModelName: string) => {
@@ -198,14 +239,29 @@ const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promi
               description: "歌声合成向けのひらがな歌詞",
             },
             identifiedObject: { type: Type.STRING, description: "絵から推定したモチーフ" },
+            lineStrokeMappings: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  lineIndex: { type: Type.INTEGER },
+                  strokeGroupIds: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                },
+                required: ["lineIndex", "strokeGroupIds"],
+              },
+              description: "歌詞行と stroke group id の対応表",
+            },
           },
-          required: ["title", "lines", "singingKanaLines", "identifiedObject"],
+          required: ["title", "lines", "singingKanaLines", "identifiedObject", "lineStrokeMappings"],
         },
       },
     });
 
     const result = JSON.parse(response.text.trim()) as LyricsResponse;
-    validateLyricsResponse(result);
+    validateLyricsResponse(result, strokeGroups);
 
     return {
       ...result,
