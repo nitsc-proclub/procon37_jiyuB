@@ -905,9 +905,6 @@ const App: React.FC = () => {
             デモ記録
           </button>
         </div>
-        <p className="mt-2 text-xs font-bold text-gray-500">
-          ショートカット: Ctrl+S で歌を生成、Delete で全消し、Ctrl+1/2/3 で画面切替
-        </p>
       </header>
 
       {appView === "demoRecords" ? (
@@ -943,8 +940,8 @@ const App: React.FC = () => {
                   type="button"
                   onClick={() => setShowFavoriteOnly((current) => !current)}
                   className={`rounded-full border px-4 py-2 text-sm font-black transition-all ${showFavoriteOnly
-                      ? "border-orange-200 bg-orange-500 text-white shadow-sm"
-                      : "border-orange-100 bg-white text-gray-600 hover:bg-orange-50"
+                    ? "border-orange-200 bg-orange-500 text-white shadow-sm"
+                    : "border-orange-100 bg-white text-gray-600 hover:bg-orange-50"
                     }`}
                   title="お気に入りのみ表示"
                   aria-pressed={showFavoriteOnly}
@@ -1018,8 +1015,8 @@ const App: React.FC = () => {
                         }}
                         disabled={updatingDemoRecordId === record.recordId || deletingDemoRecordId === record.recordId}
                         className={`flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-all active:scale-95 ${record.isFavorite
-                            ? "border-orange-200 bg-orange-500 text-white hover:bg-orange-600"
-                            : "border-white/80 bg-white/95 text-gray-500 hover:bg-orange-50 hover:text-orange-500"
+                          ? "border-orange-200 bg-orange-500 text-white hover:bg-orange-600"
+                          : "border-white/80 bg-white/95 text-gray-500 hover:bg-orange-50 hover:text-orange-500"
                           }`}
                         title={record.isFavorite ? "お気に入りを外す" : "お気に入りにする"}
                         aria-label={record.isFavorite ? "お気に入りを外す" : "お気に入りにする"}
@@ -1104,8 +1101,8 @@ const App: React.FC = () => {
                         }}
                         disabled={updatingDemoRecordId === record.recordId || deletingDemoRecordId === record.recordId}
                         className={`flex h-9 w-9 items-center justify-center rounded-full border shadow-sm transition-all active:scale-95 ${record.isFavorite
-                            ? "border-orange-200 bg-orange-500 text-white hover:bg-orange-600"
-                            : "border-white/80 bg-white text-gray-500 hover:bg-orange-50 hover:text-orange-500"
+                          ? "border-orange-200 bg-orange-500 text-white hover:bg-orange-600"
+                          : "border-white/80 bg-white text-gray-500 hover:bg-orange-50 hover:text-orange-500"
                           }`}
                         title={record.isFavorite ? "お気に入りを外す" : "お気に入りにする"}
                         aria-label={record.isFavorite ? "お気に入りを外す" : "お気に入りにする"}
