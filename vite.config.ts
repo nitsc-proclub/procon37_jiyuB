@@ -86,6 +86,7 @@ type StoredDemoRecordMetadata = {
   recordId?: string;
   savedAt?: string;
   status?: DemoRecordStatus;
+  favorite?: boolean;
   files?: {
     image?: string;
     audio?: string;
@@ -147,7 +148,22 @@ const buildDemoRecordSummary = (recordId: string, metadata: StoredDemoRecordMeta
     imageUrl,
     audioUrl,
     participantAge: metadata.participantAge ?? metadata.participant?.age ?? null,
+    isFavorite: metadata.favorite ?? false,
   };
+};
+
+const updateDemoRecordMetadata = async (
+  recordsRoot: string,
+  recordId: string,
+  updater: (metadata: StoredDemoRecordMetadata) => StoredDemoRecordMetadata,
+) => {
+  const recordDirectory = getRecordDirectory(recordsRoot, recordId);
+  const currentMetadata = await readDemoRecordMetadata(recordDirectory);
+  const nextMetadata = updater(currentMetadata);
+
+  await fs.writeFile(path.join(recordDirectory, "metadata.json"), `${JSON.stringify(nextMetadata, null, 2)}\n`, "utf8");
+
+  return nextMetadata;
 };
 
 const listDemoRecords = async (recordsRoot: string) => {
@@ -266,6 +282,44 @@ const createDemoRecordMiddleware =
       return;
     }
 
+    if (request.method === "DELETE" && recordId && pathParts.length === 3) {
+      try {
+        const recordDirectory = getRecordDirectory(recordsRoot, recordId);
+        await fs.rm(recordDirectory, { recursive: true, force: true });
+        sendJson(response, 200, { recordId });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to delete demo record";
+        sendJson(response, 500, { error: message });
+      }
+      return;
+    }
+
+    if (request.method === "PATCH" && recordId && pathParts.length === 3) {
+      try {
+        const payload = JSON.parse(await readRequestBody(request)) as { favorite?: unknown };
+        if (typeof payload.favorite !== "boolean") {
+          sendJson(response, 400, { error: "favorite must be a boolean" });
+          return;
+        }
+
+        const favorite = payload.favorite;
+
+        const nextMetadata = await updateDemoRecordMetadata(recordsRoot, recordId, (metadata) => ({
+          ...metadata,
+          favorite,
+        }));
+
+        sendJson(response, 200, {
+          recordId,
+          isFavorite: nextMetadata.favorite ?? false,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to update demo record";
+        sendJson(response, 500, { error: message });
+      }
+      return;
+    }
+
     if (request.method !== "POST" || pathParts.length !== 2) {
       sendJson(response, 405, { error: "Method not allowed" });
       return;
@@ -340,17 +394,17 @@ export default defineConfig(({ mode }) => {
       host: "0.0.0.0",
       proxy: isDev
         ? {
-            "/voicevox": {
-              target: "http://127.0.0.1:50021",
-              changeOrigin: true,
-              rewrite: (requestPath) => requestPath.replace(/^\/voicevox/, ""),
-              configure: (proxy) => {
-                proxy.on("proxyReq", (proxyRequest) => {
-                  proxyRequest.setHeader("Origin", "http://127.0.0.1:50021");
-                });
-              },
+          "/voicevox": {
+            target: "http://127.0.0.1:50021",
+            changeOrigin: true,
+            rewrite: (requestPath) => requestPath.replace(/^\/voicevox/, ""),
+            configure: (proxy) => {
+              proxy.on("proxyReq", (proxyRequest) => {
+                proxyRequest.setHeader("Origin", "http://127.0.0.1:50021");
+              });
             },
-          }
+          },
+        }
         : undefined,
       cors: isDev,
     },

@@ -4,6 +4,7 @@ type DemoRecordStatus = "success" | "error";
 
 interface DemoRecordMetadata {
   status: DemoRecordStatus;
+  favorite: boolean;
   startedAt: string;
   completedAt: string;
   participantAge: number | null;
@@ -53,6 +54,7 @@ export const saveDemoRecord = async ({
   const completedAt = new Date().toISOString();
   const metadata: DemoRecordMetadata = {
     status: error ? "error" : "success",
+    favorite: false,
     startedAt,
     completedAt,
     participantAge,
@@ -90,8 +92,8 @@ export const saveDemoRecord = async ({
   return (await response.json()) as { recordId: string; directory: string };
 };
 
-const fetchDemoRecordJson = async <T>(url: string) => {
-  const response = await fetch(url);
+const fetchDemoRecordJson = async <T>(url: string, init?: RequestInit) => {
+  const response = await fetch(url, init);
 
   if (!response.ok) {
     const details = await response.text().catch(() => "");
@@ -106,3 +108,23 @@ export const listDemoRecords = () =>
 
 export const getDemoRecord = (recordId: string) =>
   fetchDemoRecordJson<DemoRecordDetail>(`/api/demo-records/${encodeURIComponent(recordId)}`);
+
+export const setDemoRecordFavorite = (recordId: string, favorite: boolean) =>
+  fetchDemoRecordJson<{ recordId: string; isFavorite: boolean }>(`/api/demo-records/${encodeURIComponent(recordId)}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ favorite }),
+  });
+
+export const deleteDemoRecord = async (recordId: string) => {
+  const response = await fetch(`/api/demo-records/${encodeURIComponent(recordId)}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new Error(details || `Failed to delete demo record (${response.status})`);
+  }
+};

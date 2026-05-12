@@ -65,6 +65,7 @@ export interface DemoRecordSummary {
   imageUrl: string;
   audioUrl: string | null;
   participantAge: number | null;
+  isFavorite: boolean;
 }
 
 export interface DemoRecordDetail extends DemoRecordSummary {

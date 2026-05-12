@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import PaintCanvas from "./components/PaintCanvas";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
-import { getDemoRecord, listDemoRecords, saveDemoRecord } from "./services/demoRecordService";
+import { deleteDemoRecord, getDemoRecord, listDemoRecords, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { groupStrokes } from "./services/strokeGroupingService";
@@ -211,10 +211,13 @@ const App: React.FC = () => {
   const [isDataSavingEnabled, setIsDataSavingEnabled] = useState(true);
   const [appView, setAppView] = useState<AppView>("maker");
   const [demoBrowseMode, setDemoBrowseMode] = useState<DemoBrowseMode>("drawings");
+  const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
   const [demoRecords, setDemoRecords] = useState<DemoRecordSummary[]>([]);
   const [isDemoRecordsLoading, setIsDemoRecordsLoading] = useState(false);
   const [demoRecordsError, setDemoRecordsError] = useState<string | null>(null);
   const [loadingDemoRecordId, setLoadingDemoRecordId] = useState<string | null>(null);
+  const [updatingDemoRecordId, setUpdatingDemoRecordId] = useState<string | null>(null);
+  const [deletingDemoRecordId, setDeletingDemoRecordId] = useState<string | null>(null);
   const [selectedDemoDrawing, setSelectedDemoDrawing] = useState<DrawingData | null>(null);
   const [selectedDemoRecordId, setSelectedDemoRecordId] = useState<string | null>(null);
   const [generatedDrawing, setGeneratedDrawing] = useState<DrawingData | null>(null);
@@ -300,6 +303,16 @@ const App: React.FC = () => {
       setDemoRecordsError(loadError instanceof Error ? loadError.message : "デモ記録を読み込めませんでした。");
     } finally {
       setIsDemoRecordsLoading(false);
+    }
+  };
+
+  const refreshDemoRecords = async () => {
+    setDemoRecordsError(null);
+
+    try {
+      setDemoRecords(await listDemoRecords());
+    } catch (loadError) {
+      setDemoRecordsError(loadError instanceof Error ? loadError.message : "デモ記録を読み込めませんでした。");
     }
   };
 
@@ -455,6 +468,45 @@ const App: React.FC = () => {
       setDemoRecordsError(loadError instanceof Error ? loadError.message : "デモ記録を読み込めませんでした。");
     } finally {
       setLoadingDemoRecordId(null);
+    }
+  };
+
+  const handleToggleDemoRecordFavorite = async (recordId: string, nextFavorite: boolean) => {
+    setUpdatingDemoRecordId(recordId);
+    setDemoRecordsError(null);
+
+    try {
+      await setDemoRecordFavorite(recordId, nextFavorite);
+      await refreshDemoRecords();
+    } catch (favoriteError) {
+      setDemoRecordsError(favoriteError instanceof Error ? favoriteError.message : "お気に入りを更新できませんでした。");
+    } finally {
+      setUpdatingDemoRecordId(null);
+    }
+  };
+
+  const handleDeleteDemoRecord = async (recordId: string) => {
+    const record = demoRecords.find((item) => item.recordId === recordId);
+    const confirmed = window.confirm(`${record?.title ?? "このデモ記録"}を削除しますか？この操作は元に戻せません。`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingDemoRecordId(recordId);
+    setDemoRecordsError(null);
+
+    try {
+      await deleteDemoRecord(recordId);
+      setDemoRecords((current) => current.filter((item) => item.recordId !== recordId));
+
+      if (selectedDemoRecordId === recordId) {
+        handleClear();
+      }
+    } catch (deleteError) {
+      setDemoRecordsError(deleteError instanceof Error ? deleteError.message : "デモ記録を削除できませんでした。");
+    } finally {
+      setDeletingDemoRecordId(null);
     }
   };
 
@@ -700,6 +752,7 @@ const App: React.FC = () => {
   const playbackDrawing = selectedDemoDrawing ?? generatedDrawing;
   const playbackLyricLineCount = getSingingLineCount(lyrics);
   const playbackAnimationEndProgress = getDrawingAnimationEndProgress(lyrics, playbackScore);
+  const visibleDemoRecords = showFavoriteOnly ? demoRecords.filter((record) => record.isFavorite) : demoRecords;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-amber-50 via-yellow-50 to-orange-100 p-4 md:p-8 flex flex-col items-center">
@@ -863,7 +916,9 @@ const App: React.FC = () => {
             <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>
                 <h2 className="text-2xl font-black text-gray-800">demo-records</h2>
-                <p className="text-sm font-semibold text-gray-500">保存済みのお絵描き歌を選ぶと、生成後の状態でメーカー画面に開きます。</p>
+                <p className="text-sm font-semibold text-gray-500">
+                  保存済みのお絵描き歌を選ぶと、生成後の状態でメーカー画面に開きます。星でお気に入り、ゴミ箱で削除できます。
+                </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <div className="flex rounded-full bg-orange-50 p-1">
@@ -886,6 +941,18 @@ const App: React.FC = () => {
                 </div>
                 <button
                   type="button"
+                  onClick={() => setShowFavoriteOnly((current) => !current)}
+                  className={`rounded-full border px-4 py-2 text-sm font-black transition-all ${showFavoriteOnly
+                      ? "border-orange-200 bg-orange-500 text-white shadow-sm"
+                      : "border-orange-100 bg-white text-gray-600 hover:bg-orange-50"
+                    }`}
+                  title="お気に入りのみ表示"
+                  aria-pressed={showFavoriteOnly}
+                >
+                  ★ お気に入りのみ
+                </button>
+                <button
+                  type="button"
                   onClick={loadDemoRecords}
                   disabled={isDemoRecordsLoading}
                   className="rounded-full border border-orange-100 bg-white px-4 py-2 text-sm font-black text-gray-600 shadow-sm transition-all hover:bg-orange-50 disabled:opacity-50"
@@ -905,48 +972,183 @@ const App: React.FC = () => {
               <div className="flex min-h-64 items-center justify-center text-lg font-black text-orange-400">
                 読み込み中...
               </div>
-            ) : demoRecords.length === 0 ? (
+            ) : visibleDemoRecords.length === 0 ? (
               <div className="flex min-h-64 items-center justify-center rounded-2xl border-4 border-dashed border-gray-200 text-center font-bold text-gray-400">
-                表示できる成功デモ記録がまだありません。
+                {showFavoriteOnly ? "お気に入りのデモ記録がまだありません。" : "表示できる成功デモ記録がまだありません。"}
               </div>
             ) : demoBrowseMode === "drawings" ? (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                {demoRecords.map((record) => (
-                  <button
-                    key={record.recordId}
-                    type="button"
-                    onClick={() => void handleSelectDemoRecord(record.recordId)}
-                    className="group overflow-hidden rounded-2xl border-2 border-yellow-100 bg-yellow-50 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-md disabled:opacity-60"
-                    disabled={loadingDemoRecordId !== null}
-                  >
-                    <div className="aspect-square bg-white">
-                      <img src={record.imageUrl} alt={record.title} className="h-full w-full object-contain" loading="lazy" />
+                {visibleDemoRecords.map((record) => (
+                  <div key={record.recordId} className="relative">
+                    <button
+                      type="button"
+                      onClick={() => void handleSelectDemoRecord(record.recordId)}
+                      className="group h-full w-full overflow-hidden rounded-2xl border-2 border-yellow-100 bg-yellow-50 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-md disabled:opacity-60"
+                      disabled={loadingDemoRecordId !== null || updatingDemoRecordId === record.recordId || deletingDemoRecordId === record.recordId}
+                    >
+                      <div className="relative aspect-square bg-white">
+                        <img src={record.imageUrl} alt={record.title} className="h-full w-full object-contain" loading="lazy" />
+                        {record.isFavorite && (
+                          <span className="absolute left-2 top-2 rounded-full bg-white/95 px-2 py-1 text-[10px] font-black text-orange-500 shadow-sm">
+                            お気に入り
+                          </span>
+                        )}
+                      </div>
+                      <div className="p-3">
+                        <p className="truncate text-sm font-black text-gray-800">{record.title}</p>
+                        <p className="mt-1 truncate text-xs font-bold text-orange-500">{record.identifiedObject}</p>
+                        {loadingDemoRecordId === record.recordId && (
+                          <p className="mt-2 text-xs font-black text-gray-500">読み込み中...</p>
+                        )}
+                        {updatingDemoRecordId === record.recordId && (
+                          <p className="mt-2 text-xs font-black text-orange-500">お気に入り更新中...</p>
+                        )}
+                        {deletingDemoRecordId === record.recordId && (
+                          <p className="mt-2 text-xs font-black text-red-500">削除中...</p>
+                        )}
+                      </div>
+                    </button>
+
+                    <div className="absolute right-2 top-2 flex gap-1">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleToggleDemoRecordFavorite(record.recordId, !record.isFavorite);
+                        }}
+                        disabled={updatingDemoRecordId === record.recordId || deletingDemoRecordId === record.recordId}
+                        className={`flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-all active:scale-95 ${record.isFavorite
+                            ? "border-orange-200 bg-orange-500 text-white hover:bg-orange-600"
+                            : "border-white/80 bg-white/95 text-gray-500 hover:bg-orange-50 hover:text-orange-500"
+                          }`}
+                        title={record.isFavorite ? "お気に入りを外す" : "お気に入りにする"}
+                        aria-label={record.isFavorite ? "お気に入りを外す" : "お気に入りにする"}
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill={record.isFavorite ? "currentColor" : "none"} aria-hidden="true">
+                          <path
+                            d="M12 3.75 14.94 9.7l6.56.95-4.75 4.63 1.12 6.53L12 18.96l-5.87 3.09 1.12-6.53L2.5 10.65l6.56-.95L12 3.75Z"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleDeleteDemoRecord(record.recordId);
+                        }}
+                        disabled={updatingDemoRecordId === record.recordId || deletingDemoRecordId === record.recordId}
+                        className="flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-white/95 text-gray-500 shadow-sm transition-all hover:bg-red-50 hover:text-red-500 active:scale-95"
+                        title="削除"
+                        aria-label="削除"
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <path
+                            d="M4 7h16"
+                            stroke="currentColor"
+                            strokeWidth="1.9"
+                            strokeLinecap="round"
+                          />
+                          <path
+                            d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7"
+                            stroke="currentColor"
+                            strokeWidth="1.9"
+                            strokeLinecap="round"
+                          />
+                          <path
+                            d="M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12"
+                            stroke="currentColor"
+                            strokeWidth="1.9"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
                     </div>
-                    <div className="p-3">
-                      <p className="truncate text-sm font-black text-gray-800">{record.title}</p>
-                      <p className="mt-1 truncate text-xs font-bold text-orange-500">{record.identifiedObject}</p>
-                      {loadingDemoRecordId === record.recordId && (
-                        <p className="mt-2 text-xs font-black text-gray-500">読み込み中...</p>
-                      )}
-                    </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             ) : (
               <div className="divide-y divide-orange-50 overflow-hidden rounded-2xl border-2 border-orange-100">
-                {demoRecords.map((record) => (
-                  <button
-                    key={record.recordId}
-                    type="button"
-                    onClick={() => void handleSelectDemoRecord(record.recordId)}
-                    className="flex w-full items-center justify-between gap-4 bg-white px-4 py-3 text-left transition-all hover:bg-orange-50 disabled:opacity-60"
-                    disabled={loadingDemoRecordId !== null}
-                  >
-                    <span className="min-w-0 truncate text-base font-black text-gray-800">{record.title}</span>
-                    <span className="shrink-0 text-xs font-bold text-gray-400">
-                      {loadingDemoRecordId === record.recordId ? "読み込み中..." : record.identifiedObject}
-                    </span>
-                  </button>
+                {visibleDemoRecords.map((record) => (
+                  <div key={record.recordId} className="flex w-full items-stretch gap-2 bg-white px-4 py-3 transition-all hover:bg-orange-50">
+                    <button
+                      type="button"
+                      onClick={() => void handleSelectDemoRecord(record.recordId)}
+                      className="min-w-0 flex-1 text-left disabled:opacity-60"
+                      disabled={loadingDemoRecordId !== null || updatingDemoRecordId === record.recordId || deletingDemoRecordId === record.recordId}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="min-w-0 truncate text-base font-black text-gray-800">{record.title}</span>
+                        {record.isFavorite && <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-black text-orange-500">お気に入り</span>}
+                      </div>
+                      <span className="mt-1 block text-xs font-bold text-gray-400">
+                        {loadingDemoRecordId === record.recordId
+                          ? "読み込み中..."
+                          : updatingDemoRecordId === record.recordId
+                            ? "お気に入り更新中..."
+                            : deletingDemoRecordId === record.recordId
+                              ? "削除中..."
+                              : record.identifiedObject}
+                      </span>
+                    </button>
+
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleToggleDemoRecordFavorite(record.recordId, !record.isFavorite);
+                        }}
+                        disabled={updatingDemoRecordId === record.recordId || deletingDemoRecordId === record.recordId}
+                        className={`flex h-9 w-9 items-center justify-center rounded-full border shadow-sm transition-all active:scale-95 ${record.isFavorite
+                            ? "border-orange-200 bg-orange-500 text-white hover:bg-orange-600"
+                            : "border-white/80 bg-white text-gray-500 hover:bg-orange-50 hover:text-orange-500"
+                          }`}
+                        title={record.isFavorite ? "お気に入りを外す" : "お気に入りにする"}
+                        aria-label={record.isFavorite ? "お気に入りを外す" : "お気に入りにする"}
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill={record.isFavorite ? "currentColor" : "none"} aria-hidden="true">
+                          <path
+                            d="M12 3.75 14.94 9.7l6.56.95-4.75 4.63 1.12 6.53L12 18.96l-5.87 3.09 1.12-6.53L2.5 10.65l6.56-.95L12 3.75Z"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleDeleteDemoRecord(record.recordId);
+                        }}
+                        disabled={updatingDemoRecordId === record.recordId || deletingDemoRecordId === record.recordId}
+                        className="flex h-9 w-9 items-center justify-center rounded-full border border-white/80 bg-white text-gray-500 shadow-sm transition-all hover:bg-red-50 hover:text-red-500 active:scale-95"
+                        title="削除"
+                        aria-label="削除"
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <path d="M4 7h16" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+                          <path
+                            d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7"
+                            stroke="currentColor"
+                            strokeWidth="1.9"
+                            strokeLinecap="round"
+                          />
+                          <path
+                            d="M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12"
+                            stroke="currentColor"
+                            strokeWidth="1.9"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
