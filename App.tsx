@@ -128,6 +128,74 @@ const getDrawingAnimationEndProgress = (lyrics: LyricsResponse | null, score: Si
   return Math.min(1, Math.max(0.1, lastLineStartFrame / totalFrames));
 };
 
+const isEditableAppKeyboardTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+  return target.isContentEditable || tagName === "input" || tagName === "textarea" || tagName === "select";
+};
+
+type ShortcutItem = {
+  keys: string;
+  description: string;
+};
+
+type ShortcutGroup = {
+  title: string;
+  items: ShortcutItem[];
+};
+
+const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
+  {
+    title: "共通",
+    items: [
+      { keys: "Ctrl/Cmd + 1", description: "メーカーに切り替え" },
+      { keys: "Ctrl/Cmd + 2", description: "実験に切り替え" },
+      { keys: "Ctrl/Cmd + 3", description: "デモ記録に切り替え" },
+      { keys: "Ctrl/Cmd + /", description: "この一覧を開閉" },
+      { keys: "Esc", description: "一覧や確認ダイアログを閉じる" },
+    ],
+  },
+  {
+    title: "メーカー",
+    items: [
+      { keys: "Enter", description: "歌をつくる" },
+      { keys: "Ctrl/Cmd + S", description: "歌をつくる" },
+      { keys: "Ctrl/Cmd + Z", description: "ひとつ戻す" },
+      { keys: "Ctrl/Cmd + Y", description: "ひとつ進める" },
+      { keys: "Ctrl/Cmd + Shift + Z", description: "ひとつ進める" },
+      { keys: "↑ / ↓", description: "年齢を 1 ずつ変更" },
+      { keys: "Shift + ↑ / ↓", description: "年齢を 10 ずつ変更" },
+      { keys: "PageUp / PageDown", description: "年齢を 10 ずつ変更" },
+      { keys: "Home / End", description: "年齢を最小 / 最大に変更" },
+      { keys: "Delete / Backspace", description: "ぜんぶ消す" },
+    ],
+  },
+  {
+    title: "確認ダイアログ",
+    items: [
+      { keys: "Enter", description: "決定" },
+      { keys: "Esc", description: "キャンセル" },
+    ],
+  },
+  {
+    title: "実験",
+    items: [
+      { keys: "Ctrl/Cmd + Enter", description: "生成して聴く" },
+    ],
+  },
+  {
+    title: "デモ記録",
+    items: [
+      { keys: "D", description: "絵の一覧に切り替え" },
+      { keys: "S", description: "歌の一覧に切り替え" },
+      { keys: "R", description: "記録を更新" },
+    ],
+  },
+];
+
 const App: React.FC = () => {
   const [lyrics, setLyrics] = useState<LyricsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +229,7 @@ const App: React.FC = () => {
   const [experimentProgressLabel, setExperimentProgressLabel] = useState("待機中");
   const [isExperimentGenerating, setIsExperimentGenerating] = useState(false);
   const [loadingExperimentRecordId, setLoadingExperimentRecordId] = useState<string | null>(null);
+  const [isShortcutHelpOpen, setIsShortcutHelpOpen] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioUrlRef = useRef<string | null>(null);
@@ -241,6 +310,79 @@ const App: React.FC = () => {
 
     void loadDemoRecords();
   }, [appView, demoRecords.length, isDemoRecordsLoading]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+
+      if (key === "escape" && isShortcutHelpOpen) {
+        event.preventDefault();
+        setIsShortcutHelpOpen(false);
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && (key === "/" || key === "?")) {
+        event.preventDefault();
+        setIsShortcutHelpOpen((current) => !current);
+        return;
+      }
+
+      if (!event.ctrlKey && !event.metaKey) {
+        if (appView === "demoRecords") {
+          if (key === "d") {
+            event.preventDefault();
+            setDemoBrowseMode("drawings");
+            return;
+          }
+
+          if (key === "s") {
+            event.preventDefault();
+            setDemoBrowseMode("songs");
+            return;
+          }
+
+          if (key === "r") {
+            event.preventDefault();
+            void loadDemoRecords();
+          }
+        }
+
+        return;
+      }
+
+      if (isEditableAppKeyboardTarget(event.target)) {
+        return;
+      }
+
+      if (key === "1") {
+        event.preventDefault();
+        setAppView("maker");
+        setIsShortcutHelpOpen(false);
+        return;
+      }
+
+      if (key === "2") {
+        event.preventDefault();
+        setAppView("melodyExperiment");
+        setIsShortcutHelpOpen(false);
+        return;
+      }
+
+      if (key === "3") {
+        event.preventDefault();
+        setAppView("demoRecords");
+        setIsShortcutHelpOpen(false);
+      }
+
+      if (appView === "melodyExperiment" && key === "enter" && !isExperimentGenerating) {
+        event.preventDefault();
+        void handleGenerateExperimentVoice();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [appView, isExperimentGenerating, isShortcutHelpOpen, loadDemoRecords]);
 
   const replaceAudioUrl = (nextUrl: string | null) => {
     if (isBlobUrl(audioUrlRef.current)) {
@@ -600,19 +742,83 @@ const App: React.FC = () => {
           role="switch"
           aria-checked={isDataSavingEnabled}
           onClick={() => setIsDataSavingEnabled((enabled) => !enabled)}
-          className={`relative h-8 w-14 rounded-full transition-colors ${
-            isDataSavingEnabled ? "bg-orange-400" : "bg-gray-300"
-          }`}
+          className={`relative h-8 w-14 rounded-full transition-colors ${isDataSavingEnabled ? "bg-orange-400" : "bg-gray-300"
+            }`}
           title="データ保存オン/オフ"
         >
           <span
-            className={`absolute left-0 top-1 h-6 w-6 rounded-full bg-white shadow-md transition-transform ${
-              isDataSavingEnabled ? "translate-x-7" : "translate-x-1"
-            }`}
+            className={`absolute left-0 top-1 h-6 w-6 rounded-full bg-white shadow-md transition-transform ${isDataSavingEnabled ? "translate-x-7" : "translate-x-1"
+              }`}
           />
         </button>
         <span className="w-8 text-sm font-black text-gray-700">{isDataSavingEnabled ? "ON" : "OFF"}</span>
       </div>
+
+      <button
+        type="button"
+        onClick={() => setIsShortcutHelpOpen((current) => !current)}
+        className="fixed bottom-4 left-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-white/70 bg-white/85 text-lg font-black text-gray-500 shadow-lg backdrop-blur-md transition-all hover:bg-orange-50 hover:text-orange-500 active:scale-95"
+        title="ショートカット一覧 (Ctrl+/)"
+        aria-label="ショートカット一覧"
+        aria-expanded={isShortcutHelpOpen}
+        aria-controls="shortcut-help-panel"
+      >
+        ?
+      </button>
+
+      {isShortcutHelpOpen && (
+        <div className="fixed inset-0 z-50">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/10"
+            onClick={() => setIsShortcutHelpOpen(false)}
+            aria-label="ショートカット一覧を閉じる"
+          />
+          <section
+            id="shortcut-help-panel"
+            className="absolute bottom-16 left-4 w-[min(92vw,30rem)] max-h-[70vh] overflow-auto rounded-3xl border border-white/80 bg-white/95 p-4 shadow-2xl backdrop-blur-md"
+            role="dialog"
+            aria-modal="false"
+            aria-label="ショートカット一覧"
+          >
+            <div className="mb-3 flex items-center justify-between gap-3 border-b border-orange-100 pb-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.24em] text-orange-400">Shortcut Guide</p>
+                <h2 className="text-lg font-black text-gray-800">ショートカット一覧</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsShortcutHelpOpen(false)}
+                className="rounded-full bg-gray-100 px-3 py-1.5 text-xs font-black text-gray-600 transition-all hover:bg-gray-200"
+              >
+                閉じる
+              </button>
+            </div>
+
+            <p className="mb-4 text-xs font-semibold leading-relaxed text-gray-500">
+              画面右上のボタンとは別に、ひっそり開ける一覧です。Windows は Ctrl、Mac は Cmd を使います。
+            </p>
+
+            <div className="space-y-4">
+              {APP_SHORTCUT_GROUPS.map((group) => (
+                <section key={group.title} className="rounded-2xl border border-orange-100 bg-orange-50/40 p-3">
+                  <h3 className="mb-2 text-sm font-black text-orange-600">{group.title}</h3>
+                  <div className="space-y-2">
+                    {group.items.map((item) => (
+                      <div key={`${group.title}-${item.keys}`} className="flex gap-3 text-sm">
+                        <span className="min-w-40 shrink-0 rounded-full bg-white px-3 py-1 font-black text-gray-700 shadow-sm">
+                          {item.keys}
+                        </span>
+                        <span className="pt-1 font-semibold text-gray-600">{item.description}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
 
       <header className="mb-4 text-center">
         <h1 className="text-2xl md:text-3xl font-bold text-orange-600 drop-shadow-sm">お絵かき歌メーカー</h1>
@@ -621,31 +827,34 @@ const App: React.FC = () => {
           <button
             type="button"
             onClick={() => setAppView("maker")}
-            className={`rounded-full px-5 py-2 text-sm font-black transition-all ${
-              appView === "maker" ? "bg-orange-400 text-white shadow-sm" : "text-gray-600 hover:bg-orange-50"
-            }`}
+            title="メーカー (Ctrl+1 / Cmd+1)"
+            className={`rounded-full px-5 py-2 text-sm font-black transition-all ${appView === "maker" ? "bg-orange-400 text-white shadow-sm" : "text-gray-600 hover:bg-orange-50"
+              }`}
           >
             メーカー
           </button>
           <button
             type="button"
             onClick={() => setAppView("melodyExperiment")}
-            className={`rounded-full px-5 py-2 text-sm font-black transition-all ${
-              appView === "melodyExperiment" ? "bg-orange-400 text-white shadow-sm" : "text-gray-600 hover:bg-orange-50"
-            }`}
+            title="実験 (Ctrl+2 / Cmd+2)"
+            className={`rounded-full px-5 py-2 text-sm font-black transition-all ${appView === "melodyExperiment" ? "bg-orange-400 text-white shadow-sm" : "text-gray-600 hover:bg-orange-50"
+              }`}
           >
             実験
           </button>
           <button
             type="button"
             onClick={() => setAppView("demoRecords")}
-            className={`rounded-full px-5 py-2 text-sm font-black transition-all ${
-              appView === "demoRecords" ? "bg-orange-400 text-white shadow-sm" : "text-gray-600 hover:bg-orange-50"
-            }`}
+            title="デモ記録 (Ctrl+3 / Cmd+3)"
+            className={`rounded-full px-5 py-2 text-sm font-black transition-all ${appView === "demoRecords" ? "bg-orange-400 text-white shadow-sm" : "text-gray-600 hover:bg-orange-50"
+              }`}
           >
             デモ記録
           </button>
         </div>
+        <p className="mt-2 text-xs font-bold text-gray-500">
+          ショートカット: Ctrl+S で歌を生成、Delete で全消し、Ctrl+1/2/3 で画面切替
+        </p>
       </header>
 
       {appView === "demoRecords" ? (
@@ -661,18 +870,16 @@ const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setDemoBrowseMode("drawings")}
-                    className={`rounded-full px-4 py-2 text-sm font-black transition-all ${
-                      demoBrowseMode === "drawings" ? "bg-white text-orange-600 shadow-sm" : "text-gray-500"
-                    }`}
+                    className={`rounded-full px-4 py-2 text-sm font-black transition-all ${demoBrowseMode === "drawings" ? "bg-white text-orange-600 shadow-sm" : "text-gray-500"
+                      }`}
                   >
                     絵の一覧
                   </button>
                   <button
                     type="button"
                     onClick={() => setDemoBrowseMode("songs")}
-                    className={`rounded-full px-4 py-2 text-sm font-black transition-all ${
-                      demoBrowseMode === "songs" ? "bg-white text-orange-600 shadow-sm" : "text-gray-500"
-                    }`}
+                    className={`rounded-full px-4 py-2 text-sm font-black transition-all ${demoBrowseMode === "songs" ? "bg-white text-orange-600 shadow-sm" : "text-gray-500"
+                      }`}
                   >
                     歌の一覧
                   </button>
@@ -904,127 +1111,125 @@ const App: React.FC = () => {
           </section>
         </main>
       ) : (
-      <main className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-8 items-start mb-16">
-        <section className="min-w-0">
-          <PaintCanvas
-            onComplete={handleComplete}
-            onClear={handleClear}
-            isGenerating={isGenerating}
-            age={participantAge}
-            onAgeChange={setParticipantAge}
-            isAgeSelectorVisible={isDataSavingEnabled}
-            initialDrawing={selectedDemoDrawing}
-            playbackDrawing={playbackDrawing}
-            playbackAudioRef={audioRef}
-            playbackDisplayMode={drawingDisplayMode}
-            playbackAnimationEndProgress={playbackAnimationEndProgress}
-            playbackLineStrokeMappings={lyrics?.lineStrokeMappings}
-            playbackScore={playbackScore}
-            playbackLyricLineCount={playbackLyricLineCount}
-            isPlaybackActive={isAudioPlaying}
-          />
+        <main className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-8 items-start mb-16">
+          <section className="min-w-0">
+            <PaintCanvas
+              onComplete={handleComplete}
+              onClear={handleClear}
+              isGenerating={isGenerating}
+              age={participantAge}
+              onAgeChange={setParticipantAge}
+              isAgeSelectorVisible={isDataSavingEnabled}
+              initialDrawing={selectedDemoDrawing}
+              playbackDrawing={playbackDrawing}
+              playbackAudioRef={audioRef}
+              playbackDisplayMode={drawingDisplayMode}
+              playbackAnimationEndProgress={playbackAnimationEndProgress}
+              playbackLineStrokeMappings={lyrics?.lineStrokeMappings}
+              playbackScore={playbackScore}
+              playbackLyricLineCount={playbackLyricLineCount}
+              isPlaybackActive={isAudioPlaying}
+            />
 
-          {error && (
-            <div className="mt-4 p-4 bg-red-100 border-2 border-red-200 text-red-700 rounded-xl font-bold text-center">
-              エラー: {error}
-            </div>
-          )}
-        </section>
+            {error && (
+              <div className="mt-4 p-4 bg-red-100 border-2 border-red-200 text-red-700 rounded-xl font-bold text-center">
+                エラー: {error}
+              </div>
+            )}
+          </section>
 
-        <section className="flex min-w-0 flex-col gap-6">
-          {lyrics || isGenerating ? (
-            <div className="bg-white p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
-              {isGenerating ? (
-                <div className="flex h-full min-h-[340px] flex-col items-center justify-center text-center">
-                  <div className="mb-6 text-6xl font-black text-orange-400 tabular-nums">{progressValue}%</div>
-                  <div className="h-4 w-full max-w-md overflow-hidden rounded-full bg-orange-100">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-orange-400 via-yellow-400 to-pink-400 transition-[width] duration-200 ease-out"
-                      style={{ width: `${progressValue}%` }}
-                    />
-                  </div>
-                  <p className="mt-5 text-lg font-bold text-gray-700">{progressLabel}</p>
-                </div>
-              ) : lyrics ? (
-                <>
-                  <div className="mb-6 text-center border-b-2 border-orange-50 pb-4">
-                    <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">
-                      {lyrics.identifiedObject}
-                    </span>
-                    <h2 className="text-3xl font-bold text-gray-800">{lyrics.title}</h2>
-                    {selectedDemoRecordId && (
-                      <p className="mt-2 text-xs font-bold text-gray-400">demo-records から読み込み済み</p>
-                    )}
-                  </div>
-
-                  <div className="space-y-4 text-center">
-                    {lyrics.lines.map((line, index) => (
-                      <div key={`${line}-${index}`}>
-                        <p className="text-xl md:text-2xl text-gray-700 leading-relaxed font-medium">{line}</p>
-                        {lyrics.lineStrokeMappings?.[index] && (
-                          <p className="mt-1 text-xs font-bold text-gray-400">
-                            strokes: {lyrics.lineStrokeMappings[index].strokeGroupIds.join(", ") || "none"}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5">
-                    <div className="mb-4 flex justify-end">
-                      <div className="flex rounded-full bg-white p-1 shadow-sm">
-                        <button
-                          type="button"
-                          onClick={() => setDrawingDisplayMode("animated")}
-                          className={`rounded-full px-4 py-2 text-sm font-black transition-all ${
-                            drawingDisplayMode === "animated" ? "bg-orange-400 text-white shadow-sm" : "text-gray-500"
-                          }`}
-                        >
-                          アニメーション
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDrawingDisplayMode("static")}
-                          className={`rounded-full px-4 py-2 text-sm font-black transition-all ${
-                            drawingDisplayMode === "static" ? "bg-orange-400 text-white shadow-sm" : "text-gray-500"
-                          }`}
-                        >
-                          完成絵
-                        </button>
-                      </div>
+          <section className="flex min-w-0 flex-col gap-6">
+            {lyrics || isGenerating ? (
+              <div className="bg-white p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
+                {isGenerating ? (
+                  <div className="flex h-full min-h-[340px] flex-col items-center justify-center text-center">
+                    <div className="mb-6 text-6xl font-black text-orange-400 tabular-nums">{progressValue}%</div>
+                    <div className="h-4 w-full max-w-md overflow-hidden rounded-full bg-orange-100">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-orange-400 via-yellow-400 to-pink-400 transition-[width] duration-200 ease-out"
+                        style={{ width: `${progressValue}%` }}
+                      />
                     </div>
-                    <audio
-                      ref={audioRef}
-                      src={audioUrl ?? undefined}
-                      controls
-                      className="w-full"
-                      onPlay={() => setIsAudioPlaying(true)}
-                      onPause={() => setIsAudioPlaying(false)}
-                      onEnded={() => setIsAudioPlaying(false)}
-                      onEmptied={() => setIsAudioPlaying(false)}
-                    />
+                    <p className="mt-5 text-lg font-bold text-gray-700">{progressLabel}</p>
                   </div>
+                ) : lyrics ? (
+                  <>
+                    <div className="mb-6 text-center border-b-2 border-orange-50 pb-4">
+                      <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">
+                        {lyrics.identifiedObject}
+                      </span>
+                      <h2 className="text-3xl font-bold text-gray-800">{lyrics.title}</h2>
+                      {selectedDemoRecordId && (
+                        <p className="mt-2 text-xs font-bold text-gray-400">demo-records から読み込み済み</p>
+                      )}
+                    </div>
 
-                  {lyrics.modelName && (
-                    <p className="mt-3 text-right text-xs font-bold text-gray-400">
-                      model: {lyrics.modelName}
-                    </p>
-                  )}
-                </>
-              ) : null}
-            </div>
-          ) : (
-            <div className="h-full flex flex-col items-center justify-center p-12 bg-white/50 border-4 border-dashed border-gray-300 rounded-3xl text-gray-400 text-center">
-              <div className="text-6xl mb-4 animate-bounce">♪</div>
-              <p className="text-xl font-bold">
-                左のキャンバスに絵を描いてください。
-                <br />
-                歌詞づくりから歌声生成までまとめて進みます。
-              </p>
-            </div>
-          )}
-        </section>
-      </main>
+                    <div className="space-y-4 text-center">
+                      {lyrics.lines.map((line, index) => (
+                        <div key={`${line}-${index}`}>
+                          <p className="text-xl md:text-2xl text-gray-700 leading-relaxed font-medium">{line}</p>
+                          {lyrics.lineStrokeMappings?.[index] && (
+                            <p className="mt-1 text-xs font-bold text-gray-400">
+                              strokes: {lyrics.lineStrokeMappings[index].strokeGroupIds.join(", ") || "none"}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5">
+                      <div className="mb-4 flex justify-end">
+                        <div className="flex rounded-full bg-white p-1 shadow-sm">
+                          <button
+                            type="button"
+                            onClick={() => setDrawingDisplayMode("animated")}
+                            className={`rounded-full px-4 py-2 text-sm font-black transition-all ${drawingDisplayMode === "animated" ? "bg-orange-400 text-white shadow-sm" : "text-gray-500"
+                              }`}
+                          >
+                            アニメーション
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDrawingDisplayMode("static")}
+                            className={`rounded-full px-4 py-2 text-sm font-black transition-all ${drawingDisplayMode === "static" ? "bg-orange-400 text-white shadow-sm" : "text-gray-500"
+                              }`}
+                          >
+                            完成絵
+                          </button>
+                        </div>
+                      </div>
+                      <audio
+                        ref={audioRef}
+                        src={audioUrl ?? undefined}
+                        controls
+                        className="w-full"
+                        onPlay={() => setIsAudioPlaying(true)}
+                        onPause={() => setIsAudioPlaying(false)}
+                        onEnded={() => setIsAudioPlaying(false)}
+                        onEmptied={() => setIsAudioPlaying(false)}
+                      />
+                    </div>
+
+                    {lyrics.modelName && (
+                      <p className="mt-3 text-right text-xs font-bold text-gray-400">
+                        model: {lyrics.modelName}
+                      </p>
+                    )}
+                  </>
+                ) : null}
+              </div>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center p-12 bg-white/50 border-4 border-dashed border-gray-300 rounded-3xl text-gray-400 text-center">
+                <div className="text-6xl mb-4 animate-bounce">♪</div>
+                <p className="text-xl font-bold">
+                  左のキャンバスに絵を描いてください。
+                  <br />
+                  歌詞づくりから歌声生成までまとめて進みます。
+                </p>
+              </div>
+            )}
+          </section>
+        </main>
       )}
 
       <footer className="mt-auto text-gray-400 text-sm font-medium pb-8 text-center">
@@ -1033,9 +1238,8 @@ const App: React.FC = () => {
 
       {saveToast && (
         <div
-          className={`fixed bottom-5 left-1/2 z-[60] -translate-x-1/2 rounded-full px-5 py-2 text-sm font-bold shadow-lg backdrop-blur-md animate-save-toast ${
-            saveToast.tone === "success" ? "bg-gray-900/75 text-white" : "bg-red-600/80 text-white"
-          }`}
+          className={`fixed bottom-5 left-1/2 z-[60] -translate-x-1/2 rounded-full px-5 py-2 text-sm font-bold shadow-lg backdrop-blur-md animate-save-toast ${saveToast.tone === "success" ? "bg-gray-900/75 text-white" : "bg-red-600/80 text-white"
+            }`}
         >
           {saveToast.message}
         </div>

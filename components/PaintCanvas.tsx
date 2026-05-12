@@ -26,6 +26,15 @@ const MAX_AGE = 99;
 
 const clampAge = (age: number) => Math.min(MAX_AGE, Math.max(MIN_AGE, age));
 
+const isEditableKeyboardTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+  return target.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select';
+};
+
 const PaintCanvas: React.FC<PaintCanvasProps> = ({
   onComplete,
   onClear,
@@ -73,14 +82,14 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     const rect = canvas.getBoundingClientRect();
     canvas.width = rect.width;
     canvas.height = rect.height;
-    
+
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.lineWidth = 4;
     ctx.strokeStyle = '#333';
     ctx.fillStyle = 'white';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
+
     // Restore content after resize
     ctx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, 0, 0, canvas.width, canvas.height);
   };
@@ -173,7 +182,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     const rect = canvas.getBoundingClientRect();
     const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
-    
+
     return {
       x: clientX - rect.left,
       y: clientY - rect.top,
@@ -217,7 +226,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
       lastPointRef.current = null;
       return;
     }
-    
+
     const newStroke: Stroke = {
       points: [...currentStrokeRef.current],
       startTime: currentStrokeRef.current[0].timestamp,
@@ -227,7 +236,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     if (newStroke.points.length === 1) {
       drawDot(newStroke.points[0]);
     }
-    
+
     setStrokes(prev => [...prev, newStroke]);
     currentStrokeRef.current = [];
     lastPointRef.current = null;
@@ -305,10 +314,89 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isClearConfirmOpen || isGenerateConfirmOpen) return;
-      if (!(event.ctrlKey || event.metaKey)) return;
+      if (isEditableKeyboardTarget(event.target)) {
+        return;
+      }
 
       const key = event.key.toLowerCase();
+
+      if (isClearConfirmOpen || isGenerateConfirmOpen) {
+        if (key === 'escape') {
+          event.preventDefault();
+          cancelClear();
+          cancelGenerate();
+          return;
+        }
+
+        if (key === 'enter') {
+          event.preventDefault();
+
+          if (isClearConfirmOpen) {
+            clearCanvas();
+          } else {
+            submitGenerate();
+          }
+        }
+
+        return;
+      }
+
+      if (key === 'enter') {
+        event.preventDefault();
+        handleGenerate();
+        return;
+      }
+
+      if (key === 'arrowup') {
+        event.preventDefault();
+        changeAge(event.shiftKey ? 10 : 1);
+        return;
+      }
+
+      if (key === 'arrowdown') {
+        event.preventDefault();
+        changeAge(event.shiftKey ? -10 : -1);
+        return;
+      }
+
+      if (key === 'pageup') {
+        event.preventDefault();
+        changeAge(10);
+        return;
+      }
+
+      if (key === 'pagedown') {
+        event.preventDefault();
+        changeAge(-10);
+        return;
+      }
+
+      if (key === 'home') {
+        event.preventDefault();
+        onAgeChange(MIN_AGE);
+        return;
+      }
+
+      if (key === 'end') {
+        event.preventDefault();
+        onAgeChange(MAX_AGE);
+        return;
+      }
+
+      if (key === 's' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        handleGenerate();
+        return;
+      }
+
+      if (!event.ctrlKey && !event.metaKey && (key === 'delete' || key === 'backspace')) {
+        event.preventDefault();
+        handleClear();
+        return;
+      }
+
+      if (!(event.ctrlKey || event.metaKey)) return;
+
       if (key === 'z' && !event.shiftKey) {
         event.preventDefault();
         handleUndo();
@@ -405,7 +493,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         onPointerLeave={stopRepeatingAgeChange}
         disabled={isCanvasLocked || age === MAX_AGE}
         className="flex h-14 w-16 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
-        title="年齢を10上げる"
+        title="年齢を10上げる (PageUp / Shift+↑)"
       >
         +10
       </button>
@@ -417,7 +505,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         onPointerLeave={stopRepeatingAgeChange}
         disabled={isCanvasLocked || age === MAX_AGE}
         className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
-        title="年齢を上げる"
+        title="年齢を上げる (↑)"
       >
         +1
       </button>
@@ -433,7 +521,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         onPointerLeave={stopRepeatingAgeChange}
         disabled={isCanvasLocked || age === MIN_AGE}
         className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
-        title="年齢を下げる"
+        title="年齢を下げる (↓)"
       >
         -1
       </button>
@@ -445,7 +533,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         onPointerLeave={stopRepeatingAgeChange}
         disabled={isCanvasLocked || age === MIN_AGE}
         className="flex h-14 w-16 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
-        title="年齢を10下げる"
+        title="年齢を10下げる (PageDown / Shift+↓)"
       >
         -10
       </button>
@@ -454,7 +542,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         onClick={() => onAgeChange(null)}
         disabled={isCanvasLocked || age === null}
         className="flex h-14 min-w-24 items-center justify-center rounded-2xl border-2 border-gray-200 bg-white px-3 text-sm font-black text-gray-600 shadow-md transition-all hover:bg-gray-50 disabled:opacity-40 active:scale-95 md:w-full"
-        title="年齢を未設定にする"
+        title="年齢を未設定にする (Home)"
       >
         未設定
       </button>
@@ -468,7 +556,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           <div className={`w-full md:w-28 ${isAgeSelectorVisible ? "" : "hidden md:block md:invisible"}`}>
             {ageSelector}
           </div>
-          <div 
+          <div
             ref={containerRef}
             onContextMenu={preventCanvasContextMenu}
             className="relative w-full max-w-full aspect-square select-none bg-white rounded-3xl shadow-xl overflow-hidden border-8 border-yellow-200"
@@ -506,73 +594,75 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
             )}
           </div>
 
-        <div className="flex w-full max-w-full gap-2 sm:gap-3 md:col-start-2">
-          <button
-            onClick={handleClear}
-            disabled={isCanvasLocked}
-            className="flex h-14 min-w-[7.5rem] flex-[1.15] items-center justify-center whitespace-nowrap px-3 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-2xl font-bold transition-all disabled:opacity-50 text-base sm:text-lg shadow-md active:scale-95"
-          >
-            ぜんぶ消す
-          </button>
-          <button
-            type="button"
-            onClick={handleUndo}
-            disabled={strokes.length === 0 || isCanvasLocked}
-            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-gray-700 shadow-md border-2 border-gray-200 transition-all hover:bg-gray-50 disabled:opacity-40 active:scale-95"
-            title="戻す"
-            aria-label="戻す"
-          >
-            <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M9 7 4 12l5 5"
-                stroke="currentColor"
-                strokeWidth="2.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M5 12h9.5a4.5 4.5 0 0 1 0 9H12"
-                stroke="currentColor"
-                strokeWidth="2.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={handleRedo}
-            disabled={undoneStrokes.length === 0 || isCanvasLocked}
-            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-gray-700 shadow-md border-2 border-gray-200 transition-all hover:bg-gray-50 disabled:opacity-40 active:scale-95"
-            title="進める"
-            aria-label="進める"
-          >
-            <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="m15 7 5 5-5 5"
-                stroke="currentColor"
-                strokeWidth="2.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M19 12H9.5a4.5 4.5 0 0 0 0 9H12"
-                stroke="currentColor"
-                strokeWidth="2.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-          <button
-            onClick={handleGenerate}
-            disabled={strokes.length === 0 || isCanvasLocked}
-            className="flex h-14 min-w-[8rem] flex-[1.15] items-center justify-center whitespace-nowrap px-3 bg-yellow-400 hover:bg-yellow-500 text-white rounded-2xl font-bold transition-all disabled:opacity-50 disabled:bg-gray-300 text-base sm:text-lg shadow-md active:scale-95"
-          >
-            歌をつくる！
-          </button>
+          <div className="flex w-full max-w-full gap-2 sm:gap-3 md:col-start-2">
+            <button
+              onClick={handleClear}
+              disabled={isCanvasLocked}
+              className="flex h-14 min-w-[7.5rem] flex-[1.15] items-center justify-center whitespace-nowrap px-3 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-2xl font-bold transition-all disabled:opacity-50 text-base sm:text-lg shadow-md active:scale-95"
+              title="ぜんぶ消す (Delete / Backspace)"
+            >
+              ぜんぶ消す
+            </button>
+            <button
+              type="button"
+              onClick={handleUndo}
+              disabled={strokes.length === 0 || isCanvasLocked}
+              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-gray-700 shadow-md border-2 border-gray-200 transition-all hover:bg-gray-50 disabled:opacity-40 active:scale-95"
+              title="戻す"
+              aria-label="戻す"
+            >
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M9 7 4 12l5 5"
+                  stroke="currentColor"
+                  strokeWidth="2.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M5 12h9.5a4.5 4.5 0 0 1 0 9H12"
+                  stroke="currentColor"
+                  strokeWidth="2.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={handleRedo}
+              disabled={undoneStrokes.length === 0 || isCanvasLocked}
+              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-gray-700 shadow-md border-2 border-gray-200 transition-all hover:bg-gray-50 disabled:opacity-40 active:scale-95"
+              title="進める"
+              aria-label="進める"
+            >
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="m15 7 5 5-5 5"
+                  stroke="currentColor"
+                  strokeWidth="2.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M19 12H9.5a4.5 4.5 0 0 0 0 9H12"
+                  stroke="currentColor"
+                  strokeWidth="2.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            <button
+              onClick={handleGenerate}
+              disabled={strokes.length === 0 || isCanvasLocked}
+              className="flex h-14 min-w-[8rem] flex-[1.15] items-center justify-center whitespace-nowrap px-3 bg-yellow-400 hover:bg-yellow-500 text-white rounded-2xl font-bold transition-all disabled:opacity-50 disabled:bg-gray-300 text-base sm:text-lg shadow-md active:scale-95"
+              title="歌をつくる! (Ctrl+S / Cmd+S)"
+            >
+              歌をつくる！
+            </button>
+          </div>
         </div>
-      </div>
       </div>
 
       {isClearConfirmOpen && (
