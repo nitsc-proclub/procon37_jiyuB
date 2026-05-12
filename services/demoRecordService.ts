@@ -16,6 +16,7 @@ interface DemoRecordMetadata {
   drawing: {
     strokeCount: number;
     strokes: DrawingData["strokes"];
+    strokeGroups?: DrawingData["strokeGroups"];
   };
   singingScore: SingingScore | null;
 }
@@ -64,6 +65,7 @@ export const saveDemoRecord = async ({
     drawing: {
       strokeCount: drawingData.strokes.length,
       strokes: drawingData.strokes,
+      strokeGroups: drawingData.strokeGroups,
     },
     singingScore,
   };

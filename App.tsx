@@ -4,6 +4,7 @@ import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { getDemoRecord, listDemoRecords, saveDemoRecord } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
+import { groupStrokes } from "./services/strokeGroupingService";
 import { analyzeAccentLines } from "./services/voicevoxAccentService";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
 import { DemoRecordSummary, DrawingData, LyricsResponse, SingingScore } from "./types";
@@ -460,6 +461,10 @@ const App: React.FC = () => {
   };
 
   const handleComplete = async (data: DrawingData) => {
+    const groupedDrawingData = {
+      ...data,
+      strokeGroups: groupStrokes(data.strokes),
+    };
     const startedAt = new Date().toISOString();
     let generatedLyrics: LyricsResponse | null = null;
     let generatedScore: SingingScore | null = null;
@@ -471,7 +476,7 @@ const App: React.FC = () => {
     setSaveToast(null);
     setSelectedDemoRecordId(null);
     setSelectedDemoDrawing(null);
-    setGeneratedDrawing(data);
+    setGeneratedDrawing(groupedDrawingData);
     setPlaybackScore(null);
     setDrawingDisplayMode("animated");
     resetAudioState();
@@ -479,7 +484,7 @@ const App: React.FC = () => {
 
     try {
       updateProgress("AI が絵を読み取って歌詞を考えています...", 50);
-      generatedLyrics = await generateEkakiUta(data);
+      generatedLyrics = await generateEkakiUta(groupedDrawingData);
       setLyrics(generatedLyrics);
 
       updateProgress("VOICEVOX でアクセントを解析しています...", 53);
@@ -508,7 +513,7 @@ const App: React.FC = () => {
       if (isDataSavingEnabled) {
         try {
           await saveDemoRecord({
-            drawingData: data,
+            drawingData: groupedDrawingData,
             lyrics: generatedLyrics,
             audioBlob: generatedAudioBlob,
             singingScore: generatedScore,
@@ -551,6 +556,7 @@ const App: React.FC = () => {
   const experimentLastKey = experimentPitchedNotes.at(-1)?.key ?? null;
   const experimentTotalFrames = experimentScore?.notes.reduce((sum, note) => sum + note.frame_length, 0) ?? 0;
   const playbackDrawing = selectedDemoDrawing ?? generatedDrawing;
+  const playbackLyricLineCount = getSingingLineCount(lyrics);
   const playbackAnimationEndProgress = getDrawingAnimationEndProgress(lyrics, playbackScore);
 
   return (
@@ -912,6 +918,9 @@ const App: React.FC = () => {
             playbackAudioRef={audioRef}
             playbackDisplayMode={drawingDisplayMode}
             playbackAnimationEndProgress={playbackAnimationEndProgress}
+            playbackLineStrokeMappings={lyrics?.lineStrokeMappings}
+            playbackScore={playbackScore}
+            playbackLyricLineCount={playbackLyricLineCount}
             isPlaybackActive={isAudioPlaying}
           />
 
@@ -950,9 +959,14 @@ const App: React.FC = () => {
 
                   <div className="space-y-4 text-center">
                     {lyrics.lines.map((line, index) => (
-                      <p key={`${line}-${index}`} className="text-xl md:text-2xl text-gray-700 leading-relaxed font-medium">
-                        {line}
-                      </p>
+                      <div key={`${line}-${index}`}>
+                        <p className="text-xl md:text-2xl text-gray-700 leading-relaxed font-medium">{line}</p>
+                        {lyrics.lineStrokeMappings?.[index] && (
+                          <p className="mt-1 text-xs font-bold text-gray-400">
+                            strokes: {lyrics.lineStrokeMappings[index].strokeGroupIds.join(", ") || "none"}
+                          </p>
+                        )}
+                      </div>
                     ))}
                   </div>
 

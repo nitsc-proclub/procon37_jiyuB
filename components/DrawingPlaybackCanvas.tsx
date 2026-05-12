@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { DrawingData, Point } from "../types";
+import { DrawingData, LyricStrokeMapping, Point, SingingScore } from "../types";
 
 export type DrawingDisplayMode = "animated" | "static";
 
@@ -8,6 +8,9 @@ interface DrawingPlaybackCanvasProps {
   audioRef: React.RefObject<HTMLAudioElement | null>;
   mode: DrawingDisplayMode;
   animationEndProgress?: number;
+  lineStrokeMappings?: LyricStrokeMapping[];
+  singingScore?: SingingScore | null;
+  lyricLineCount?: number;
 }
 
 type CanvasSize = {
@@ -36,6 +39,17 @@ type PathSegment =
       length: number;
     };
 
+type PathData = {
+  segments: PathSegment[];
+  totalLength: number;
+};
+
+type LineTiming = {
+  lineIndex: number;
+  startFrame: number;
+  endFrame: number;
+};
+
 const LINE_WIDTH = 4;
 const DOT_LENGTH = 1;
 
@@ -56,11 +70,17 @@ const getFallbackSourceSize = (drawingData: DrawingData): SourceSize => {
   };
 };
 
-const buildPathSegments = (drawingData: DrawingData) => {
+const buildPathSegmentsFromStrokeIndexes = (drawingData: DrawingData, strokeIndexes: number[]): PathData => {
   const segments: PathSegment[] = [];
   let totalLength = 0;
 
-  drawingData.strokes.forEach((stroke) => {
+  strokeIndexes.forEach((strokeIndex) => {
+    const stroke = drawingData.strokes[strokeIndex];
+
+    if (!stroke) {
+      return;
+    }
+
     if (stroke.points.length === 0) {
       return;
     }
@@ -114,6 +134,68 @@ const buildPathSegments = (drawingData: DrawingData) => {
   };
 };
 
+const buildPathSegments = (drawingData: DrawingData) =>
+  buildPathSegmentsFromStrokeIndexes(
+    drawingData,
+    drawingData.strokes.map((_, index) => index),
+  );
+
+const buildGroupPathMap = (drawingData: DrawingData) => {
+  const pathMap = new Map<string, PathData>();
+
+  drawingData.strokeGroups?.forEach((group) => {
+    pathMap.set(group.id, buildPathSegmentsFromStrokeIndexes(drawingData, group.rawStrokeIndexes));
+  });
+
+  return pathMap;
+};
+
+const combinePathData = (pathDataItems: PathData[]): PathData => {
+  const segments: PathSegment[] = [];
+  let totalLength = 0;
+
+  pathDataItems.forEach((pathData) => {
+    pathData.segments.forEach((segment) => {
+      segments.push({
+        ...segment,
+        startLength: totalLength + segment.startLength,
+      });
+    });
+
+    totalLength += pathData.totalLength;
+  });
+
+  return {
+    segments,
+    totalLength,
+  };
+};
+
+const getLeadingRestFrames = (score: SingingScore) => {
+  const firstNote = score.notes[0];
+  return firstNote?.key === null && firstNote.lyric === "" ? firstNote.frame_length : 0;
+};
+
+const buildLineTimings = (score: SingingScore | null | undefined, lineCount = 0) => {
+  if (!score || lineCount <= 0) {
+    return [];
+  }
+
+  const totalFrames = score.notes.reduce((sum, note) => sum + note.frame_length, 0);
+  const leadingRestFrames = getLeadingRestFrames(score);
+  const phraseFrameLength = (totalFrames - leadingRestFrames) / lineCount;
+
+  if (totalFrames <= 0 || phraseFrameLength <= 0) {
+    return [];
+  }
+
+  return Array.from({ length: lineCount }, (_, lineIndex) => ({
+    lineIndex,
+    startFrame: leadingRestFrames + phraseFrameLength * lineIndex,
+    endFrame: leadingRestFrames + phraseFrameLength * (lineIndex + 1),
+  }));
+};
+
 const getAudioProgress = (audio: HTMLAudioElement | null, animationEndProgress: number) => {
   if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) {
     return 0;
@@ -124,17 +206,38 @@ const getAudioProgress = (audio: HTMLAudioElement | null, animationEndProgress: 
   return clamp(rawProgress / safeEndProgress, 0, 1);
 };
 
+const getCurrentFrame = (audio: HTMLAudioElement | null, score: SingingScore | null | undefined) => {
+  if (!audio || !score || !Number.isFinite(audio.duration) || audio.duration <= 0) {
+    return 0;
+  }
+
+  const totalFrames = score.notes.reduce((sum, note) => sum + note.frame_length, 0);
+  return (audio.currentTime / audio.duration) * totalFrames;
+};
+
+const findCurrentLineTiming = (lineTimings: LineTiming[], currentFrame: number) =>
+  lineTimings.find((timing) => currentFrame >= timing.startFrame && currentFrame < timing.endFrame) ??
+  lineTimings.at(-1) ??
+  null;
+
 const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
   drawingData,
   audioRef,
   mode,
   animationEndProgress = 1,
+  lineStrokeMappings,
+  singingScore,
+  lyricLineCount = lineStrokeMappings?.length ?? 0,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const [canvasSize, setCanvasSize] = useState<CanvasSize>({ width: 1, height: 1, dpr: 1 });
   const [sourceSize, setSourceSize] = useState<SourceSize>(() => getFallbackSourceSize(drawingData));
   const pathData = useMemo(() => buildPathSegments(drawingData), [drawingData]);
+  const groupPathMap = useMemo(() => buildGroupPathMap(drawingData), [drawingData]);
+  const lineTimings = useMemo(() => buildLineTimings(singingScore, lyricLineCount), [lyricLineCount, singingScore]);
+  const canUseLineSync =
+    !!lineStrokeMappings?.length && !!drawingData.strokeGroups?.length && groupPathMap.size > 0 && lineTimings.length > 0;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -208,12 +311,10 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
       context.fillStyle = "#333";
     };
 
-    const drawAnimatedPath = (progress: number) => {
-      prepareContext();
+    const drawPathData = (targetPathData: PathData, progress: number) => {
+      const visibleLength = targetPathData.totalLength * clamp(progress, 0, 1);
 
-      const visibleLength = pathData.totalLength * clamp(progress, 0, 1);
-
-      pathData.segments.forEach((segment) => {
+      targetPathData.segments.forEach((segment) => {
         const segmentProgress = visibleLength - segment.startLength;
 
         if (segmentProgress <= 0) {
@@ -243,6 +344,42 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
       });
     };
 
+    const drawAnimatedPath = (progress: number) => {
+      prepareContext();
+      drawPathData(pathData, progress);
+    };
+
+    const drawLineSyncedPath = () => {
+      prepareContext();
+
+      const currentFrame = getCurrentFrame(audioRef.current, singingScore);
+      const currentLineTiming = findCurrentLineTiming(lineTimings, currentFrame);
+
+      if (!currentLineTiming || !lineStrokeMappings) {
+        drawPathData(pathData, getAudioProgress(audioRef.current, animationEndProgress));
+        return;
+      }
+
+      const currentLineFrameLength = currentLineTiming.endFrame - currentLineTiming.startFrame;
+      const currentLineProgress =
+        currentLineFrameLength > 0 ? clamp((currentFrame - currentLineTiming.startFrame) / currentLineFrameLength, 0, 1) : 1;
+
+      lineStrokeMappings.forEach((mapping) => {
+        if (mapping.lineIndex > currentLineTiming.lineIndex) {
+          return;
+        }
+
+        const progress = mapping.lineIndex < currentLineTiming.lineIndex ? 1 : currentLineProgress;
+        const linePathData = combinePathData(
+          mapping.strokeGroupIds
+            .map((groupId) => groupPathMap.get(groupId))
+            .filter((groupPathData): groupPathData is PathData => !!groupPathData),
+        );
+
+        drawPathData(linePathData, progress);
+      });
+    };
+
     const drawStaticImage = () => {
       prepareContext();
 
@@ -262,14 +399,31 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
     let animationFrameId = 0;
 
     const drawFrame = () => {
-      drawAnimatedPath(getAudioProgress(audioRef.current, animationEndProgress));
+      if (canUseLineSync) {
+        drawLineSyncedPath();
+      } else {
+        drawAnimatedPath(getAudioProgress(audioRef.current, animationEndProgress));
+      }
+
       animationFrameId = window.requestAnimationFrame(drawFrame);
     };
 
     drawFrame();
 
     return () => window.cancelAnimationFrame(animationFrameId);
-  }, [animationEndProgress, audioRef, canvasSize, mode, pathData, sourceSize]);
+  }, [
+    animationEndProgress,
+    audioRef,
+    canUseLineSync,
+    canvasSize,
+    groupPathMap,
+    lineStrokeMappings,
+    lineTimings,
+    mode,
+    pathData,
+    singingScore,
+    sourceSize,
+  ]);
 
   return (
     <div className="h-full w-full bg-white">

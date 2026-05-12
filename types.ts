@@ -14,6 +14,28 @@ export interface Stroke {
 export interface DrawingData {
   strokes: Stroke[];
   imageUri: string;
+  strokeGroups?: StrokeGroup[];
+}
+
+export interface StrokeBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+export interface StrokeGroup {
+  id: string;
+  rawStrokeIndexes: number[];
+  bounds: StrokeBounds;
+  startTime: number;
+  endTime: number;
+  length: number;
+}
+
+export interface LyricStrokeMapping {
+  lineIndex: number;
+  strokeGroupIds: string[];
 }
 
 export interface LyricsResponse {
@@ -21,6 +43,7 @@ export interface LyricsResponse {
   lines: string[];
   singingKanaLines?: string[];
   identifiedObject: string;
+  lineStrokeMappings?: LyricStrokeMapping[];
   modelName?: string;
 }
 

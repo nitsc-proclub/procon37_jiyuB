@@ -1,7 +1,7 @@
 
 import React, { useRef, useEffect, useState } from 'react';
 import DrawingPlaybackCanvas, { DrawingDisplayMode } from './DrawingPlaybackCanvas';
-import { Point, Stroke, DrawingData } from '../types';
+import { Point, Stroke, DrawingData, LyricStrokeMapping, SingingScore } from '../types';
 
 interface PaintCanvasProps {
   onComplete: (data: DrawingData) => void;
@@ -15,6 +15,9 @@ interface PaintCanvasProps {
   playbackAudioRef?: React.RefObject<HTMLAudioElement | null>;
   playbackDisplayMode?: DrawingDisplayMode;
   playbackAnimationEndProgress?: number;
+  playbackLineStrokeMappings?: LyricStrokeMapping[];
+  playbackScore?: SingingScore | null;
+  playbackLyricLineCount?: number;
   isPlaybackActive?: boolean;
 }
 
@@ -35,6 +38,9 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   playbackAudioRef,
   playbackDisplayMode = "animated",
   playbackAnimationEndProgress = 1,
+  playbackLineStrokeMappings,
+  playbackScore,
+  playbackLyricLineCount,
   isPlaybackActive = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -486,6 +492,9 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
                   audioRef={playbackAudioRef}
                   mode={playbackDisplayMode}
                   animationEndProgress={playbackAnimationEndProgress}
+                  lineStrokeMappings={playbackLineStrokeMappings}
+                  singingScore={playbackScore}
+                  lyricLineCount={playbackLyricLineCount}
                 />
               </div>
             )}
