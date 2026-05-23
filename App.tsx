@@ -108,6 +108,49 @@ const getSingingLineCount = (lyrics: LyricsResponse | null) => {
   return singingLineCount || lyrics?.lines.filter((line) => line.trim().length > 0).length || 0;
 };
 
+const serializeSingingScore = (score: SingingScore | null) => JSON.stringify(score, null, 2);
+
+const sanitizeFileName = (value: string) =>
+  value
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "") || "voicevox-score";
+
+const copyTextToClipboard = async (text: string) => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const success = document.execCommand("copy");
+  document.body.removeChild(textarea);
+
+  if (!success) {
+    throw new Error("クリップボードにコピーできませんでした。");
+  }
+};
+
+const downloadTextFile = (fileName: string, content: string, mimeType: string) => {
+  const blob = new Blob([content], { type: mimeType });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = objectUrl;
+  link.download = fileName;
+  link.click();
+
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+};
+
 const getDrawingAnimationEndProgress = (lyrics: LyricsResponse | null, score: SingingScore | null) => {
   const lineCount = getSingingLineCount(lyrics);
 
@@ -753,6 +796,24 @@ const App: React.FC = () => {
   const playbackLyricLineCount = getSingingLineCount(lyrics);
   const playbackAnimationEndProgress = getDrawingAnimationEndProgress(lyrics, playbackScore);
   const visibleDemoRecords = showFavoriteOnly ? demoRecords.filter((record) => record.isFavorite) : demoRecords;
+  const experimentScoreJson = serializeSingingScore(experimentScore);
+
+  const handleCopyExperimentScore = async () => {
+    if (!experimentScore) {
+      return;
+    }
+
+    await copyTextToClipboard(experimentScoreJson);
+  };
+
+  const handleDownloadExperimentScore = () => {
+    if (!experimentScore) {
+      return;
+    }
+
+    const fileName = sanitizeFileName(`${experimentLyrics.title}-singing-score.json`);
+    downloadTextFile(fileName, experimentScoreJson, "application/json;charset=utf-8");
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-amber-50 via-yellow-50 to-orange-100 p-4 md:p-8 flex flex-col items-center">
@@ -1265,6 +1326,36 @@ const App: React.FC = () => {
                     ))}
                     <span className={`rounded-full border px-3 py-1 ${getExperimentNoteToneClass(null)}`}>休符</span>
                   </div>
+                </div>
+
+                <div className="mb-4 rounded-2xl border border-orange-100 bg-orange-50/40 p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-black text-gray-700">VOICEVOX に送信した SingingScore</h4>
+                      <p className="text-xs font-semibold text-gray-500">そのまま閲覧・コピー・ダウンロードできます。</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyExperimentScore()}
+                        className="rounded-full border border-orange-100 bg-white px-3 py-2 text-xs font-black text-gray-600 shadow-sm transition-all hover:bg-orange-50"
+                      >
+                        コピー
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDownloadExperimentScore}
+                        className="rounded-full border border-orange-100 bg-white px-3 py-2 text-xs font-black text-gray-600 shadow-sm transition-all hover:bg-orange-50"
+                      >
+                        DL
+                      </button>
+                    </div>
+                  </div>
+                  <textarea
+                    readOnly
+                    value={experimentScoreJson}
+                    className="h-64 w-full rounded-2xl border border-orange-100 bg-white p-3 font-mono text-[11px] leading-relaxed text-gray-700 shadow-inner outline-none"
+                  />
                 </div>
 
                 <div className="overflow-x-auto rounded-2xl border border-orange-50 bg-orange-50/40 p-3">
