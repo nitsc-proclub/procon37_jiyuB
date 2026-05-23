@@ -120,16 +120,19 @@ const buildPrompt = (drawingData: DrawingData) => {
 歌詞ルール:
 1. lines は4行程度にしてください。
 2. singingKanaLines は lines と同じ行数にしてください。
-3. singingKanaLines は VOICEVOX が歌いやすいよう、漢字や英字を避け、ひらがな中心にしてください。
-4. 各行は短く、リズムに乗せやすい自然な文にしてください。
-5. title と identifiedObject も返してください。
+3. lines は画面表示用なので、自然な日本語の表記にしてください。漢字を使っても構いません。
+4. singingKanaLines は VOICEVOX が歌うための読み上げ形です。lines の意味と文脈に沿って、実際に声に出す読みをひらがな中心で正確に書いてください。
+5. singingKanaLines では、助詞や同形異音語なども文脈で判断し、発音どおりにしてください。例: 「ねこは」→「ねこわ」、「おうちへ」→「おうちえ」、「まるを」→「まるお」、「三つ」→「みっつ」。
+6. singingKanaLines では、漢字、英字、数字、句読点、絵文字、ASCII 記号を避けてください。ただし、スペースと長音記号「ー」は使って構いません。
+7. 各行は短く、リズムに乗せやすい自然な文にしてください。
+8. title と identifiedObject も返してください。
 
 ストローク対応ルール:
-6. lineStrokeMappings を必ず返してください。歌詞1行につき1件です。
-7. 各行に、その行を歌っている間に描かれる stroke group id を割り当ててください。
-8. 1行には1つ、複数、または0個の stroke group を割り当てられます。
-9. 最後の行が「できあがり」「これは○○」のような完成宣言だけなら、strokeGroupIds は空配列で構いません。
-10. 存在する group id だけを使ってください。基本的に描画順を尊重し、同じ group id を複数行に割り当てないでください。
+9. lineStrokeMappings を必ず返してください。歌詞1行につき1件です。
+10. 各行に、その行を歌っている間に描かれる stroke group id を割り当ててください。
+11. 1行には1つ、複数、または0個の stroke group を割り当てられます。
+12. 最後の行が「できあがり」「これは○○」のような完成宣言だけなら、strokeGroupIds は空配列で構いません。
+13. 存在する group id だけを使ってください。基本的に描画順を尊重し、同じ group id を複数行に割り当てないでください。
 
 Stroke group count: ${strokeGroups.length}
 Stroke group information:
@@ -236,7 +239,7 @@ const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promi
             singingKanaLines: {
               type: Type.ARRAY,
               items: { type: Type.STRING },
-              description: "歌声合成向けのひらがな歌詞",
+              description: "歌声合成向けの読み上げ形",
             },
             identifiedObject: { type: Type.STRING, description: "絵から推定したモチーフ" },
             lineStrokeMappings: {
