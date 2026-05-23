@@ -123,7 +123,7 @@ const buildPrompt = (drawingData: DrawingData) => {
 3. lines は画面表示用なので、自然な日本語の表記にしてください。漢字を使っても構いません。
 4. singingKanaLines は VOICEVOX が歌うための読み上げ形です。lines の意味と文脈に沿って、実際に声に出す読みをひらがな中心で正確に書いてください。
 5. singingKanaLines では、助詞や同形異音語なども文脈で判断し、発音どおりにしてください。例: 「ねこは」→「ねこわ」、「おうちへ」→「おうちえ」、「まるを」→「まるお」、「三つ」→「みっつ」。
-6. singingKanaLines では、漢字、英字、数字、記号、絵文字を避けてください。
+6. singingKanaLines では、漢字、英字、数字、句読点、絵文字、ASCII 記号を避けてください。ただし、スペースと長音記号「ー」は使って構いません。
 7. 各行は短く、リズムに乗せやすい自然な文にしてください。
 8. title と identifiedObject も返してください。
 
