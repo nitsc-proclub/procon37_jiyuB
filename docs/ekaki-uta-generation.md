@@ -304,15 +304,15 @@ Blob
 
 保存先は既定ではプロジェクトルートの `demo-records` です。
 
-## 5. 歌詞と描画の同期機能を追加する場合
+## 5. 歌詞と描画の同期機能
 
-今後、歌詞に同期して描画軌跡を再生したい場合は、次のような拡張が自然です。
+現在の実装では、歌詞行と描画ストロークの対応は `lineStrokeMappings` と `strokeGroups` を使って既に同期再生されています。`DrawingPlaybackCanvas` は歌声の再生位置から現在の歌詞行を求め、その行に対応する stroke group を左キャンバス上で順番に描画します。
 
 ### 5.1 StrokeGroup を作る
 
-現在の `Stroke` は入力操作そのものです。短い線を分けて描いた場合、歌詞行に直接対応させるには細かすぎます。
+現在の `Stroke` は入力操作そのものです。短い線を分けて描いた場合、歌詞行に直接対応させるには細かすぎるため、`DrawingData.strokeGroups` にまとめて扱います。
 
-そのため、LLM に渡す前に `StrokeGroup` を作ります。
+実装上は、`App.tsx` で raw stroke から `strokeGroups` を作り、Gemini に渡す `DrawingData` に付与します。
 
 ```ts
 export interface StrokeGroup {
@@ -326,6 +326,7 @@ export interface StrokeGroup {
   };
   startTime: number;
   endTime: number;
+  length: number;
 }
 ```
 
@@ -338,9 +339,9 @@ export interface StrokeGroup {
 - bounding box が近い、または重なっている
 - 極端に短い線同士で同じ部品に見える
 
-### 5.2 Gemini に対応表を出させる
+### 5.2 Gemini に対応表を返させる
 
-`LyricsResponse` に、歌詞行と stroke group の対応表を追加します。
+`LyricsResponse` には、歌詞行と stroke group の対応表である `lineStrokeMappings` が含まれます。
 
 ```ts
 export interface LyricStrokeMapping {
@@ -370,21 +371,27 @@ export interface LyricStrokeMapping {
 }
 ```
 
+サーバー側では、返ってきた対応表を補正します。
+
+- 存在しない group id は除外
+- 同じ group id の複数行への重複割り当ては除外
+- 行数に足りない mapping は空配列で補完
+
 ### 5.3 再生タイミングを計算する
 
-`SingingScore.notes` の `frame_length` を合計すれば、歌全体の相対的な時間配分が分かります。
+`DrawingPlaybackCanvas` は `SingingScore.notes` の `frame_length` を合計し、歌全体の相対的な時間配分を計算します。
 
-まずは以下のように、audio の実再生時間に対する比率で歌詞行の区間を決められます。
+現在の実装では、先頭の短い休符を除いた残りの frame を歌詞行数で等分し、各行の frame 範囲を推定しています。
 
 ```txt
 lineStartSecond = audio.duration * cumulativeFrames / totalFrames
 lineEndSecond = audio.duration * nextCumulativeFrames / totalFrames
 ```
 
-`audio` の `timeupdate` を監視し、現在時刻に対応する歌詞行を求め、その行に紐づく stroke group をキャンバス上で順番に再生します。
+`audio.currentTime` から現在 frame を計算し、その frame が属する歌詞行を探して、その行に対応する stroke group だけを描画します。`lineStrokeMappings` や `strokeGroups` が存在しない場合は、従来どおり全体の描画軌跡アニメーションに fallback します。
 
 ## 6. まとめ
 
-現在の実装は、完成画像だけではなくストローク要約も Gemini に渡している点が重要です。
+現在の実装は、完成画像だけではなくストローク要約と歌詞行の対応表も Gemini に渡し、その結果を `DrawingPlaybackCanvas` で再生同期に使っている点が重要です。
 
-この構造を活かせば、歌詞行と描画ストロークの同期情報も同じ生成パイプラインに追加できます。まずは raw stroke を直接扱うのではなく、前処理で `StrokeGroup` に整えてから LLM に渡す設計が扱いやすいです。
+この構造を活かすことで、歌詞生成・歌声生成・描画同期を 1 つのパイプラインとして扱えます。まずは raw stroke を直接扱うのではなく、前処理で `StrokeGroup` に整えてから LLM に渡す設計が扱いやすいです。

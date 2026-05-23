@@ -167,7 +167,7 @@ lineStartFrame = leadingRestFrames + phraseFrameLength * lineIndex;
 lineEndFrame = leadingRestFrames + phraseFrameLength * (lineIndex + 1);
 ```
 
-`DrawingPlaybackCanvas` はこの frame 範囲を使い、現在の歌詞行を判定します。
+`DrawingPlaybackCanvas` はこの frame 範囲を使い、`requestAnimationFrame` で毎フレーム再描画しながら現在の歌詞行を判定します。
 
 ## 7. 軌跡の描画
 
@@ -197,7 +197,7 @@ const y = from.y + (to.y - from.y) * ratio;
 
 ## 8. 行同期アニメーション
 
-`lineStrokeMappings` が存在する場合、アニメーションは行ごとに同期します。
+`lineStrokeMappings`、`strokeGroups`、`SingingScore` がそろっている場合、アニメーションは行ごとに同期します。
 
 1. 現在の audio 時刻から `currentFrame` を計算
 2. `currentFrame` が含まれる歌詞行を探す
@@ -205,6 +205,8 @@ const y = from.y + (to.y - from.y) * ratio;
 4. 過去の行の stroke group は 100% 描画済みにする
 5. 現在の行の stroke group は、行内進捗ぶんだけ描く
 6. 未来の行の stroke group はまだ描かない
+
+同期表示が有効なときは、`DrawingPlaybackCanvas` が `lineTimings` と `groupPathMap` を使って、行ごとの描画進捗を毎フレーム更新します。
 
 1 行に複数の stroke group がある場合、それらは同時に伸びるのではなく、その行の中で順番に描かれます。
 
