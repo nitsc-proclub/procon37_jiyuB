@@ -1,6 +1,6 @@
 ﻿# お絵かき歌生成の流れ
 
-このドキュメントは、ユーザーが描いた絵から歌詞を作り、歌声として再生するまでの処理を説明します。歌声に合わせて描画軌跡を再生する UI と同期処理は `docs/drawing-playback-sync.md` を参照してください。
+このドキュメントは、ユーザーが描いた絵から歌詞を作り、歌声として再生するまでの処理を説明します。歌声に合わせて描画軌跡を再生する UI と同期処理は [描画軌跡同期アニメーションと UI](drawing-playback-sync.md) を参照してください。
 
 ## 全体像
 
@@ -50,8 +50,11 @@ export interface Stroke {
 export interface DrawingData {
   strokes: Stroke[];
   imageUri: string;
+  strokeGroups?: StrokeGroup[];
 }
 ```
+
+`strokeGroups` は必要に応じて `services/strokeGroupingService.ts` で作成される、raw stroke をまとめた補助情報です。
 
 ### 1.2 Gemini に渡す画像
 
@@ -71,6 +74,8 @@ Gemini に送る前に、Data URI のヘッダーを取り除き、base64 部分
 ### 1.3 Gemini に渡すストローク情報
 
 すべての点列をそのまま Gemini に送るのではなく、`server/geminiMiddleware.ts` の `buildStrokeDescriptions` で短い説明に変換します。
+
+現在は、`DrawingData.strokeGroups` がある場合はそれを優先し、ない場合は raw stroke をその場でまとめて要約します。
 
 現在渡している情報は以下です。
 
@@ -101,6 +106,7 @@ Gemini には、以下をまとめて送ります。
 - ストローク数
 - ストローク要約
 - 完成画像
+- 必要に応じて `lineStrokeMappings`
 
 レスポンスは JSON schema で制御しています。
 
@@ -110,6 +116,7 @@ export interface LyricsResponse {
   lines: string[];
   singingKanaLines?: string[];
   identifiedObject: string;
+  lineStrokeMappings?: LyricStrokeMapping[];
   modelName?: string;
 }
 ```
@@ -117,6 +124,8 @@ export interface LyricsResponse {
 `lines` は画面表示用の歌詞です。
 
 `singingKanaLines` は VOICEVOX に歌わせるためのひらがな中心の歌詞です。`lines` と同じ行数である必要があります。
+
+`lineStrokeMappings` は、各歌詞行に対応する `strokeGroupIds` を返すための補助情報です。
 
 ## 2. 歌詞から歌声を作る
 
@@ -249,6 +258,8 @@ Blob
 - エラー内容
 - ストローク情報
 - `SingingScore`
+- `strokeGroups`
+- `lineStrokeMappings`
 
 保存先は既定ではプロジェクトルートの `demo-records` です。
 

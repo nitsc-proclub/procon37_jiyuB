@@ -1,25 +1,25 @@
 ﻿# システム全体ドキュメント
 
-このドキュメントは、お絵かき歌メーカーの構成、データの流れ、外部サービス連携、保存処理をまとめたものです。絵から歌詞を作る詳細は `docs/ekaki-uta-generation.md`、描画軌跡の同期再生は `docs/drawing-playback-sync.md` も参照してください。
+このドキュメントは、お絵かき歌メーカーの実装全体を俯瞰するための資料です。描画から歌詞生成、歌声生成、保存、デモ閲覧、同期再生までを一つの流れとして整理します。絵から歌詞を作る詳細は [お絵かき歌生成の流れ](ekaki-uta-generation.md)、描画軌跡の同期再生は [描画軌跡同期アニメーションと UI](drawing-playback-sync.md)、運用面の詳細は [運用・トラブルシュート](operations.md) を参照してください。
 
 ## 1. 概要
 
-お絵かき歌メーカーは、ブラウザ上で描いた絵から日本語のお絵かき歌を生成し、歌声として再生する React アプリです。
+お絵かき歌メーカーは、ブラウザ上で描いた絵から日本語のお絵かき歌を生成し、歌詞と歌声を再生する React アプリです。
 
 主な流れは以下です。
 
 ```txt
 ユーザーが絵を描く
   ↓
-DrawingData を作成する
+DrawingData と strokeGroups を作成する
   ↓
-Gemini で歌詞を生成する
+Gemini で LyricsResponse と lineStrokeMappings を生成する
   ↓
 歌詞から SingingScore を作る
   ↓
 VOICEVOX Engine で歌声を合成する
   ↓
-歌詞と音声を表示する
+歌詞と音声、必要に応じて描画同期を表示する
   ↓
 必要に応じて demo-records に保存する
 ```
@@ -36,16 +36,19 @@ VOICEVOX Engine で歌声を合成する
 | 歌声合成 | VOICEVOX Engine |
 | ローカル API | Vite middleware |
 | 保存先 | `demo-records` |
+| 描画同期 | `DrawingPlaybackCanvas.tsx` |
 
 ## 3. 主要ファイル
 
 | ファイル | 役割 |
 | --- | --- |
-| `App.tsx` | アプリ全体の状態管理、生成処理、画面表示 |
-| `components/PaintCanvas.tsx` | キャンバス描画、ストローク収集、生成ボタン |
-| `types.ts` | 描画、歌詞、楽譜、デモ保存の型定義 |
+| `App.tsx` | アプリ全体の状態管理、ビュー切り替え、生成処理、デモ記録管理 |
+| `components/PaintCanvas.tsx` | キャンバス描画、ストローク収集、生成ボタン、再生中の操作ロック |
+| `components/DrawingPlaybackCanvas.tsx` | 歌声再生に合わせた描画軌跡の同期表示 |
+| `types.ts` | 描画、歌詞、`StrokeGroup`、`LyricsResponse`、`SingingScore`、デモ保存の型定義 |
 | `services/geminiService.ts` | フロントエンドから Gemini middleware を呼び出す |
-| `server/geminiMiddleware.ts` | Gemini API キー管理、プロンプト作成、JSON schema 指定 |
+| `server/geminiMiddleware.ts` | Gemini API キー管理、プロンプト作成、ストローク要約、`lineStrokeMappings` 整形 |
+| `services/strokeGroupingService.ts` | raw stroke から `StrokeGroup` を作る |
 | `services/melodyService.ts` | 歌詞から VOICEVOX 用の `SingingScore` を作る |
 | `services/voicevoxService.ts` | VOICEVOX Engine と通信して歌声を合成する |
 | `services/voicevoxAccentService.ts` | VOICEVOX のアクセント解析を扱う |
@@ -72,6 +75,7 @@ export interface Stroke {
 export interface DrawingData {
   strokes: Stroke[];
   imageUri: string;
+  strokeGroups?: StrokeGroup[];
 }
 ```
 
@@ -83,6 +87,7 @@ export interface LyricsResponse {
   lines: string[];
   singingKanaLines?: string[];
   identifiedObject: string;
+  lineStrokeMappings?: LyricStrokeMapping[];
   modelName?: string;
 }
 ```
@@ -109,6 +114,7 @@ export interface SingingScore {
 - 移動中に `Point` を追加
 - ペンを離した時点で `Stroke` として確定
 - 生成時にキャンバスを `image/png` の Data URI に変換
+- 再生中は描画・クリア・再生成などをロックする
 
 生成時に `App.tsx` に渡される値は以下です。
 
@@ -119,6 +125,8 @@ export interface SingingScore {
 }
 ```
 
+`App.tsx` は必要に応じて `groupStrokes()` を通し、`strokeGroups` を生成してから Gemini に渡します。
+
 ## 6. Gemini 連携
 
 フロントエンドは `services/geminiService.ts` から `/api/gemini/generate-ekaki-uta` に `DrawingData` を送ります。
@@ -127,10 +135,13 @@ export interface SingingScore {
 
 - `.env.local` から Gemini API キーとモデル名を読む
 - `DrawingData.imageUri` から base64 画像を取り出す
-- 各ストロークを bounding box と duration に要約する
+- `DrawingData.strokeGroups` があればそれを優先し、なければ raw stroke をまとめて要約する
+- 各 stroke group を bounding box、中心、サイズ、duration に要約する
 - 完成画像とストローク要約を Gemini に送る
 - JSON schema で `LyricsResponse` の形を指定する
 - 高負荷系エラー時は `GEMINI_MODEL_SUB` にフォールバックする
+
+返却される `LyricsResponse` は、表示用の `lines` と歌声合成用の `singingKanaLines` に加え、必要に応じて `lineStrokeMappings` を含みます。
 
 ## 7. 歌声合成
 
@@ -142,6 +153,7 @@ export interface SingingScore {
 - 先頭に短い休符を追加
 - 各モーラに音高と長さを割り当てる
 - 最終行の末尾には終止感のある音型を適用する
+- `voicevoxAccentService` で行ごとのアクセント傾向を補助的に読む
 
 `voicevoxService` は `SingingScore` を VOICEVOX Engine に送り、2 段階で音声を生成します。
 
@@ -165,9 +177,11 @@ POST /frame_synthesis?speaker=3003
 | --- | --- |
 | `input.png` | 入力された完成画像 |
 | `voice.wav` など | 生成された歌声 |
-| `metadata.json` | 歌詞、ストローク、楽譜、エラー、参加者年齢、モデル名など |
+| `metadata.json` | 歌詞、ストローク、`strokeGroups`、`SingingScore`、エラー、参加者年齢、モデル名など |
 
 `demo-records` の読み書き API は `vite.config.ts` 内の middleware として実装されています。
+
+`App.tsx` は保存済み記録の一覧取得、詳細取得、お気に入り更新、削除も扱います。
 
 ## 9. エラーハンドリング
 
