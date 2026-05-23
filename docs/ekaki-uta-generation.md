@@ -127,6 +127,47 @@ export interface LyricsResponse {
 
 `lineStrokeMappings` は、各歌詞行に対応する `strokeGroupIds` を返すための補助情報です。
 
+### 1.5 Gemini の応答内容例
+
+実際の成功例では、Gemini からは次のような JSON が返ります。
+
+- `title`: 歌のタイトル
+- `lines`: 画面表示用の歌詞。だいたい 4 行
+- `singingKanaLines`: VOICEVOX 用の読み上げ歌詞。`lines` と同じ行数
+- `identifiedObject`: 絵から推定したモチーフ。例: `にこにこ顔`、`ねこ`、`りんご`
+- `lineStrokeMappings`: 各行に対応する stroke group の対応表
+- `modelName`: 実際に使った Gemini モデル名。サーバー側で付与される
+
+例:
+
+```json
+{
+  "title": "にっこりスマイルのうた",
+  "lines": [
+    "左に ちっちゃな 豆ひとつ",
+    "右にも ちっちゃな 豆ひとつ",
+    "下に お船を 浮かべたら",
+    "にっこり お顔の できあがり"
+  ],
+  "singingKanaLines": [
+    "ひだりに ちっちゃな まめひとつ",
+    "みぎにも ちっちゃな まめひとつ",
+    "したに おふねを うかべたら",
+    "にっこり おかおの できあがり"
+  ],
+  "identifiedObject": "にこにこ顔",
+  "lineStrokeMappings": [
+    { "lineIndex": 0, "strokeGroupIds": ["g1"] },
+    { "lineIndex": 1, "strokeGroupIds": ["g2"] },
+    { "lineIndex": 2, "strokeGroupIds": ["g3"] },
+    { "lineIndex": 3, "strokeGroupIds": [] }
+  ],
+  "modelName": "gemini-3-flash-preview"
+}
+```
+
+要するに、Gemini は「歌の題名・表示用歌詞・読み上げ用歌詞・絵の解釈・描画との対応」をまとめて返します。
+
 ## 2. 歌詞から歌声を作る
 
 ### 2.1 singingKanaLines を使う
