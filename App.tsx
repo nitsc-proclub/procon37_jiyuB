@@ -938,7 +938,7 @@ const App: React.FC = () => {
         <h1 className="mx-auto mb-1 w-fit">
           <img
             src="/dist/logo.png"
-            alt="お絵かき歌メーカー"
+            alt="超えかき歌！"
             className="h-14 w-auto drop-shadow-sm md:h-16"
           />
         </h1>
@@ -981,7 +981,7 @@ const App: React.FC = () => {
               <div>
                 <h2 className="text-2xl font-black text-gray-800">demo-records</h2>
                 <p className="text-sm font-semibold text-gray-500">
-                  保存済みのお絵描き歌を選ぶと、生成後の状態でメーカー画面に開きます。星でお気に入り、ゴミ箱で削除できます。
+                  保存済みの絵描き歌を選ぶと、生成後の状態でメーカー画面に開きます。星でお気に入り、ゴミ箱で削除できます。
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -1529,7 +1529,7 @@ const App: React.FC = () => {
       )}
 
       <footer className="mt-auto text-gray-400 text-sm font-medium pb-8 text-center">
-        <p>&copy; 2026 お絵かき歌メーカー</p>
+        <p>&copy; 2026 超えかき歌！</p>
       </footer>
 
       {saveToast && (

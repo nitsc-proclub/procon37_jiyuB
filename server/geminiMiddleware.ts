@@ -114,8 +114,8 @@ const buildPrompt = (drawingData: DrawingData) => {
   const strokeGroupDescriptions = buildStrokeGroupDescriptions(strokeGroups);
 
   return `
-あなたは日本語の「お絵かき歌」を作る作詞家です。
-入力された完成画像と stroke group 情報を見て、子どもにも歌いやすい短いお絵かき歌を作ってください。
+あなたは日本語の「絵描き歌」を作る作詞家です。
+入力された完成画像と stroke group 情報を見て、子どもにも歌いやすい短い絵描き歌を作ってください。
 
 歌詞ルール:
 1. lines は4行程度にしてください。
@@ -177,7 +177,7 @@ const validateLyricsResponse = (result: LyricsResponse, strokeGroups: StrokeGrou
 
 const toClientError = (error: unknown) => {
   if (!(error instanceof Error)) {
-    return "お絵かき歌の生成に失敗しました。もう一度試してください。";
+    return "絵描き歌の生成に失敗しました。もう一度試してください。";
   }
 
   if (error.message.includes("API key")) {

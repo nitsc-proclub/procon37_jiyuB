@@ -1,6 +1,6 @@
-﻿# お絵かき歌メーカー
+﻿# 超えかき歌！
 
-ユーザーがブラウザ上で描いた絵をもとに、Google Gemini が日本語の「お絵かき歌」の歌詞を生成し、VOICEVOX Engine で歌声に変換する Web アプリケーションです。
+ユーザーがブラウザ上で描いた絵をもとに、Google Gemini が日本語の「絵描き歌」の歌詞を生成し、VOICEVOX Engine で歌声に変換する Web アプリケーションです。
 
 このリポジトリでは、体験用アプリ本体に加えて、デモ記録の閲覧・保存、歌詞生成、歌声生成、描画軌跡の再生同期をまとめて扱います。
 
@@ -50,7 +50,7 @@ npm run dev
 
 - ブラウザ上のキャンバスに自由に描画
 - 描画画像とストローク情報を Gemini に送信
-- 4 行程度のお絵かき歌と歌声合成用のひらがな歌詞を自動生成
+- 4 行程度の絵描き歌と歌声合成用のひらがな歌詞を自動生成
 - 歌声合成用のひらがな歌詞 `singingKanaLines` を生成
 - 歌詞から簡易的な `SingingScore` を作成し、VOICEVOX で再生
 - VOICEVOX Engine で歌声を合成
@@ -96,7 +96,7 @@ npm run dev
 ## ドキュメント
 
 - [システム全体の概要](docs/system-overview.md)
-- [お絵かき歌生成の流れ](docs/ekaki-uta-generation.md)
+- [絵描き歌生成の流れ](docs/ekaki-uta-generation.md)
 - [描画軌跡の同期再生](docs/drawing-playback-sync.md)
 - [運用・トラブルシュート](docs/operations.md)
 
