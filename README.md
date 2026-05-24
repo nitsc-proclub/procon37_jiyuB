@@ -1,4 +1,6 @@
-﻿# 超えかき歌！
+!["超えかき歌！ロゴ画像"](https://github.com/nitsc-proclub/procon37_jiyuB/blob/0527e8a7458230c1254441e4f1d14eb4ca0e5c04/dist/logo.png)
+
+# 超えかき歌！
 
 ユーザーがブラウザ上で描いた絵をもとに、Google Gemini が日本語の「絵描き歌」の歌詞を生成し、VOICEVOX Engine で歌声に変換する Web アプリケーションです。
 
