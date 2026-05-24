@@ -935,7 +935,13 @@ const App: React.FC = () => {
       )}
 
       <header className="mb-4 text-center">
-        <h1 className="text-2xl md:text-3xl font-bold text-orange-600 drop-shadow-sm">お絵かき歌メーカー</h1>
+        <h1 className="mx-auto mb-1 w-fit">
+          <img
+            src="/dist/logo.png"
+            alt="お絵かき歌メーカー"
+            className="h-14 w-auto drop-shadow-sm md:h-16"
+          />
+        </h1>
         <p className="text-sm text-gray-600 font-medium">絵を描くと、AI が歌詞を作り、ずんだもん（VOICEVOX）が歌ってくれます！</p>
         <div className="mt-4 inline-flex rounded-full border border-white/70 bg-white/80 p-1 shadow-md backdrop-blur-md">
           <button
