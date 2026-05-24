@@ -9,9 +9,10 @@ lerna-debug.log*
 
 # Dependencies & Build
 node_modules
-dist
 dist-ssr
 demo-records
+docs/slides
+dist/assets
 
 # Environment variables (never commit!)
 .env
