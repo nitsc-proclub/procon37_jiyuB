@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import PaintCanvas from "./components/PaintCanvas";
+import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { deleteDemoRecord, getDemoRecord, listDemoRecords, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
@@ -1251,24 +1252,13 @@ const App: React.FC = () => {
               )}
             </label>
 
-            <div className="space-y-4 text-center">
-              {experimentLyrics.lines.map((line, index) => (
-                <p key={`${line}-${index}`} className="text-xl font-bold leading-relaxed text-gray-700 md:text-2xl">
-                  {line}
-                </p>
-              ))}
-            </div>
-
-            <div className="mt-6 rounded-2xl border-2 border-yellow-100 bg-yellow-50 p-4">
-              <p className="mb-2 text-sm font-black text-gray-600">歌声合成用かな</p>
-              <div className="space-y-1">
-                {experimentLyrics.singingKanaLines?.map((line, index) => (
-                  <p key={`${line}-${index}`} className="text-sm font-semibold text-gray-500">
-                    {line}
-                  </p>
-                ))}
-              </div>
-            </div>
+            <KaraokeLyricsPanel
+              lyrics={experimentLyrics}
+              audioRef={experimentAudioRef}
+              singingScore={experimentScore}
+              className="mt-2"
+              showKanaLines
+            />
           </section>
 
           <section className="rounded-3xl border-8 border-orange-100 bg-white p-6 shadow-xl md:p-7">
@@ -1460,18 +1450,13 @@ const App: React.FC = () => {
                       )}
                     </div>
 
-                    <div className="space-y-4 text-center">
-                      {lyrics.lines.map((line, index) => (
-                        <div key={`${line}-${index}`}>
-                          <p className="text-xl md:text-2xl text-gray-700 leading-relaxed font-medium">{line}</p>
-                          {lyrics.lineStrokeMappings?.[index] && (
-                            <p className="mt-1 text-xs font-bold text-gray-400">
-                              strokes: {lyrics.lineStrokeMappings[index].strokeGroupIds.join(", ") || "none"}
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    <KaraokeLyricsPanel
+                      lyrics={lyrics}
+                      audioRef={audioRef}
+                      singingScore={playbackScore}
+                      className="mt-2"
+                      showKanaLines={false}
+                    />
 
                     <div className="mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5">
                       <div className="mb-4 flex justify-end">
