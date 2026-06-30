@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import PaintCanvas from "./components/PaintCanvas";
 import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
+import PrintLayout from "./components/PrintLayout";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { deleteDemoRecord, getDemoRecord, listDemoRecords, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
@@ -12,7 +13,7 @@ import { DemoRecordSummary, DrawingData, LyricsResponse, SingingScore } from "./
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
 
-type AppView = "maker" | "demoRecords" | "melodyExperiment";
+type AppView = "maker" | "demoRecords" | "melodyExperiment" | "print";
 type DemoBrowseMode = "drawings" | "songs";
 
 const EXPERIMENT_LYRICS: LyricsResponse = {
@@ -411,6 +412,20 @@ const App: React.FC = () => {
         return;
       }
 
+      if (
+        key === "p" &&
+        appView === "maker" &&
+        lyrics &&
+        (selectedDemoDrawing || generatedDrawing) &&
+        !isGenerating
+      ) {
+        event.preventDefault();
+        audioRef.current?.pause();
+        setIsAudioPlaying(false);
+        setAppView("print");
+        return;
+      }
+
       if (key === "1") {
         event.preventDefault();
         setAppView("maker");
@@ -439,7 +454,16 @@ const App: React.FC = () => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [appView, isExperimentGenerating, isShortcutHelpOpen, loadDemoRecords]);
+  }, [
+    appView,
+    generatedDrawing,
+    isExperimentGenerating,
+    isGenerating,
+    isShortcutHelpOpen,
+    loadDemoRecords,
+    lyrics,
+    selectedDemoDrawing,
+  ]);
 
   const replaceAudioUrl = (nextUrl: string | null) => {
     if (isBlobUrl(audioUrlRef.current)) {
@@ -798,6 +822,16 @@ const App: React.FC = () => {
   const playbackAnimationEndProgress = getDrawingAnimationEndProgress(lyrics, playbackScore);
   const visibleDemoRecords = showFavoriteOnly ? demoRecords.filter((record) => record.isFavorite) : demoRecords;
   const experimentScoreJson = serializeSingingScore(experimentScore);
+  const canShowPrintLayout = !!lyrics && !!playbackDrawing && !isGenerating;
+
+  const handleOpenPrintLayout = () => {
+    if (!canShowPrintLayout) {
+      return;
+    }
+
+    stopAudioPlayback();
+    setAppView("print");
+  };
 
   const handleCopyExperimentScore = async () => {
     if (!experimentScore) {
@@ -815,6 +849,10 @@ const App: React.FC = () => {
     const fileName = sanitizeFileName(`${experimentLyrics.title}-singing-score.json`);
     downloadTextFile(fileName, experimentScoreJson, "application/json;charset=utf-8");
   };
+
+  if (appView === "print" && lyrics && playbackDrawing) {
+    return <PrintLayout lyrics={lyrics} drawingData={playbackDrawing} onBack={() => setAppView("maker")} />;
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-amber-50 via-yellow-50 to-orange-100 p-4 md:p-8 flex flex-col items-center">
@@ -938,7 +976,7 @@ const App: React.FC = () => {
       <header className="mb-4 text-center">
         <h1 className="mx-auto mb-1 w-fit">
           <img
-            src="/dist/logo.png"
+            src="/logo.png"
             alt="超えかき歌！"
             className="h-14 w-auto drop-shadow-sm md:h-16"
           />
@@ -1490,6 +1528,37 @@ const App: React.FC = () => {
                         onEmptied={() => setIsAudioPlaying(false)}
                       />
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={handleOpenPrintLayout}
+                      disabled={!canShowPrintLayout}
+                      className="mt-5 flex w-full items-center justify-center gap-3 rounded-2xl bg-orange-400 px-6 py-4 text-lg font-black text-white shadow-md transition-all hover:bg-orange-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path
+                          d="M7 9V4h10v5"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M7 14h10v6H7z"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      印刷プレビューを開く
+                    </button>
 
                     {lyrics.modelName && (
                       <p className="mt-3 text-right text-xs font-bold text-gray-400">
