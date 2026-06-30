@@ -1463,7 +1463,7 @@ const App: React.FC = () => {
             />
 
             {error && (
-              <div className="mt-4 p-4 bg-red-100 border-2 border-red-200 text-red-700 rounded-xl font-bold text-center">
+              <div className="mt-4 whitespace-pre-wrap rounded-xl border-2 border-red-200 bg-red-100 p-4 text-left font-bold text-red-700">
                 エラー: {error}
               </div>
             )}
