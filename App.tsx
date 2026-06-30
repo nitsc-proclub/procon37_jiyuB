@@ -824,7 +824,7 @@ const App: React.FC = () => {
   const experimentScoreJson = serializeSingingScore(experimentScore);
   const canShowPrintLayout = !!lyrics && !!playbackDrawing && !isGenerating;
 
-  const handleOpenPrintLayout = () => {
+  const handleStartPrint = () => {
     if (!canShowPrintLayout) {
       return;
     }
@@ -851,7 +851,14 @@ const App: React.FC = () => {
   };
 
   if (appView === "print" && lyrics && playbackDrawing) {
-    return <PrintLayout lyrics={lyrics} drawingData={playbackDrawing} onBack={() => setAppView("maker")} />;
+    return (
+      <PrintLayout
+        lyrics={lyrics}
+        drawingData={playbackDrawing}
+        onBack={() => setAppView("maker")}
+        autoPrint
+      />
+    );
   }
 
   return (
@@ -1478,6 +1485,38 @@ const App: React.FC = () => {
                   </div>
                 ) : lyrics ? (
                   <>
+                    <button
+                      type="button"
+                      onClick={handleStartPrint}
+                      disabled={!canShowPrintLayout}
+                      className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border-2 border-orange-100 bg-white text-orange-500 shadow-sm transition-all hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                      title="印刷する"
+                      aria-label="印刷する"
+                    >
+                      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path
+                          d="M7 9V4h10v5"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M7 14h10v6H7z"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+
                     <div className="mb-6 text-center border-b-2 border-orange-50 pb-4">
                       <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">
                         {lyrics.identifiedObject}
@@ -1528,37 +1567,6 @@ const App: React.FC = () => {
                         onEmptied={() => setIsAudioPlaying(false)}
                       />
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={handleOpenPrintLayout}
-                      disabled={!canShowPrintLayout}
-                      className="mt-5 flex w-full items-center justify-center gap-3 rounded-2xl bg-orange-400 px-6 py-4 text-lg font-black text-white shadow-md transition-all hover:bg-orange-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path
-                          d="M7 9V4h10v5"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        <path
-                          d="M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        <path
-                          d="M7 14h10v6H7z"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                      印刷プレビューを開く
-                    </button>
 
                     {lyrics.modelName && (
                       <p className="mt-3 text-right text-xs font-bold text-gray-400">

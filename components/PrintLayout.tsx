@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { DrawingData, LyricsResponse } from "../types";
 import { buildPrintStrokeSteps, getPrintSourceSize } from "../services/printLayoutService";
 import StrokeStepPreview from "./StrokeStepPreview";
@@ -7,6 +7,7 @@ type PrintLayoutProps = {
   lyrics: LyricsResponse;
   drawingData: DrawingData;
   onBack: () => void;
+  autoPrint?: boolean;
 };
 
 const formatPrintDate = (date: Date) =>
@@ -28,12 +29,38 @@ const getDensityClassName = (lineCount: number) => {
   return "density-standard";
 };
 
-const PrintLayout: React.FC<PrintLayoutProps> = ({ lyrics, drawingData, onBack }) => {
+const PrintLayout: React.FC<PrintLayoutProps> = ({ lyrics, drawingData, onBack, autoPrint = false }) => {
   const printedAt = useMemo(() => formatPrintDate(new Date()), []);
   const fallbackSourceSize = useMemo(() => getPrintSourceSize(drawingData), [drawingData]);
   const [sourceSize, setSourceSize] = useState(fallbackSourceSize);
+  const [isArtworkReady, setIsArtworkReady] = useState(false);
+  const hasStartedPrint = useRef(false);
   const strokeSteps = useMemo(() => buildPrintStrokeSteps(drawingData, lyrics), [drawingData, lyrics]);
   const densityClassName = getDensityClassName(lyrics.lines.length);
+
+  useEffect(() => {
+    if (!autoPrint || !isArtworkReady || hasStartedPrint.current) {
+      return;
+    }
+
+    hasStartedPrint.current = true;
+    const handleAfterPrint = () => onBack();
+    window.addEventListener("afterprint", handleAfterPrint, { once: true });
+
+    let timerId = 0;
+    const frameId = window.requestAnimationFrame(() => {
+      timerId = window.setTimeout(async () => {
+        await document.fonts?.ready;
+        window.print();
+      }, 0);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.clearTimeout(timerId);
+      window.removeEventListener("afterprint", handleAfterPrint);
+    };
+  }, [autoPrint, isArtworkReady, onBack]);
 
   return (
     <div className="print-layout-screen">
@@ -83,7 +110,10 @@ const PrintLayout: React.FC<PrintLayoutProps> = ({ lyrics, drawingData, onBack }
                     if (size > 0) {
                       setSourceSize({ width: size, height: size });
                     }
+
+                    setIsArtworkReady(true);
                   }}
+                  onError={() => setIsArtworkReady(true)}
                 />
               </div>
             </section>
