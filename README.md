@@ -101,6 +101,7 @@ npm run dev
 - [絵描き歌生成の流れ](docs/ekaki-uta-generation.md)
 - [描画軌跡の同期再生](docs/drawing-playback-sync.md)
 - [運用・トラブルシュート](docs/operations.md)
+- [Cloudflare Pages 公開確認版のデプロイ](docs/cloudflare-deployment.md)
 
 ## 注意点
 

@@ -3,6 +3,7 @@ import PaintCanvas from "./components/PaintCanvas";
 import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import PrintLayout from "./components/PrintLayout";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
+import { appConfig, appFeatures } from "./config/appConfig";
 import { deleteDemoRecord, getDemoRecord, listDemoRecords, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
@@ -185,11 +186,13 @@ const isEditableAppKeyboardTarget = (target: EventTarget | null) => {
 type ShortcutItem = {
   keys: string;
   description: string;
+  requiresBackend?: boolean;
 };
 
 type ShortcutGroup = {
   title: string;
   items: ShortcutItem[];
+  requiresBackend?: boolean;
 };
 
 const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
@@ -197,8 +200,8 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: "共通",
     items: [
       { keys: "Ctrl/Cmd + 1", description: "メーカーに切り替え" },
-      { keys: "Ctrl/Cmd + 2", description: "実験に切り替え" },
-      { keys: "Ctrl/Cmd + 3", description: "デモ記録に切り替え" },
+      { keys: "Ctrl/Cmd + 2", description: "実験に切り替え", requiresBackend: true },
+      { keys: "Ctrl/Cmd + 3", description: "デモ記録に切り替え", requiresBackend: true },
       { keys: "Ctrl/Cmd + /", description: "この一覧を開閉" },
       { keys: "Esc", description: "一覧や確認ダイアログを閉じる" },
     ],
@@ -206,8 +209,8 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: "メーカー",
     items: [
-      { keys: "Enter", description: "歌をつくる" },
-      { keys: "Ctrl/Cmd + S", description: "歌をつくる" },
+      { keys: "Enter", description: "歌をつくる", requiresBackend: true },
+      { keys: "Ctrl/Cmd + S", description: "歌をつくる", requiresBackend: true },
       { keys: "Ctrl/Cmd + Z", description: "ひとつ戻す" },
       { keys: "Ctrl/Cmd + Y", description: "ひとつ進める" },
       { keys: "Ctrl/Cmd + Shift + Z", description: "ひとつ進める" },
@@ -227,12 +230,14 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
   },
   {
     title: "実験",
+    requiresBackend: true,
     items: [
       { keys: "Ctrl/Cmd + Enter", description: "生成して聴く" },
     ],
   },
   {
     title: "デモ記録",
+    requiresBackend: true,
     items: [
       { keys: "D", description: "絵の一覧に切り替え" },
       { keys: "S", description: "歌の一覧に切り替え" },
@@ -253,7 +258,7 @@ const App: React.FC = () => {
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
   const [participantAge, setParticipantAge] = useState<number | null>(6);
-  const [isDataSavingEnabled, setIsDataSavingEnabled] = useState(true);
+  const [isDataSavingEnabled, setIsDataSavingEnabled] = useState(appFeatures.dataSaving);
   const [appView, setAppView] = useState<AppView>("maker");
   const [demoBrowseMode, setDemoBrowseMode] = useState<DemoBrowseMode>("drawings");
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
@@ -362,6 +367,10 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!appFeatures.demoRecords) {
+      return;
+    }
+
     if ((appView !== "demoRecords" && appView !== "melodyExperiment") || demoRecords.length > 0 || isDemoRecordsLoading) {
       return;
     }
@@ -434,6 +443,7 @@ const App: React.FC = () => {
       }
 
       if (key === "2") {
+        if (!appFeatures.voicevox) return;
         event.preventDefault();
         setAppView("melodyExperiment");
         setIsShortcutHelpOpen(false);
@@ -441,6 +451,7 @@ const App: React.FC = () => {
       }
 
       if (key === "3") {
+        if (!appFeatures.demoRecords) return;
         event.preventDefault();
         setAppView("demoRecords");
         setIsShortcutHelpOpen(false);
@@ -723,6 +734,11 @@ const App: React.FC = () => {
   };
 
   const handleComplete = async (data: DrawingData) => {
+    if (!appFeatures.gemini || !appFeatures.voicevox) {
+      setError("公開確認版では、AI生成・音声生成機能は準備中です。描画機能をお試しください。");
+      return;
+    }
+
     const groupedDrawingData = {
       ...data,
       strokeGroups: groupStrokes(data.strokes),
@@ -895,7 +911,7 @@ const App: React.FC = () => {
         </svg>
       </button>
 
-      <div className="fixed right-4 top-4 z-40 flex items-center gap-3 rounded-full border border-white/70 bg-white/80 px-4 py-2 shadow-lg backdrop-blur-md">
+      {appFeatures.dataSaving && <div className="fixed right-4 top-4 z-40 flex items-center gap-3 rounded-full border border-white/70 bg-white/80 px-4 py-2 shadow-lg backdrop-blur-md">
         <span className="text-sm font-bold text-gray-700">データ保存</span>
         <button
           type="button"
@@ -912,7 +928,7 @@ const App: React.FC = () => {
           />
         </button>
         <span className="w-8 text-sm font-black text-gray-700">{isDataSavingEnabled ? "ON" : "OFF"}</span>
-      </div>
+      </div>}
 
       <button
         type="button"
@@ -960,7 +976,13 @@ const App: React.FC = () => {
             </p>
 
             <div className="space-y-4">
-              {APP_SHORTCUT_GROUPS.map((group) => (
+              {APP_SHORTCUT_GROUPS
+                .filter((group) => appFeatures.gemini || !group.requiresBackend)
+                .map((group) => ({
+                  ...group,
+                  items: group.items.filter((item) => appFeatures.gemini || !item.requiresBackend),
+                }))
+                .map((group) => (
                 <section key={group.title} className="rounded-2xl border border-orange-100 bg-orange-50/40 p-3">
                   <h3 className="mb-2 text-sm font-black text-orange-600">{group.title}</h3>
                   <div className="space-y-2">
@@ -989,6 +1011,14 @@ const App: React.FC = () => {
           />
         </h1>
         <p className="text-sm text-gray-600 font-medium">絵を描くと、AI が歌詞を作り、ずんだもん（VOICEVOX）が歌ってくれます！</p>
+        {appConfig.isDeploymentPreview && (
+          <div className="mx-auto mt-4 max-w-2xl rounded-2xl border-2 border-orange-200 bg-orange-50 px-5 py-3 text-left shadow-sm" role="status">
+            <p className="font-black text-orange-700">公開確認版</p>
+            <p className="mt-1 text-sm font-semibold leading-relaxed text-orange-700">
+              アプリの画面と描画機能を確認できます。AI生成・音声生成・データ保存は現在準備中です。
+            </p>
+          </div>
+        )}
         <div className="mt-4 inline-flex rounded-full border border-white/70 bg-white/80 p-1 shadow-md backdrop-blur-md">
           <button
             type="button"
@@ -999,7 +1029,7 @@ const App: React.FC = () => {
           >
             メーカー
           </button>
-          <button
+          {appFeatures.voicevox && <button
             type="button"
             onClick={() => setAppView("melodyExperiment")}
             title="実験 (Ctrl+2 / Cmd+2)"
@@ -1007,8 +1037,8 @@ const App: React.FC = () => {
               }`}
           >
             実験
-          </button>
-          <button
+          </button>}
+          {appFeatures.demoRecords && <button
             type="button"
             onClick={() => setAppView("demoRecords")}
             title="デモ記録 (Ctrl+3 / Cmd+3)"
@@ -1016,7 +1046,7 @@ const App: React.FC = () => {
               }`}
           >
             デモ記録
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -1448,9 +1478,11 @@ const App: React.FC = () => {
               onComplete={handleComplete}
               onClear={handleClear}
               isGenerating={isGenerating}
+              generationDisabled={!appFeatures.gemini || !appFeatures.voicevox}
+              generationDisabledMessage="AI生成・音声生成は現在準備中です。描画機能はそのまま利用できます。"
               age={participantAge}
               onAgeChange={setParticipantAge}
-              isAgeSelectorVisible={isDataSavingEnabled}
+              isAgeSelectorVisible={appFeatures.dataSaving && isDataSavingEnabled}
               initialDrawing={selectedDemoDrawing}
               playbackDrawing={playbackDrawing}
               playbackAudioRef={audioRef}

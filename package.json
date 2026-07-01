@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:deployment-preview": "vite build --mode deployment-preview",
     "preview": "vite preview",
     "type-check": "tsc --noEmit"
   },
