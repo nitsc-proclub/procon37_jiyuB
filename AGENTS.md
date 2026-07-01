@@ -1,10 +1,10 @@
-# Project guidance
+# プロジェクトの作業方針
 
-## Local project resources
+## ローカルのプロジェクト資料
 
-- `.local-resources/` is a local-only project resource directory backed by Google Drive. It may contain notes, meeting records, reference documents, images, audio, video, and other source materials.
-- Consult `.local-resources/` when the current task could benefit from project context or source materials. Start from an index or README when one exists, and read only the files relevant to the task.
-- Treat files under `.local-resources/` as reference material unless the user explicitly asks to create, edit, move, or delete them.
-- Never stage, commit, copy into tracked files, publish, or otherwise disclose content from `.local-resources/` unless the user explicitly requests it.
-- If local resources conflict with the current code or tracked documentation, report the conflict instead of silently choosing one.
-- The directory may be unavailable on another machine. Continue with repository content when possible and state when a required local resource cannot be accessed.
+- `.local-resources/` は、Google Driveに保存されている、このプロジェクト専用のローカル資料置き場です。メモ、ミーティング記録、参考資料、画像、音声、動画などが含まれる場合があります。
+- 作業にプロジェクトの背景情報や素材が役立ちそうな場合は、`.local-resources/` を確認してください。目次やREADMEがある場合はそこから確認し、作業に関係するファイルだけを読みます。
+- ユーザーから作成、編集、移動、削除を明示的に依頼されない限り、`.local-resources/` 内のファイルは参照専用として扱ってください。
+- ユーザーから明示的に依頼されない限り、`.local-resources/` 内のファイルやその内容を、Gitのステージングやコミットの対象にしたり、Git管理対象のファイルへコピーしたり、公開・外部共有したりしないでください。
+- ローカル資料の内容が現在のコードやGit管理されているドキュメントと矛盾する場合は、どちらかを独断で採用せず、矛盾していることを報告してください。
+- 別の環境では `.local-resources/` を利用できない場合があります。リポジトリ内の情報だけで作業を継続できる場合は継続し、必要な資料を参照できない場合はその旨を伝えてください。
