@@ -7,6 +7,8 @@ interface PaintCanvasProps {
   onComplete: (data: DrawingData) => void;
   onClear: () => void;
   isGenerating: boolean;
+  generationDisabled?: boolean;
+  generationDisabledMessage?: string;
   age: number | null;
   onAgeChange: React.Dispatch<React.SetStateAction<number | null>>;
   isAgeSelectorVisible: boolean;
@@ -39,6 +41,8 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   onComplete,
   onClear,
   isGenerating,
+  generationDisabled = false,
+  generationDisabledMessage = "現在、この機能は利用できません",
   age,
   onAgeChange,
   isAgeSelectorVisible,
@@ -265,7 +269,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const submitGenerate = () => {
-    if (strokes.length === 0) return;
+    if (strokes.length === 0 || generationDisabled) return;
     const canvas = canvasRef.current!;
     const imageUri = canvas.toDataURL('image/png');
     setIsGenerateConfirmOpen(false);
@@ -274,7 +278,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const handleGenerate = () => {
-    if (strokes.length === 0 || isCanvasLocked) return;
+    if (strokes.length === 0 || isCanvasLocked || generationDisabled) return;
 
     if (hasGeneratedSong) {
       setIsGenerateConfirmOpen(true);
@@ -655,13 +659,18 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
             </button>
             <button
               onClick={handleGenerate}
-              disabled={strokes.length === 0 || isCanvasLocked}
+              disabled={strokes.length === 0 || isCanvasLocked || generationDisabled}
               className="flex h-14 min-w-[8rem] flex-[1.15] items-center justify-center whitespace-nowrap px-3 bg-yellow-400 hover:bg-yellow-500 text-white rounded-2xl font-bold transition-all disabled:opacity-50 disabled:bg-gray-300 text-base sm:text-lg shadow-md active:scale-95"
-              title="歌をつくる! (Ctrl+S / Cmd+S)"
+              title={generationDisabled ? generationDisabledMessage : "歌をつくる! (Ctrl+S / Cmd+S)"}
             >
-              歌をつくる！
+              {generationDisabled ? "生成は準備中" : "歌をつくる！"}
             </button>
           </div>
+          {generationDisabled && (
+            <p className="w-full text-center text-sm font-bold text-orange-600 md:col-start-2" role="status">
+              {generationDisabledMessage}
+            </p>
+          )}
         </div>
       </div>
 

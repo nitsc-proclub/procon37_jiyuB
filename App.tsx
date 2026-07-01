@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import PaintCanvas from "./components/PaintCanvas";
+import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
+import PrintLayout from "./components/PrintLayout";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
+import { appConfig, appFeatures } from "./config/appConfig";
 import { deleteDemoRecord, getDemoRecord, listDemoRecords, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
@@ -11,7 +14,7 @@ import { DemoRecordSummary, DrawingData, LyricsResponse, SingingScore } from "./
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
 
-type AppView = "maker" | "demoRecords" | "melodyExperiment";
+type AppView = "maker" | "demoRecords" | "melodyExperiment" | "print";
 type DemoBrowseMode = "drawings" | "songs";
 
 const EXPERIMENT_LYRICS: LyricsResponse = {
@@ -183,11 +186,13 @@ const isEditableAppKeyboardTarget = (target: EventTarget | null) => {
 type ShortcutItem = {
   keys: string;
   description: string;
+  requiresBackend?: boolean;
 };
 
 type ShortcutGroup = {
   title: string;
   items: ShortcutItem[];
+  requiresBackend?: boolean;
 };
 
 const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
@@ -195,8 +200,8 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: "共通",
     items: [
       { keys: "Ctrl/Cmd + 1", description: "メーカーに切り替え" },
-      { keys: "Ctrl/Cmd + 2", description: "実験に切り替え" },
-      { keys: "Ctrl/Cmd + 3", description: "デモ記録に切り替え" },
+      { keys: "Ctrl/Cmd + 2", description: "実験に切り替え", requiresBackend: true },
+      { keys: "Ctrl/Cmd + 3", description: "デモ記録に切り替え", requiresBackend: true },
       { keys: "Ctrl/Cmd + /", description: "この一覧を開閉" },
       { keys: "Esc", description: "一覧や確認ダイアログを閉じる" },
     ],
@@ -204,8 +209,8 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: "メーカー",
     items: [
-      { keys: "Enter", description: "歌をつくる" },
-      { keys: "Ctrl/Cmd + S", description: "歌をつくる" },
+      { keys: "Enter", description: "歌をつくる", requiresBackend: true },
+      { keys: "Ctrl/Cmd + S", description: "歌をつくる", requiresBackend: true },
       { keys: "Ctrl/Cmd + Z", description: "ひとつ戻す" },
       { keys: "Ctrl/Cmd + Y", description: "ひとつ進める" },
       { keys: "Ctrl/Cmd + Shift + Z", description: "ひとつ進める" },
@@ -225,12 +230,14 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
   },
   {
     title: "実験",
+    requiresBackend: true,
     items: [
       { keys: "Ctrl/Cmd + Enter", description: "生成して聴く" },
     ],
   },
   {
     title: "デモ記録",
+    requiresBackend: true,
     items: [
       { keys: "D", description: "絵の一覧に切り替え" },
       { keys: "S", description: "歌の一覧に切り替え" },
@@ -251,7 +258,7 @@ const App: React.FC = () => {
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
   const [participantAge, setParticipantAge] = useState<number | null>(6);
-  const [isDataSavingEnabled, setIsDataSavingEnabled] = useState(true);
+  const [isDataSavingEnabled, setIsDataSavingEnabled] = useState(appFeatures.dataSaving);
   const [appView, setAppView] = useState<AppView>("maker");
   const [demoBrowseMode, setDemoBrowseMode] = useState<DemoBrowseMode>("drawings");
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
@@ -360,6 +367,10 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!appFeatures.demoRecords) {
+      return;
+    }
+
     if ((appView !== "demoRecords" && appView !== "melodyExperiment") || demoRecords.length > 0 || isDemoRecordsLoading) {
       return;
     }
@@ -410,6 +421,20 @@ const App: React.FC = () => {
         return;
       }
 
+      if (
+        key === "p" &&
+        appView === "maker" &&
+        lyrics &&
+        (selectedDemoDrawing || generatedDrawing) &&
+        !isGenerating
+      ) {
+        event.preventDefault();
+        audioRef.current?.pause();
+        setIsAudioPlaying(false);
+        setAppView("print");
+        return;
+      }
+
       if (key === "1") {
         event.preventDefault();
         setAppView("maker");
@@ -418,6 +443,7 @@ const App: React.FC = () => {
       }
 
       if (key === "2") {
+        if (!appFeatures.voicevox) return;
         event.preventDefault();
         setAppView("melodyExperiment");
         setIsShortcutHelpOpen(false);
@@ -425,6 +451,7 @@ const App: React.FC = () => {
       }
 
       if (key === "3") {
+        if (!appFeatures.demoRecords) return;
         event.preventDefault();
         setAppView("demoRecords");
         setIsShortcutHelpOpen(false);
@@ -438,7 +465,16 @@ const App: React.FC = () => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [appView, isExperimentGenerating, isShortcutHelpOpen, loadDemoRecords]);
+  }, [
+    appView,
+    generatedDrawing,
+    isExperimentGenerating,
+    isGenerating,
+    isShortcutHelpOpen,
+    loadDemoRecords,
+    lyrics,
+    selectedDemoDrawing,
+  ]);
 
   const replaceAudioUrl = (nextUrl: string | null) => {
     if (isBlobUrl(audioUrlRef.current)) {
@@ -698,6 +734,11 @@ const App: React.FC = () => {
   };
 
   const handleComplete = async (data: DrawingData) => {
+    if (!appFeatures.gemini || !appFeatures.voicevox) {
+      setError("公開確認版では、AI生成・音声生成機能は準備中です。描画機能をお試しください。");
+      return;
+    }
+
     const groupedDrawingData = {
       ...data,
       strokeGroups: groupStrokes(data.strokes),
@@ -797,6 +838,16 @@ const App: React.FC = () => {
   const playbackAnimationEndProgress = getDrawingAnimationEndProgress(lyrics, playbackScore);
   const visibleDemoRecords = showFavoriteOnly ? demoRecords.filter((record) => record.isFavorite) : demoRecords;
   const experimentScoreJson = serializeSingingScore(experimentScore);
+  const canShowPrintLayout = !!lyrics && !!playbackDrawing && !isGenerating;
+
+  const handleStartPrint = () => {
+    if (!canShowPrintLayout) {
+      return;
+    }
+
+    stopAudioPlayback();
+    setAppView("print");
+  };
 
   const handleCopyExperimentScore = async () => {
     if (!experimentScore) {
@@ -814,6 +865,17 @@ const App: React.FC = () => {
     const fileName = sanitizeFileName(`${experimentLyrics.title}-singing-score.json`);
     downloadTextFile(fileName, experimentScoreJson, "application/json;charset=utf-8");
   };
+
+  if (appView === "print" && lyrics && playbackDrawing) {
+    return (
+      <PrintLayout
+        lyrics={lyrics}
+        drawingData={playbackDrawing}
+        onBack={() => setAppView("maker")}
+        autoPrint
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-amber-50 via-yellow-50 to-orange-100 p-4 md:p-8 flex flex-col items-center">
@@ -849,7 +911,7 @@ const App: React.FC = () => {
         </svg>
       </button>
 
-      <div className="fixed right-4 top-4 z-40 flex items-center gap-3 rounded-full border border-white/70 bg-white/80 px-4 py-2 shadow-lg backdrop-blur-md">
+      {appFeatures.dataSaving && <div className="fixed right-4 top-4 z-40 flex items-center gap-3 rounded-full border border-white/70 bg-white/80 px-4 py-2 shadow-lg backdrop-blur-md">
         <span className="text-sm font-bold text-gray-700">データ保存</span>
         <button
           type="button"
@@ -866,7 +928,7 @@ const App: React.FC = () => {
           />
         </button>
         <span className="w-8 text-sm font-black text-gray-700">{isDataSavingEnabled ? "ON" : "OFF"}</span>
-      </div>
+      </div>}
 
       <button
         type="button"
@@ -914,7 +976,13 @@ const App: React.FC = () => {
             </p>
 
             <div className="space-y-4">
-              {APP_SHORTCUT_GROUPS.map((group) => (
+              {APP_SHORTCUT_GROUPS
+                .filter((group) => appFeatures.gemini || !group.requiresBackend)
+                .map((group) => ({
+                  ...group,
+                  items: group.items.filter((item) => appFeatures.gemini || !item.requiresBackend),
+                }))
+                .map((group) => (
                 <section key={group.title} className="rounded-2xl border border-orange-100 bg-orange-50/40 p-3">
                   <h3 className="mb-2 text-sm font-black text-orange-600">{group.title}</h3>
                   <div className="space-y-2">
@@ -937,12 +1005,20 @@ const App: React.FC = () => {
       <header className="mb-4 text-center">
         <h1 className="mx-auto mb-1 w-fit">
           <img
-            src="/dist/logo.png"
+            src="/logo.png"
             alt="超えかき歌！"
             className="h-14 w-auto drop-shadow-sm md:h-16"
           />
         </h1>
         <p className="text-sm text-gray-600 font-medium">絵を描くと、AI が歌詞を作り、ずんだもん（VOICEVOX）が歌ってくれます！</p>
+        {appConfig.isDeploymentPreview && (
+          <div className="mx-auto mt-4 max-w-2xl rounded-2xl border-2 border-orange-200 bg-orange-50 px-5 py-3 text-left shadow-sm" role="status">
+            <p className="font-black text-orange-700">公開確認版</p>
+            <p className="mt-1 text-sm font-semibold leading-relaxed text-orange-700">
+              アプリの画面と描画機能を確認できます。AI生成・音声生成・データ保存は現在準備中です。
+            </p>
+          </div>
+        )}
         <div className="mt-4 inline-flex rounded-full border border-white/70 bg-white/80 p-1 shadow-md backdrop-blur-md">
           <button
             type="button"
@@ -953,7 +1029,7 @@ const App: React.FC = () => {
           >
             メーカー
           </button>
-          <button
+          {appFeatures.voicevox && <button
             type="button"
             onClick={() => setAppView("melodyExperiment")}
             title="実験 (Ctrl+2 / Cmd+2)"
@@ -961,8 +1037,8 @@ const App: React.FC = () => {
               }`}
           >
             実験
-          </button>
-          <button
+          </button>}
+          {appFeatures.demoRecords && <button
             type="button"
             onClick={() => setAppView("demoRecords")}
             title="デモ記録 (Ctrl+3 / Cmd+3)"
@@ -970,7 +1046,7 @@ const App: React.FC = () => {
               }`}
           >
             デモ記録
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -1251,24 +1327,13 @@ const App: React.FC = () => {
               )}
             </label>
 
-            <div className="space-y-4 text-center">
-              {experimentLyrics.lines.map((line, index) => (
-                <p key={`${line}-${index}`} className="text-xl font-bold leading-relaxed text-gray-700 md:text-2xl">
-                  {line}
-                </p>
-              ))}
-            </div>
-
-            <div className="mt-6 rounded-2xl border-2 border-yellow-100 bg-yellow-50 p-4">
-              <p className="mb-2 text-sm font-black text-gray-600">歌声合成用かな</p>
-              <div className="space-y-1">
-                {experimentLyrics.singingKanaLines?.map((line, index) => (
-                  <p key={`${line}-${index}`} className="text-sm font-semibold text-gray-500">
-                    {line}
-                  </p>
-                ))}
-              </div>
-            </div>
+            <KaraokeLyricsPanel
+              lyrics={experimentLyrics}
+              audioRef={experimentAudioRef}
+              singingScore={experimentScore}
+              className="mt-2"
+              showKanaLines
+            />
           </section>
 
           <section className="rounded-3xl border-8 border-orange-100 bg-white p-6 shadow-xl md:p-7">
@@ -1413,9 +1478,11 @@ const App: React.FC = () => {
               onComplete={handleComplete}
               onClear={handleClear}
               isGenerating={isGenerating}
+              generationDisabled={!appFeatures.gemini || !appFeatures.voicevox}
+              generationDisabledMessage="AI生成・音声生成は現在準備中です。描画機能はそのまま利用できます。"
               age={participantAge}
               onAgeChange={setParticipantAge}
-              isAgeSelectorVisible={isDataSavingEnabled}
+              isAgeSelectorVisible={appFeatures.dataSaving && isDataSavingEnabled}
               initialDrawing={selectedDemoDrawing}
               playbackDrawing={playbackDrawing}
               playbackAudioRef={audioRef}
@@ -1428,7 +1495,7 @@ const App: React.FC = () => {
             />
 
             {error && (
-              <div className="mt-4 p-4 bg-red-100 border-2 border-red-200 text-red-700 rounded-xl font-bold text-center">
+              <div className="mt-4 whitespace-pre-wrap rounded-xl border-2 border-red-200 bg-red-100 p-4 text-left font-bold text-red-700">
                 エラー: {error}
               </div>
             )}
@@ -1450,6 +1517,38 @@ const App: React.FC = () => {
                   </div>
                 ) : lyrics ? (
                   <>
+                    <button
+                      type="button"
+                      onClick={handleStartPrint}
+                      disabled={!canShowPrintLayout}
+                      className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border-2 border-orange-100 bg-white text-orange-500 shadow-sm transition-all hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                      title="印刷する"
+                      aria-label="印刷する"
+                    >
+                      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path
+                          d="M7 9V4h10v5"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M7 14h10v6H7z"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+
                     <div className="mb-6 text-center border-b-2 border-orange-50 pb-4">
                       <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">
                         {lyrics.identifiedObject}
@@ -1460,18 +1559,13 @@ const App: React.FC = () => {
                       )}
                     </div>
 
-                    <div className="space-y-4 text-center">
-                      {lyrics.lines.map((line, index) => (
-                        <div key={`${line}-${index}`}>
-                          <p className="text-xl md:text-2xl text-gray-700 leading-relaxed font-medium">{line}</p>
-                          {lyrics.lineStrokeMappings?.[index] && (
-                            <p className="mt-1 text-xs font-bold text-gray-400">
-                              strokes: {lyrics.lineStrokeMappings[index].strokeGroupIds.join(", ") || "none"}
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    <KaraokeLyricsPanel
+                      lyrics={lyrics}
+                      audioRef={audioRef}
+                      singingScore={playbackScore}
+                      className="mt-2"
+                      showKanaLines={false}
+                    />
 
                     <div className="mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5">
                       <div className="mb-4 flex justify-end">

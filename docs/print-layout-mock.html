@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>絵描き歌 印刷レイアウト草案</title>
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 0;
+    }
+
+    :root {
+      --paper-width: 297mm;
+      --paper-height: 210mm;
+      --orange-50: #fff7ed;
+      --orange-100: #ffedd5;
+      --orange-200: #fed7aa;
+      --orange-300: #fdba74;
+      --orange-400: #fb923c;
+      --orange-500: #f97316;
+      --yellow-50: #fefce8;
+      --yellow-100: #fef3c7;
+      --sky-100: #e0f2fe;
+      --sky-400: #38bdf8;
+      --red-500: #ef4444;
+      --gray-300: #d1d5db;
+      --gray-400: #9ca3af;
+      --gray-500: #6b7280;
+      --gray-600: #4b5563;
+      --gray-700: #374151;
+      --gray-800: #1f2937;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--gray-800);
+      background:
+        radial-gradient(circle at top left, rgba(251, 146, 60, 0.18), transparent 30%),
+        #e5e7eb;
+      font-family: "Yu Gothic", "Hiragino Sans", "Meiryo", system-ui, sans-serif;
+    }
+
+    .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 18px;
+      background: rgba(255, 255, 255, 0.94);
+      border-bottom: 1px solid #e5e7eb;
+      backdrop-filter: blur(12px);
+    }
+
+    .toolbar p {
+      margin: 0;
+      color: var(--gray-600);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .toolbar button {
+      border: 0;
+      border-radius: 999px;
+      padding: 9px 18px;
+      color: #fff;
+      background: var(--orange-400);
+      box-shadow: 0 6px 16px rgba(251, 146, 60, 0.28);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .sheet {
+      position: relative;
+      width: var(--paper-width);
+      height: var(--paper-height);
+      margin: 18px auto;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 18mm 18mm, rgba(253, 186, 116, 0.38) 0 21mm, transparent 21.5mm),
+        radial-gradient(circle at 282mm 190mm, rgba(254, 243, 199, 0.88) 0 28mm, transparent 28.5mm),
+        linear-gradient(180deg, #fff7ed 0%, #fff 38%, #fff 100%);
+      box-shadow: 0 20px 70px rgba(31, 41, 55, 0.25);
+      break-after: page;
+      page-break-after: always;
+    }
+
+    .sheet-inner {
+      position: absolute;
+      inset: 8mm;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 4.5mm;
+    }
+
+    .card {
+      border: 1.8mm solid var(--orange-100);
+      border-radius: 8mm;
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: 0 4mm 11mm rgba(31, 41, 55, 0.10);
+    }
+
+    h1,
+    h2,
+    p {
+      margin: 0;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 64mm 1fr 48mm;
+      align-items: center;
+      gap: 6mm;
+    }
+
+    .brand {
+      display: grid;
+      justify-items: start;
+      gap: 0.6mm;
+    }
+
+    .logo {
+      display: block;
+      width: 58mm;
+      height: auto;
+      object-fit: contain;
+      filter: drop-shadow(0 2px 3px rgba(31, 41, 55, 0.16));
+    }
+
+    .romaji {
+      width: 58mm;
+      color: var(--gray-700);
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 11pt;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      text-align: center;
+    }
+
+    .title-block {
+      min-width: 0;
+      text-align: center;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 8mm;
+      padding: 0 5mm;
+      border-radius: 999px;
+      color: #ea580c;
+      background: var(--orange-100);
+      font-size: 9pt;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .title {
+      margin-top: 1.8mm;
+      color: var(--gray-800);
+      font-size: 25pt;
+      font-weight: 900;
+      line-height: 1.08;
+    }
+
+    .name-date {
+      display: grid;
+      gap: 2.8mm;
+      color: var(--gray-500);
+      font-size: 8.5pt;
+      font-weight: 900;
+    }
+
+    .write-line {
+      height: 6mm;
+      border-bottom: 0.45mm solid rgba(107, 114, 128, 0.28);
+    }
+
+    .date-text {
+      color: var(--gray-700);
+      font-size: 10pt;
+      font-weight: 900;
+      text-align: right;
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: 154mm 1fr;
+      gap: 6mm;
+      min-height: 0;
+      align-items: stretch;
+    }
+
+    .art-card {
+      display: grid;
+      align-content: start;
+      gap: 4mm;
+      padding: 5mm;
+    }
+
+    .art-caption {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4mm;
+      color: var(--gray-500);
+      font-size: 8.5pt;
+      font-weight: 900;
+    }
+
+    .art-frame {
+      display: grid;
+      place-items: center;
+      width: 139mm;
+      height: 139mm;
+      overflow: hidden;
+      border: 0.9mm dashed var(--gray-300);
+      border-radius: 7mm;
+      background:
+        linear-gradient(#fff, #fff) padding-box,
+        repeating-linear-gradient(0deg, transparent 0 12mm, rgba(251, 146, 60, 0.08) 12mm 12.4mm);
+    }
+
+    .art-frame img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      image-rendering: auto;
+      opacity: 0.92;
+      transform: scale(1.08);
+    }
+
+    .lyrics-card {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 3mm;
+      padding: 5mm;
+      min-width: 0;
+    }
+
+    .lyrics-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4mm;
+      color: var(--gray-600);
+      font-size: 9pt;
+      font-weight: 900;
+    }
+
+    .lyrics-heading strong {
+      color: var(--orange-500);
+      font-size: 10pt;
+    }
+
+    .paired-lines {
+      display: grid;
+      gap: 2.6mm;
+      align-content: center;
+    }
+
+    .paired-line {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 38mm;
+      align-items: center;
+      gap: 3mm;
+      border: 0.7mm solid var(--orange-100);
+      border-radius: 5mm;
+      background: #fff;
+      padding: 2.4mm;
+      box-shadow: 0 1mm 3mm rgba(251, 146, 60, 0.10);
+    }
+
+    .paired-line.active {
+      border-color: var(--orange-300);
+      background: linear-gradient(90deg, #ffedd5 0%, #fefce8 60%, #fff 100%);
+      box-shadow: 0 2mm 5mm rgba(251, 146, 60, 0.16);
+    }
+
+    .lyric-text {
+      display: grid;
+      grid-template-columns: 8mm 1fr;
+      align-items: center;
+      gap: 3mm;
+      color: var(--gray-700);
+      font-size: 14.8pt;
+      font-weight: 900;
+      line-height: 1.28;
+    }
+
+    .line-number {
+      display: grid;
+      place-items: center;
+      width: 8mm;
+      height: 8mm;
+      border-radius: 999px;
+      color: #fff;
+      background: var(--orange-400);
+      font-size: 9pt;
+      line-height: 1;
+    }
+
+    .step-art {
+      position: relative;
+      display: grid;
+      place-items: center;
+      width: 34mm;
+      height: 34mm;
+      border-radius: 4mm;
+      border: 0.6mm solid rgba(251, 146, 60, 0.28);
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .active .step-art {
+      border: 0.9mm solid var(--red-500);
+    }
+
+    .step-art img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      opacity: 0.22;
+      filter: grayscale(1);
+    }
+
+    .stroke-preview {
+      position: absolute;
+      inset: 2.4mm;
+    }
+
+    .stroke-preview path {
+      fill: none;
+      stroke: var(--gray-800);
+      stroke-width: 7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .stroke-preview .new {
+      stroke: var(--orange-500);
+      stroke-width: 8;
+    }
+
+    .density-5 .paired-line {
+      grid-template-columns: minmax(0, 1fr) 32mm;
+      padding: 2mm;
+    }
+
+    .density-5 .lyric-text {
+      font-size: 12.6pt;
+    }
+
+    .density-5 .step-art {
+      width: 29mm;
+      height: 29mm;
+    }
+
+    .layout-b .main {
+      grid-template-columns: 130mm 1fr;
+    }
+
+    .layout-b .art-frame {
+      width: 115mm;
+      height: 115mm;
+    }
+
+    .layout-b .paired-line {
+      grid-template-columns: minmax(0, 1fr) 31mm;
+    }
+
+    .layout-b .lyric-text {
+      font-size: 13.2pt;
+    }
+
+    .layout-b .step-art {
+      width: 28mm;
+      height: 28mm;
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .toolbar {
+        display: none;
+      }
+
+      .sheet {
+        margin: 0;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <p>A4横 / 正方形イラスト + 歌詞と書き順を横並びで対応させる版</p>
+    <button type="button" onclick="window.print()">印刷プレビュー</button>
+  </div>
+
+  <section class="sheet layout-a" aria-label="案A 正方形イラストと歌詞書き順セット">
+    <div class="sheet-inner">
+      <header class="topbar">
+        <div class="brand">
+          <img class="logo" src="../dist/logo.png" alt="超えかき歌！">
+          <div class="romaji">Cho Ekaki Uta</div>
+        </div>
+        <div class="title-block">
+          <span class="pill">ねこ</span>
+          <h1 class="title">ねこさんのえかきうた</h1>
+        </div>
+        <div class="name-date">
+          <div>なまえ<div class="write-line"></div></div>
+          <div>ひにち<div class="date-text">2026年6月30日</div></div>
+        </div>
+      </header>
+
+      <main class="main">
+        <section class="card art-card">
+          <div class="art-caption">
+            <span>この絵をなぞって、もう一度かいてみよう</span>
+            <span>大きく印刷</span>
+          </div>
+          <div class="art-frame">
+            <img src="../demo-records/2026-05-24T13-51-24-210Z_success_ねこさんのえかきうた_27730c77/input.png" alt="ねこさんの絵">
+          </div>
+        </section>
+
+        <section class="card lyrics-card">
+          <div class="lyrics-heading">
+            <strong>歌詞と書き順</strong>
+            <span>歌詞の横が、そのとき描くところ</span>
+          </div>
+          <div class="paired-lines">
+            <article class="paired-line">
+              <div class="lyric-text"><span class="line-number">1</span><span>お山がふたつ 並んだよ</span></div>
+              <div class="step-art">
+                <svg class="stroke-preview" viewBox="0 0 320 320" aria-hidden="true">
+                  <path class="new" d="M56 98 C75 60 91 42 116 66 C136 82 145 101 150 124"/>
+                  <path class="new" d="M210 104 C236 62 255 38 282 80 C294 98 300 116 304 130"/>
+                </svg>
+              </div>
+            </article>
+            <article class="paired-line">
+              <div class="lyric-text"><span class="line-number">2</span><span>小さなおめめを ちょんちょんと</span></div>
+              <div class="step-art">
+                <svg class="stroke-preview" viewBox="0 0 320 320" aria-hidden="true">
+                  <path d="M56 98 C75 60 91 42 116 66 C136 82 145 101 150 124"/>
+                  <path d="M210 104 C236 62 255 38 282 80 C294 98 300 116 304 130"/>
+                  <path class="new" d="M105 144 L105 168"/>
+                  <path class="new" d="M224 138 L228 172"/>
+                </svg>
+              </div>
+            </article>
+            <article class="paired-line active">
+              <div class="lyric-text"><span class="line-number">3</span><span>お口を引いて おひげをぴっぴっぴ</span></div>
+              <div class="step-art">
+                <svg class="stroke-preview" viewBox="0 0 320 320" aria-hidden="true">
+                  <path d="M56 98 C75 60 91 42 116 66 C136 82 145 101 150 124"/>
+                  <path d="M210 104 C236 62 255 38 282 80 C294 98 300 116 304 130"/>
+                  <path d="M105 144 L105 168"/>
+                  <path d="M224 138 L228 172"/>
+                  <path class="new" d="M95 260 C126 278 178 278 218 260"/>
+                  <path class="new" d="M72 205 L108 194 M70 222 L104 214 M78 244 L116 232"/>
+                  <path class="new" d="M224 214 L258 207 M222 248 L262 232"/>
+                </svg>
+              </div>
+            </article>
+            <article class="paired-line">
+              <div class="lyric-text"><span class="line-number">4</span><span>かわいいねこさんの できあがり</span></div>
+              <div class="step-art">
+                <img src="../demo-records/2026-05-24T13-51-24-210Z_success_ねこさんのえかきうた_27730c77/input.png" alt="">
+                <svg class="stroke-preview" viewBox="0 0 320 320" aria-hidden="true">
+                  <path d="M56 98 C75 60 91 42 116 66 C136 82 145 101 150 124"/>
+                  <path d="M210 104 C236 62 255 38 282 80 C294 98 300 116 304 130"/>
+                  <path d="M105 144 L105 168"/>
+                  <path d="M224 138 L228 172"/>
+                  <path d="M95 260 C126 278 178 278 218 260"/>
+                  <path d="M72 205 L108 194 M70 222 L104 214 M78 244 L116 232"/>
+                  <path d="M224 214 L258 207 M222 248 L262 232"/>
+                </svg>
+              </div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+  </section>
+
+  <section class="sheet layout-b" aria-label="案B 行数が多い場合の密度調整例">
+    <div class="sheet-inner">
+      <header class="topbar">
+        <div class="brand">
+          <img class="logo" src="../dist/logo.png" alt="超えかき歌！">
+          <div class="romaji">Cho Ekaki Uta</div>
+        </div>
+        <div class="title-block">
+          <span class="pill">りんご</span>
+          <h1 class="title">おいしいりんごのおえかきうた</h1>
+        </div>
+        <div class="name-date">
+          <div>なまえ<div class="write-line"></div></div>
+          <div>ひにち<div class="date-text">2026年6月30日</div></div>
+        </div>
+      </header>
+
+      <main class="main">
+        <section class="card art-card">
+          <div class="art-caption">
+            <span>正方形に大きく拡大</span>
+            <span>なぞり用</span>
+          </div>
+          <div class="art-frame">
+            <img src="../demo-records/2026-05-13T08-09-59-826Z_success_おいしいりんごのおえかきうた_926a8091/input.png" alt="りんごの絵">
+          </div>
+        </section>
+
+        <section class="card lyrics-card density-5">
+          <div class="lyrics-heading">
+            <strong>歌詞と書き順</strong>
+            <span>5〜6行なら少しだけ小さくして対応</span>
+          </div>
+          <div class="paired-lines">
+            <article class="paired-line">
+              <div class="lyric-text"><span class="line-number">1</span><span>大きなまるを 書きまして</span></div>
+              <div class="step-art">
+                <svg class="stroke-preview" viewBox="0 0 320 320" aria-hidden="true">
+                  <path class="new" d="M90 150 C84 88 138 54 196 68 C260 84 282 146 254 214 C230 272 148 276 108 230 C90 210 82 184 90 150"/>
+                </svg>
+              </div>
+            </article>
+            <article class="paired-line active">
+              <div class="lyric-text"><span class="line-number">2</span><span>上をきゅっと へこませて</span></div>
+              <div class="step-art">
+                <svg class="stroke-preview" viewBox="0 0 320 320" aria-hidden="true">
+                  <path d="M90 150 C84 88 138 54 196 68 C260 84 282 146 254 214 C230 272 148 276 108 230 C90 210 82 184 90 150"/>
+                  <path class="new" d="M162 72 C170 96 194 102 210 82"/>
+                </svg>
+              </div>
+            </article>
+            <article class="paired-line">
+              <div class="lyric-text"><span class="line-number">3</span><span>ぴょこんと棒を 立てたらね</span></div>
+              <div class="step-art">
+                <svg class="stroke-preview" viewBox="0 0 320 320" aria-hidden="true">
+                  <path d="M90 150 C84 88 138 54 196 68 C260 84 282 146 254 214 C230 272 148 276 108 230 C90 210 82 184 90 150"/>
+                  <path d="M162 72 C170 96 194 102 210 82"/>
+                  <path class="new" d="M194 72 C204 44 218 34 240 28"/>
+                </svg>
+              </div>
+            </article>
+            <article class="paired-line">
+              <div class="lyric-text"><span class="line-number">4</span><span>真っ赤なりんごに なりました</span></div>
+              <div class="step-art">
+                <img src="../demo-records/2026-05-13T08-09-59-826Z_success_おいしいりんごのおえかきうた_926a8091/input.png" alt="">
+              </div>
+            </article>
+            <article class="paired-line">
+              <div class="lyric-text"><span class="line-number">5</span><span>行が多い場合は、この密度で収める</span></div>
+              <div class="step-art">
+                <img src="../demo-records/2026-05-13T08-09-59-826Z_success_おいしいりんごのおえかきうた_926a8091/input.png" alt="">
+              </div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+  </section>
+</body>
+</html>

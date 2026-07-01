@@ -21,6 +21,18 @@ class HttpError extends Error {
   }
 }
 
+type ModelAttempt = {
+  role: "メイン" | "サブ";
+  modelName: string;
+  error: unknown;
+};
+
+class ModelAttemptsError extends Error {
+  constructor(public readonly attempts: ModelAttempt[]) {
+    super("Gemini API のモデル呼び出しに失敗しました。");
+  }
+}
+
 const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -48,14 +60,38 @@ const readRequestBody = (request: IncomingMessage) =>
     request.on("error", reject);
   });
 
-const isHighDemandError = (error: unknown) => {
-  if (!(error instanceof Error)) {
-    return false;
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) {
+    return error.message;
   }
 
-  const message = error.message.toLowerCase();
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
+
+const isHighDemandError = (error: unknown) => {
+  const message = getErrorMessage(error).toLowerCase();
   return message.includes("503") || message.includes("high demand") || message.includes("overloaded");
 };
+
+const formatModelAttemptsError = (error: ModelAttemptsError) =>
+  [
+    "Gemini API の呼び出しに失敗しました。",
+    ...error.attempts.map(
+      (attempt) => `${attempt.role}モデル（${attempt.modelName}）: ${getErrorMessage(attempt.error)}`,
+    ),
+  ].join("\n");
 
 const assertDrawingData = (value: unknown): DrawingData => {
   if (!value || typeof value !== "object") {
@@ -278,11 +314,18 @@ const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promi
     const canFallback = subModelName && subModelName !== modelName && isHighDemandError(primaryError);
 
     if (!canFallback) {
-      throw primaryError;
+      throw new ModelAttemptsError([{ role: "メイン", modelName, error: primaryError }]);
     }
 
     console.warn(`Gemini primary model failed with high demand. Retrying with ${subModelName}.`, primaryError);
-    return generateWithModel(subModelName);
+    try {
+      return await generateWithModel(subModelName);
+    } catch (subError) {
+      throw new ModelAttemptsError([
+        { role: "メイン", modelName, error: primaryError },
+        { role: "サブ", modelName: subModelName, error: subError },
+      ]);
+    }
   }
 };
 
@@ -310,7 +353,12 @@ export const createGeminiMiddleware =
       sendJson(response, 200, await generateEkakiUta(drawingData, env));
     } catch (error) {
       const statusCode = error instanceof HttpError ? error.statusCode : 500;
-      const message = error instanceof HttpError ? error.message : toClientError(error);
+      const message =
+        error instanceof HttpError
+          ? error.message
+          : error instanceof ModelAttemptsError
+            ? formatModelAttemptsError(error)
+            : toClientError(error);
 
       if (statusCode >= 500) {
         console.error("Gemini API Error:", error);
