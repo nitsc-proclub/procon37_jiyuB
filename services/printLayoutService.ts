@@ -72,6 +72,7 @@ const buildFallbackLineStrokeIndexes = (drawingData: DrawingData, lyrics: Lyrics
 export const buildPrintStrokeSteps = (drawingData: DrawingData, lyrics: LyricsResponse): PrintStrokeStep[] => {
   const mappedLineStrokeIndexes = buildMappedLineStrokeIndexes(drawingData, lyrics);
   const lineStrokeIndexes = mappedLineStrokeIndexes ?? buildFallbackLineStrokeIndexes(drawingData, lyrics);
+  const shouldCompleteMissingStrokes = mappedLineStrokeIndexes === null;
   const allStrokeIndexes = drawingData.strokes.map((_, index) => index);
   const usedStrokeIndexes = new Set<number>();
 
@@ -79,7 +80,7 @@ export const buildPrintStrokeSteps = (drawingData: DrawingData, lyrics: LyricsRe
     let currentStrokeIndexes = lineStrokeIndexes[lineIndex] ?? [];
     let isCompletionStep = false;
 
-    if (lineIndex === lyrics.lines.length - 1) {
+    if (shouldCompleteMissingStrokes && lineIndex === lyrics.lines.length - 1) {
       const missingStrokeIndexes = allStrokeIndexes.filter(
         (strokeIndex) => !usedStrokeIndexes.has(strokeIndex) && !currentStrokeIndexes.includes(strokeIndex),
       );
