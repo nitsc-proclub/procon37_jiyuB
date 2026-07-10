@@ -216,27 +216,6 @@ const PrintLayout: React.FC<PrintLayoutProps> = ({ lyrics, drawingData, onBack, 
           -webkit-print-color-adjust: exact;
         }
 
-        .print-sheet::before,
-        .print-sheet::after {
-          content: "";
-          position: absolute;
-          width: 44mm;
-          height: 44mm;
-          border: 1.2mm solid rgba(251, 146, 60, 0.16);
-          border-radius: 50%;
-          pointer-events: none;
-        }
-
-        .print-sheet::before {
-          top: -24mm;
-          right: 42mm;
-        }
-
-        .print-sheet::after {
-          bottom: -28mm;
-          left: 62mm;
-        }
-
         .print-credit {
           position: absolute;
           right: 7mm;
