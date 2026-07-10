@@ -28,11 +28,12 @@ VOICEVOX Engine は開発中、既定で `http://127.0.0.1:50021` で起動し�
 | 変数 | 役割 |
 | --- | --- |
 | `GEMINI_API_KEY` | Gemini API の認証に使う |
-| `GEMINI_MODEL` | 生成に使う Gemini モデル名。未指定時は `gemini-2.5-flash-lite` を使う |
-| `GEMINI_MODEL_SUB` | 高負荷時のフォールバック用モデル名 |
+| `GEMINI_MODEL` | 生成に使う第一候補の Gemini モデル名。未指定時は動的候補と `gemini-2.5-flash-lite` を使う |
+| `GEMINI_MODEL_SUB` | 最後に試すフォールバック用モデル名 |
+| `GEMINI_MODEL_CANDIDATES` | カンマまたは空白区切りの明示的なモデル候補。指定時はこの順序を優先する |
 | `DEMO_RECORDS_DIR` | `demo-records` の保存先を変更したいときに使う |
 
-`GEMINI_MODEL_SUB` は、Gemini 側で 503 や overloaded 系の失敗が起きたときの代替候補です。
+`GEMINI_MODEL_CANDIDATES` を省略した場合は、`GEMINI_MODEL` を第一候補にしたうえで Gemini API のモデル一覧を取得し、利用可能な Flash 系モデルを世代・preview・lite などの名前から優先順に並べて試します。`GEMINI_MODEL_SUB` は、その後に試す最後の保険として扱います。
 
 ## 4. 起動時の内部構成
 

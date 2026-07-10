@@ -4,13 +4,31 @@ import { groupStrokes } from "../services/strokeGroupingService";
 import type { DrawingData, LyricsResponse, StrokeGroup } from "../types";
 
 const DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite";
+const MODEL_LIST_CACHE_MS = 10 * 60 * 1000;
 const MAX_GEMINI_REQUEST_BYTES = 15 * 1024 * 1024;
 
 type GeminiEnv = {
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
   GEMINI_MODEL_SUB?: string;
+  GEMINI_MODEL_CANDIDATES?: string;
 };
+
+type GeminiModelListItem = {
+  name?: string;
+  supportedGenerationMethods?: string[];
+};
+
+type GeminiModelListResponse = {
+  models?: GeminiModelListItem[];
+};
+
+type ModelListCache = {
+  expiresAt: number;
+  modelNames: string[];
+};
+
+let modelListCache: ModelListCache | null = null;
 
 class HttpError extends Error {
   constructor(
@@ -80,9 +98,180 @@ const getErrorMessage = (error: unknown) => {
   }
 };
 
+const parseModelList = (value: string | undefined) =>
+  (value ?? "")
+    .split(/[,\s]+/)
+    .map((modelName) => modelName.trim())
+    .filter(Boolean);
+
+const uniqueModelNames = (modelNames: string[]) => [...new Set(modelNames)];
+
+const normalizeModelName = (modelName: string) => modelName.replace(/^models\//, "");
+
+const includesModelName = (modelNames: string[], modelName: string) =>
+  modelNames.some((candidateModelName) => normalizeModelName(candidateModelName) === normalizeModelName(modelName));
+
+const isCandidateGeminiModel = (modelName: string) => {
+  const normalized = normalizeModelName(modelName);
+  return (
+    normalized.startsWith("gemini-") &&
+    !normalized.includes("embedding") &&
+    !normalized.includes("image") &&
+    !normalized.includes("live") &&
+    !normalized.includes("tts") &&
+    !normalized.includes("robotics") &&
+    !normalized.includes("learnlm") &&
+    (normalized.includes("flash") || normalized.includes("pro"))
+  );
+};
+
+const isDynamicGeminiModel = (modelName: string) => normalizeModelName(modelName).includes("flash");
+
+const getVersionScore = (modelName: string) => {
+  const [, version = "0"] = /gemini-(\d+(?:\.\d+)?)/.exec(modelName) ?? [];
+  return Number.parseFloat(version) || 0;
+};
+
+const scoreModelName = (modelName: string) => {
+  const normalized = normalizeModelName(modelName);
+  let score = getVersionScore(normalized) * 100;
+
+  if (normalized.includes("-pro")) {
+    score += 20;
+  }
+
+  if (normalized.includes("-flash")) {
+    score += 10;
+  }
+
+  if (normalized.includes("preview")) {
+    score += 5;
+  }
+
+  if (normalized.includes("latest")) {
+    score += 4;
+  }
+
+  if (normalized.includes("lite")) {
+    score -= 15;
+  }
+
+  return score;
+};
+
+const sortModelNamesByPreference = (modelNames: string[]) =>
+  [...modelNames].sort((first, second) => {
+    const scoreDifference = scoreModelName(second) - scoreModelName(first);
+    return scoreDifference || first.localeCompare(second);
+  });
+
+const fetchAvailableModelNames = async (apiKey: string) => {
+  const now = Date.now();
+
+  if (modelListCache && modelListCache.expiresAt > now) {
+    return modelListCache.modelNames;
+  }
+
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
+
+  if (!response.ok) {
+    throw new Error(`Gemini model list request failed: ${response.status} ${await response.text()}`);
+  }
+
+  const payload = (await response.json()) as GeminiModelListResponse;
+  const modelNames = uniqueModelNames(
+    (payload.models ?? [])
+      .filter((model) => model.supportedGenerationMethods?.includes("generateContent"))
+      .map((model) => (model.name ? normalizeModelName(model.name) : ""))
+      .filter(isCandidateGeminiModel),
+  );
+
+  modelListCache = {
+    expiresAt: now + MODEL_LIST_CACHE_MS,
+    modelNames,
+  };
+
+  return modelNames;
+};
+
+const getExplicitModelCandidates = (env: GeminiEnv) => parseModelList(env.GEMINI_MODEL_CANDIDATES);
+
+const getPrimaryModelCandidates = (env: GeminiEnv) => parseModelList(env.GEMINI_MODEL);
+
+const getFallbackModelCandidates = (env: GeminiEnv) =>
+  uniqueModelNames([...parseModelList(env.GEMINI_MODEL_SUB), DEFAULT_MODEL_NAME]);
+
+const getModelCandidates = async (apiKey: string, env: GeminiEnv) => {
+  const explicitModelNames = getExplicitModelCandidates(env);
+  const primaryModelNames = getPrimaryModelCandidates(env);
+  const fallbackModelNames = getFallbackModelCandidates(env);
+  const configuredModelNames = uniqueModelNames([...explicitModelNames, ...primaryModelNames, ...fallbackModelNames]);
+
+  try {
+    const availableModelNames = await fetchAvailableModelNames(apiKey);
+    const explicitAvailableModelNames = explicitModelNames.filter((modelName) =>
+      includesModelName(availableModelNames, modelName),
+    );
+    const primaryAvailableModelNames = primaryModelNames.filter((modelName) =>
+      includesModelName(availableModelNames, modelName),
+    );
+    const fallbackAvailableModelNames = fallbackModelNames.filter((modelName) =>
+      includesModelName(availableModelNames, modelName),
+    );
+    const leadingModelNames = explicitAvailableModelNames.length > 0 ? explicitAvailableModelNames : primaryAvailableModelNames;
+    const dynamicModelNames = sortModelNamesByPreference(
+      availableModelNames.filter(
+        (modelName) =>
+          isDynamicGeminiModel(modelName) &&
+          !includesModelName(leadingModelNames, modelName) &&
+          !includesModelName(fallbackAvailableModelNames, modelName),
+      ),
+    );
+
+    return uniqueModelNames([...leadingModelNames, ...dynamicModelNames, ...fallbackAvailableModelNames, DEFAULT_MODEL_NAME]);
+  } catch (error) {
+    console.warn("Gemini model list request failed. Falling back to configured models.", error);
+    return configuredModelNames;
+  }
+};
+
 const isHighDemandError = (error: unknown) => {
   const message = getErrorMessage(error).toLowerCase();
   return message.includes("503") || message.includes("high demand") || message.includes("overloaded");
+};
+
+const isRetriableModelError = (error: unknown) => {
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    isHighDemandError(error) ||
+    message.includes("fetch failed") ||
+    message.includes("network") ||
+    message.includes("timeout") ||
+    message.includes("econnreset") ||
+    message.includes("etimedout") ||
+    message.includes("socket")
+  );
+};
+
+const isModelSelectionError = (error: unknown) => {
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    message.includes("404") ||
+    message.includes("not found") ||
+    message.includes("not supported") ||
+    message.includes("model is not") ||
+    message.includes("invalid model")
+  );
+};
+
+const shouldTryNextModel = (error: unknown) => {
+  const message = getErrorMessage(error).toLowerCase();
+
+  if (message.includes("api key") || message.includes("429") || message.includes("quota")) {
+    return false;
+  }
+
+  return isRetriableModelError(error) || isModelSelectionError(error);
 };
 
 const formatModelAttemptsError = (error: ModelAttemptsError) =>
@@ -233,14 +422,13 @@ const toClientError = (error: unknown) => {
 
 const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promise<LyricsResponse> => {
   const apiKey = env.GEMINI_API_KEY;
-  const modelName = env.GEMINI_MODEL || DEFAULT_MODEL_NAME;
-  const subModelName = env.GEMINI_MODEL_SUB;
 
   if (!apiKey) {
     throw new HttpError("GEMINI_API_KEY が設定されていません。.env.local を確認してください。", 500);
   }
 
   const ai = new GoogleGenAI({ apiKey });
+  const modelCandidates = await getModelCandidates(apiKey, env);
   const base64Image = getBase64Image(drawingData.imageUri);
   const strokeGroups = getStrokeGroups(drawingData);
   const prompt = buildPrompt(drawingData);
@@ -308,25 +496,23 @@ const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promi
     };
   };
 
-  try {
-    return await generateWithModel(modelName);
-  } catch (primaryError) {
-    const canFallback = subModelName && subModelName !== modelName && isHighDemandError(primaryError);
+  const attempts: ModelAttempt[] = [];
 
-    if (!canFallback) {
-      throw new ModelAttemptsError([{ role: "メイン", modelName, error: primaryError }]);
-    }
-
-    console.warn(`Gemini primary model failed with high demand. Retrying with ${subModelName}.`, primaryError);
+  for (const [index, modelName] of modelCandidates.entries()) {
     try {
-      return await generateWithModel(subModelName);
-    } catch (subError) {
-      throw new ModelAttemptsError([
-        { role: "メイン", modelName, error: primaryError },
-        { role: "サブ", modelName: subModelName, error: subError },
-      ]);
+      return await generateWithModel(modelName);
+    } catch (error) {
+      attempts.push({ role: index === 0 ? "メイン" : "サブ", modelName, error });
+
+      if (index >= modelCandidates.length - 1 || !shouldTryNextModel(error)) {
+        throw new ModelAttemptsError(attempts);
+      }
+
+      console.warn(`Gemini model ${modelName} failed. Retrying with ${modelCandidates[index + 1]}.`, error);
     }
   }
+
+  throw new ModelAttemptsError(attempts);
 };
 
 export const createGeminiMiddleware =
