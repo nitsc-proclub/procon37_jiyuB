@@ -364,7 +364,6 @@ const PrintLayout: React.FC<PrintLayoutProps> = ({ lyrics, drawingData, onBack, 
           height: 100%;
           object-fit: contain;
           opacity: 0.92;
-          transform: scale(1.08);
         }
 
         .print-lyrics-card {

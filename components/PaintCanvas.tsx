@@ -9,9 +9,6 @@ interface PaintCanvasProps {
   isGenerating: boolean;
   generationDisabled?: boolean;
   generationDisabledMessage?: string;
-  age: number | null;
-  onAgeChange: React.Dispatch<React.SetStateAction<number | null>>;
-  isAgeSelectorVisible: boolean;
   initialDrawing?: DrawingData | null;
   playbackDrawing?: DrawingData | null;
   playbackAudioRef?: React.RefObject<HTMLAudioElement | null>;
@@ -22,11 +19,6 @@ interface PaintCanvasProps {
   playbackLyricLineCount?: number;
   isPlaybackActive?: boolean;
 }
-
-const MIN_AGE = 0;
-const MAX_AGE = 99;
-
-const clampAge = (age: number) => Math.min(MAX_AGE, Math.max(MIN_AGE, age));
 
 const isEditableKeyboardTarget = (target: EventTarget | null) => {
   if (!(target instanceof HTMLElement)) {
@@ -43,9 +35,6 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   isGenerating,
   generationDisabled = false,
   generationDisabledMessage = "現在、この機能は利用できません",
-  age,
-  onAgeChange,
-  isAgeSelectorVisible,
   initialDrawing,
   playbackDrawing,
   playbackAudioRef,
@@ -62,12 +51,8 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [undoneStrokes, setUndoneStrokes] = useState<Stroke[]>([]);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
-  const [isGenerateConfirmOpen, setIsGenerateConfirmOpen] = useState(false);
-  const [hasGeneratedSong, setHasGeneratedSong] = useState(false);
   const currentStrokeRef = useRef<Point[]>([]);
   const lastPointRef = useRef<Point | null>(null);
-  const repeatTimerRef = useRef<number | null>(null);
-  const repeatIntervalRef = useRef<number | null>(null);
   const isCanvasLocked = isGenerating || isPlaybackActive;
 
   const setupCanvas = () => {
@@ -165,7 +150,6 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     window.addEventListener('resize', setupCanvas);
     return () => {
       window.removeEventListener('resize', setupCanvas);
-      stopRepeatingAgeChange();
     };
   }, []);
 
@@ -176,8 +160,6 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     setStrokes(nextStrokes);
     setUndoneStrokes([]);
     setIsClearConfirmOpen(false);
-    setIsGenerateConfirmOpen(false);
-    setHasGeneratedSong(true);
     drawImageUri(initialDrawing.imageUri, nextStrokes);
   }, [initialDrawing]);
 
@@ -254,8 +236,6 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     setStrokes([]);
     setUndoneStrokes([]);
     setIsClearConfirmOpen(false);
-    setIsGenerateConfirmOpen(false);
-    setHasGeneratedSong(false);
     onClear();
   };
 
@@ -272,24 +252,13 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     if (strokes.length === 0 || generationDisabled) return;
     const canvas = canvasRef.current!;
     const imageUri = canvas.toDataURL('image/png');
-    setIsGenerateConfirmOpen(false);
-    setHasGeneratedSong(true);
     onComplete({ strokes, imageUri });
   };
 
   const handleGenerate = () => {
     if (strokes.length === 0 || isCanvasLocked || generationDisabled) return;
 
-    if (hasGeneratedSong) {
-      setIsGenerateConfirmOpen(true);
-      return;
-    }
-
     submitGenerate();
-  };
-
-  const cancelGenerate = () => {
-    setIsGenerateConfirmOpen(false);
   };
 
   const handleUndo = () => {
@@ -324,22 +293,16 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
       const key = event.key.toLowerCase();
 
-      if (isClearConfirmOpen || isGenerateConfirmOpen) {
+      if (isClearConfirmOpen) {
         if (key === 'escape') {
           event.preventDefault();
           cancelClear();
-          cancelGenerate();
           return;
         }
 
         if (key === 'enter') {
           event.preventDefault();
-
-          if (isClearConfirmOpen) {
-            clearCanvas();
-          } else {
-            submitGenerate();
-          }
+          clearCanvas();
         }
 
         return;
@@ -348,42 +311,6 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
       if (key === 'enter') {
         event.preventDefault();
         handleGenerate();
-        return;
-      }
-
-      if (key === 'arrowup') {
-        event.preventDefault();
-        changeAge(event.shiftKey ? 10 : 1);
-        return;
-      }
-
-      if (key === 'arrowdown') {
-        event.preventDefault();
-        changeAge(event.shiftKey ? -10 : -1);
-        return;
-      }
-
-      if (key === 'pageup') {
-        event.preventDefault();
-        changeAge(10);
-        return;
-      }
-
-      if (key === 'pagedown') {
-        event.preventDefault();
-        changeAge(-10);
-        return;
-      }
-
-      if (key === 'home') {
-        event.preventDefault();
-        onAgeChange(MIN_AGE);
-        return;
-      }
-
-      if (key === 'end') {
-        event.preventDefault();
-        onAgeChange(MAX_AGE);
         return;
       }
 
@@ -412,22 +339,21 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [strokes, undoneStrokes, isCanvasLocked, isClearConfirmOpen, isGenerateConfirmOpen]);
+  }, [strokes, undoneStrokes, isCanvasLocked, isClearConfirmOpen]);
 
   useEffect(() => {
-    if (!isClearConfirmOpen && !isGenerateConfirmOpen) return;
+    if (!isClearConfirmOpen) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
         cancelClear();
-        cancelGenerate();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isClearConfirmOpen, isGenerateConfirmOpen]);
+  }, [isClearConfirmOpen]);
 
   useEffect(() => {
     if (!isPlaybackActive) return;
@@ -436,134 +362,16 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     currentStrokeRef.current = [];
     lastPointRef.current = null;
     setIsClearConfirmOpen(false);
-    setIsGenerateConfirmOpen(false);
   }, [isPlaybackActive]);
-
-  const stopRepeatingAgeChange = () => {
-    if (repeatTimerRef.current !== null) {
-      window.clearTimeout(repeatTimerRef.current);
-      repeatTimerRef.current = null;
-    }
-
-    if (repeatIntervalRef.current !== null) {
-      window.clearInterval(repeatIntervalRef.current);
-      repeatIntervalRef.current = null;
-    }
-  };
-
-  const changeAge = (delta: number) => {
-    if (isCanvasLocked) return;
-    onAgeChange((currentAge) => {
-      if (currentAge === null) {
-        return delta > 0 ? 1 : 0;
-      }
-
-      return clampAge(currentAge + delta);
-    });
-  };
-
-  const startRepeatingAgeChange = (delta: number) => {
-    if (isCanvasLocked) return;
-
-    stopRepeatingAgeChange();
-    changeAge(delta);
-
-    repeatTimerRef.current = window.setTimeout(() => {
-      repeatIntervalRef.current = window.setInterval(() => {
-        onAgeChange((currentAge) => {
-          if (currentAge === null) {
-            return delta > 0 ? 1 : 0;
-          }
-
-          return clampAge(currentAge + delta);
-        });
-      }, 90);
-    }, 360);
-  };
-
-  useEffect(() => {
-    if (!isAgeSelectorVisible || isCanvasLocked) {
-      stopRepeatingAgeChange();
-    }
-  }, [isAgeSelectorVisible, isCanvasLocked]);
-
-  const ageSelector = (
-    <div className="flex w-full flex-row flex-wrap items-stretch justify-center gap-2 md:w-28 md:flex-col md:flex-nowrap md:self-start">
-      <button
-        type="button"
-        onPointerDown={() => startRepeatingAgeChange(10)}
-        onPointerUp={stopRepeatingAgeChange}
-        onPointerCancel={stopRepeatingAgeChange}
-        onPointerLeave={stopRepeatingAgeChange}
-        disabled={isCanvasLocked || age === MAX_AGE}
-        className="flex h-14 w-16 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
-        title="年齢を10上げる (PageUp / Shift+↑)"
-      >
-        +10
-      </button>
-      <button
-        type="button"
-        onPointerDown={() => startRepeatingAgeChange(1)}
-        onPointerUp={stopRepeatingAgeChange}
-        onPointerCancel={stopRepeatingAgeChange}
-        onPointerLeave={stopRepeatingAgeChange}
-        disabled={isCanvasLocked || age === MAX_AGE}
-        className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
-        title="年齢を上げる (↑)"
-      >
-        +1
-      </button>
-      <div className="flex min-h-14 min-w-28 flex-col items-center justify-center rounded-2xl border-2 border-yellow-200 bg-yellow-50 px-3 py-2 text-center shadow-sm md:min-w-0">
-        <span className="text-xs font-bold text-gray-400">年齢</span>
-        <span className="text-2xl font-black leading-tight text-gray-800">{age === null ? "未設定" : `${age}才`}</span>
-      </div>
-      <button
-        type="button"
-        onPointerDown={() => startRepeatingAgeChange(-1)}
-        onPointerUp={stopRepeatingAgeChange}
-        onPointerCancel={stopRepeatingAgeChange}
-        onPointerLeave={stopRepeatingAgeChange}
-        disabled={isCanvasLocked || age === MIN_AGE}
-        className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
-        title="年齢を下げる (↓)"
-      >
-        -1
-      </button>
-      <button
-        type="button"
-        onPointerDown={() => startRepeatingAgeChange(-10)}
-        onPointerUp={stopRepeatingAgeChange}
-        onPointerCancel={stopRepeatingAgeChange}
-        onPointerLeave={stopRepeatingAgeChange}
-        disabled={isCanvasLocked || age === MIN_AGE}
-        className="flex h-14 w-16 items-center justify-center rounded-2xl bg-white text-2xl font-black text-orange-500 shadow-md border-2 border-orange-100 transition-all hover:bg-orange-50 disabled:opacity-40 active:scale-95 md:w-full"
-        title="年齢を10下げる (PageDown / Shift+↓)"
-      >
-        -10
-      </button>
-      <button
-        type="button"
-        onClick={() => onAgeChange(null)}
-        disabled={isCanvasLocked || age === null}
-        className="flex h-14 min-w-24 items-center justify-center rounded-2xl border-2 border-gray-200 bg-white px-3 text-sm font-black text-gray-600 shadow-md transition-all hover:bg-gray-50 disabled:opacity-40 active:scale-95 md:w-full"
-        title="年齢を未設定にする (Home)"
-      >
-        未設定
-      </button>
-    </div>
-  );
 
   return (
     <>
       <div className="relative flex w-full max-w-full flex-col items-center gap-6 transition-all duration-300">
-        <div className="flex w-full flex-col items-center gap-4 md:grid md:grid-cols-[7rem_minmax(0,42rem)] md:items-start md:justify-center">
-          <div className={`w-full md:w-28 ${isAgeSelectorVisible ? "" : "hidden md:block md:invisible"}`}>
-            {ageSelector}
-          </div>
+        <div className="flex w-full flex-col items-center gap-4">
           <div
             ref={containerRef}
             onContextMenu={preventCanvasContextMenu}
-            className="relative w-full max-w-full aspect-square select-none bg-white rounded-3xl shadow-xl overflow-hidden border-8 border-yellow-200"
+            className="relative w-full max-w-[42rem] aspect-square select-none bg-white rounded-3xl shadow-xl overflow-hidden border-8 border-yellow-200"
           >
             <canvas
               ref={canvasRef}
@@ -701,42 +509,6 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
               <button
                 type="button"
                 onClick={cancelClear}
-                className="flex h-14 flex-1 items-center justify-center rounded-2xl bg-gray-200 px-4 text-base font-black text-gray-700 shadow-md transition-all hover:bg-gray-300 active:scale-95"
-              >
-                キャンセル
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isGenerateConfirmOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-white/75 px-4 backdrop-blur-sm"
-          role="presentation"
-          onClick={cancelGenerate}
-        >
-          <div
-            className="w-full max-w-sm rounded-3xl border-4 border-yellow-200 bg-white p-6 text-center shadow-2xl"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="generate-confirm-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <p id="generate-confirm-title" className="mb-5 text-2xl font-black text-gray-800">
-              もう一度歌を作りますか？
-            </p>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={submitGenerate}
-                className="flex h-14 flex-1 items-center justify-center rounded-2xl bg-orange-500 px-4 text-base font-black text-white shadow-md transition-all hover:bg-orange-600 active:scale-95"
-              >
-                歌を作る
-              </button>
-              <button
-                type="button"
-                onClick={cancelGenerate}
                 className="flex h-14 flex-1 items-center justify-center rounded-2xl bg-gray-200 px-4 text-base font-black text-gray-700 shadow-md transition-all hover:bg-gray-300 active:scale-95"
               >
                 キャンセル
