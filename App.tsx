@@ -854,11 +854,6 @@ const App: React.FC = () => {
   };
 
   const handleRecordAndGenerate = async () => {
-    if (participantAge === null) {
-      setRecordConsentError("記録する場合は、年齢を選んでください。");
-      return;
-    }
-
     await startPendingGeneration({ shouldRecord: true, participantAge });
   };
 
@@ -1055,13 +1050,13 @@ const App: React.FC = () => {
 
             <div className="space-y-3 text-sm font-semibold leading-relaxed text-gray-600">
               <p>記録したデータは、このアプリをより楽しく、使いやすくするために使います。</p>
-              <p>記録されるのは、描いた絵、できあがった歌、音声、描いた順番、年齢です。</p>
+              <p>記録されるのは、描いた絵、できあがった歌、音声、描いた順番、年齢（選んだ場合のみ）です。</p>
               <p>名前や住所など、個人がわかることは入力しないでください。</p>
             </div>
 
             <div className="mt-5 rounded-2xl border-2 border-orange-100 bg-orange-50/70 p-4">
               <label htmlFor="participant-age" className="mb-2 block text-sm font-black text-gray-700">
-                年齢を選んでください
+                年齢を選んでください（任意）
               </label>
               <select
                 id="participant-age"
