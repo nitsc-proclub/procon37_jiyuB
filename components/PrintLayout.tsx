@@ -135,6 +135,7 @@ const PrintLayout: React.FC<PrintLayoutProps> = ({ lyrics, drawingData, onBack, 
             </section>
           </main>
         </div>
+        <div className="print-credit">制作：仙台高専プログラミング部</div>
       </section>
 
       <style>{`
@@ -215,25 +216,17 @@ const PrintLayout: React.FC<PrintLayoutProps> = ({ lyrics, drawingData, onBack, 
           -webkit-print-color-adjust: exact;
         }
 
-        .print-sheet::before,
-        .print-sheet::after {
-          content: "";
+        .print-credit {
           position: absolute;
-          width: 44mm;
-          height: 44mm;
-          border: 1.2mm solid rgba(251, 146, 60, 0.16);
-          border-radius: 50%;
-          pointer-events: none;
-        }
-
-        .print-sheet::before {
-          top: -24mm;
-          right: 42mm;
-        }
-
-        .print-sheet::after {
-          bottom: -28mm;
-          left: 62mm;
+          right: 7mm;
+          bottom: 4mm;
+          z-index: 1;
+          color: rgba(107, 114, 128, 0.72);
+          font-size: 6.5pt;
+          font-weight: 800;
+          letter-spacing: 0;
+          line-height: 1;
+          white-space: nowrap;
         }
 
         .print-sheet-inner {
@@ -350,7 +343,6 @@ const PrintLayout: React.FC<PrintLayoutProps> = ({ lyrics, drawingData, onBack, 
           height: 100%;
           object-fit: contain;
           opacity: 0.92;
-          transform: scale(1.08);
         }
 
         .print-lyrics-card {

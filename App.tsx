@@ -16,6 +16,12 @@ const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:")
 
 type AppView = "maker" | "demoRecords" | "melodyExperiment" | "print";
 type DemoBrowseMode = "drawings" | "songs";
+type GenerationRecordOptions = {
+  shouldRecord: boolean;
+  participantAge: number | null;
+};
+
+const PARTICIPANT_AGE_OPTIONS = Array.from({ length: 100 }, (_, index) => index);
 
 const EXPERIMENT_LYRICS: LyricsResponse = {
   title: "ネコの絵描き歌",
@@ -214,10 +220,6 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "Ctrl/Cmd + Z", description: "ひとつ戻す" },
       { keys: "Ctrl/Cmd + Y", description: "ひとつ進める" },
       { keys: "Ctrl/Cmd + Shift + Z", description: "ひとつ進める" },
-      { keys: "↑ / ↓", description: "年齢を 1 ずつ変更" },
-      { keys: "Shift + ↑ / ↓", description: "年齢を 10 ずつ変更" },
-      { keys: "PageUp / PageDown", description: "年齢を 10 ずつ変更" },
-      { keys: "Home / End", description: "年齢を最小 / 最大に変更" },
       { keys: "Delete / Backspace", description: "ぜんぶ消す" },
     ],
   },
@@ -257,8 +259,10 @@ const App: React.FC = () => {
   const [progressTarget, setProgressTarget] = useState(0);
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
-  const [participantAge, setParticipantAge] = useState<number | null>(6);
-  const [isDataSavingEnabled, setIsDataSavingEnabled] = useState(appFeatures.dataSaving);
+  const [participantAge, setParticipantAge] = useState<number | null>(null);
+  const [pendingGenerationData, setPendingGenerationData] = useState<DrawingData | null>(null);
+  const [isRecordConsentOpen, setIsRecordConsentOpen] = useState(false);
+  const [recordConsentError, setRecordConsentError] = useState<string | null>(null);
   const [appView, setAppView] = useState<AppView>("maker");
   const [demoBrowseMode, setDemoBrowseMode] = useState<DemoBrowseMode>("drawings");
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
@@ -733,7 +737,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleComplete = async (data: DrawingData) => {
+  const runGeneration = async (data: DrawingData, recordOptions: GenerationRecordOptions) => {
     if (!appFeatures.gemini || !appFeatures.voicevox) {
       setError("公開確認版では、AI生成・音声生成機能は準備中です。描画機能をお試しください。");
       return;
@@ -788,7 +792,7 @@ const App: React.FC = () => {
       setError(generationErrorMessage);
       await finishProgress("エラーで終了しました");
     } finally {
-      if (isDataSavingEnabled) {
+      if (recordOptions.shouldRecord) {
         try {
           await saveDemoRecord({
             drawingData: groupedDrawingData,
@@ -797,23 +801,64 @@ const App: React.FC = () => {
             singingScore: generatedScore,
             error: generationErrorMessage,
             startedAt,
-            participantAge,
+            participantAge: recordOptions.participantAge,
             aiModel: generatedLyrics?.modelName ?? null,
           });
           setDemoRecords([]);
-          setSaveToast({ message: "セーブ完了", tone: "success" });
+          setSaveToast({ message: "記録しました", tone: "success" });
         } catch (saveError) {
           if (import.meta.env.DEV) {
             console.error("Failed to save demo record", saveError);
           }
-          setSaveToast({ message: "保存に失敗しました", tone: "error" });
+          setSaveToast({ message: "記録に失敗しました", tone: "error" });
         }
       } else {
-        setSaveToast({ message: "保存オフ", tone: "success" });
+        setSaveToast({ message: "記録せずに作成しました", tone: "success" });
       }
 
       setIsGenerating(false);
     }
+  };
+
+  const handleComplete = async (data: DrawingData) => {
+    if (!appFeatures.gemini || !appFeatures.voicevox) {
+      setError("公開確認版では、AI生成・音声生成機能は準備中です。描画機能をお試しください。");
+      return;
+    }
+
+    if (!appFeatures.dataSaving) {
+      await runGeneration(data, { shouldRecord: false, participantAge: null });
+      return;
+    }
+
+    setPendingGenerationData(data);
+    setRecordConsentError(null);
+    setIsRecordConsentOpen(true);
+  };
+
+  const closeRecordConsent = () => {
+    setIsRecordConsentOpen(false);
+    setPendingGenerationData(null);
+    setRecordConsentError(null);
+  };
+
+  const startPendingGeneration = async (recordOptions: GenerationRecordOptions) => {
+    if (!pendingGenerationData) {
+      return;
+    }
+
+    setIsRecordConsentOpen(false);
+    setPendingGenerationData(null);
+    setRecordConsentError(null);
+    await runGeneration(pendingGenerationData, recordOptions);
+  };
+
+  const handleRecordAndGenerate = async () => {
+    await startPendingGeneration({ shouldRecord: true, participantAge });
+  };
+
+  const handleGenerateWithoutRecord = async () => {
+    await startPendingGeneration({ shouldRecord: false, participantAge: null });
   };
 
   const handleClear = () => {
@@ -911,25 +956,6 @@ const App: React.FC = () => {
         </svg>
       </button>
 
-      {appFeatures.dataSaving && <div className="fixed right-4 top-4 z-40 flex items-center gap-3 rounded-full border border-white/70 bg-white/80 px-4 py-2 shadow-lg backdrop-blur-md">
-        <span className="text-sm font-bold text-gray-700">データ保存</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={isDataSavingEnabled}
-          onClick={() => setIsDataSavingEnabled((enabled) => !enabled)}
-          className={`relative h-8 w-14 rounded-full transition-colors ${isDataSavingEnabled ? "bg-orange-400" : "bg-gray-300"
-            }`}
-          title="データ保存オン/オフ"
-        >
-          <span
-            className={`absolute left-0 top-1 h-6 w-6 rounded-full bg-white shadow-md transition-transform ${isDataSavingEnabled ? "translate-x-7" : "translate-x-1"
-              }`}
-          />
-        </button>
-        <span className="w-8 text-sm font-black text-gray-700">{isDataSavingEnabled ? "ON" : "OFF"}</span>
-      </div>}
-
       <button
         type="button"
         onClick={() => setIsShortcutHelpOpen((current) => !current)}
@@ -997,6 +1023,90 @@ const App: React.FC = () => {
                   </div>
                 </section>
               ))}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isRecordConsentOpen && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/30 px-4 py-6 backdrop-blur-sm"
+          role="presentation"
+          onClick={closeRecordConsent}
+        >
+          <section
+            className="w-full max-w-lg rounded-3xl border-4 border-yellow-200 bg-white p-5 text-left shadow-2xl sm:p-6"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="record-consent-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-5 border-b border-orange-100 pb-4">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">Data Record</p>
+              <h2 id="record-consent-title" className="mt-1 text-2xl font-black leading-tight text-gray-800">
+                アプリ改善のため、データを記録してもよろしいですか？
+              </h2>
+            </div>
+
+            <div className="space-y-3 text-sm font-semibold leading-relaxed text-gray-600">
+              <p>記録したデータは、このアプリをより楽しく、使いやすくするために使います。</p>
+              <p>記録されるのは、描いた絵、できあがった歌、音声、描いた順番、年齢（選んだ場合のみ）です。</p>
+              <p>名前や住所など、個人がわかることは入力しないでください。</p>
+            </div>
+
+            <div className="mt-5 rounded-2xl border-2 border-orange-100 bg-orange-50/70 p-4">
+              <label htmlFor="participant-age" className="mb-2 block text-sm font-black text-gray-700">
+                年齢を選んでください（任意）
+              </label>
+              <select
+                id="participant-age"
+                value={participantAge ?? ""}
+                onChange={(event) => {
+                  setParticipantAge(event.target.value === "" ? null : Number(event.target.value));
+                  setRecordConsentError(null);
+                }}
+                className="h-12 w-full rounded-2xl border-2 border-orange-200 bg-white px-4 text-base font-black text-gray-800 shadow-sm outline-none transition-all focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+              >
+                <option value="">未選択</option>
+                {PARTICIPANT_AGE_OPTIONS.map((age) => (
+                  <option key={age} value={age}>
+                    {age}才
+                  </option>
+                ))}
+              </select>
+              {recordConsentError && (
+                <p className="mt-2 text-sm font-black text-red-600" role="alert">
+                  {recordConsentError}
+                </p>
+              )}
+            </div>
+
+            <p className="mt-4 rounded-2xl bg-gray-50 px-4 py-3 text-sm font-bold text-gray-600">
+              ※記録しない場合でも、歌はつくれます。
+            </p>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={handleRecordAndGenerate}
+                className="flex h-14 items-center justify-center rounded-2xl bg-orange-500 px-4 text-base font-black text-white shadow-md transition-all hover:bg-orange-600 active:scale-95"
+              >
+                記録してつくる
+              </button>
+              <button
+                type="button"
+                onClick={handleGenerateWithoutRecord}
+                className="flex h-14 items-center justify-center rounded-2xl bg-yellow-400 px-4 text-base font-black text-gray-800 shadow-md transition-all hover:bg-yellow-500 active:scale-95"
+              >
+                記録しないでつくる
+              </button>
+              <button
+                type="button"
+                onClick={closeRecordConsent}
+                className="flex h-12 items-center justify-center rounded-2xl bg-gray-200 px-4 text-sm font-black text-gray-700 shadow-sm transition-all hover:bg-gray-300 active:scale-95 sm:col-span-2"
+              >
+                もどる
+              </button>
             </div>
           </section>
         </div>
@@ -1480,10 +1590,7 @@ const App: React.FC = () => {
               isGenerating={isGenerating}
               generationDisabled={!appFeatures.gemini || !appFeatures.voicevox}
               generationDisabledMessage="AI生成・音声生成は現在準備中です。描画機能はそのまま利用できます。"
-              age={participantAge}
-              onAgeChange={setParticipantAge}
-              isAgeSelectorVisible={appFeatures.dataSaving && isDataSavingEnabled}
-              initialDrawing={selectedDemoDrawing}
+              initialDrawing={playbackDrawing}
               playbackDrawing={playbackDrawing}
               playbackAudioRef={audioRef}
               playbackDisplayMode={drawingDisplayMode}

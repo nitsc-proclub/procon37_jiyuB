@@ -35,8 +35,6 @@ const StrokeStepPreview: React.FC<StrokeStepPreviewProps> = ({ drawingData, sour
     <rect width={sourceSize.width} height={sourceSize.height} fill="#fff" />
     {renderStrokePaths(drawingData, step.previousStrokeIndexes, "print-step-stroke previous")}
     {renderStrokePaths(drawingData, step.currentStrokeIndexes, "print-step-stroke current")}
-    {step.currentStrokeIndexes.length === 0 &&
-      renderStrokePaths(drawingData, step.cumulativeStrokeIndexes, "print-step-stroke current")}
   </svg>
 );
 
