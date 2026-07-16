@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import PaintCanvas, { DrawingMetrics } from "./components/PaintCanvas";
 import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import PrintLayout from "./components/PrintLayout";
+import GenerationJourney from "./components/GenerationJourney";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
 import { deleteDemoRecord, getDemoRecord, listDemoRecords, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
@@ -77,40 +78,6 @@ const getExperimentNoteToneClass = (key: number | null) => {
 };
 
 const getExperimentNoteWidth = (frameLength: number) => Math.max(44, Math.min(150, frameLength * 1.85));
-
-const getProgressTickDelay = (currentValue: number) => {
-  if (currentValue < 50) {
-    return 180;
-  }
-
-  if (currentValue < 75) {
-    return 90;
-  }
-
-  if (currentValue < 92) {
-    return 130;
-  }
-
-  if (currentValue < 97) {
-    return 700;
-  }
-
-  return 900;
-};
-
-const getProgressStep = (currentValue: number, targetValue: number) => {
-  const difference = targetValue - currentValue;
-
-  if (currentValue < 50) {
-    return 1;
-  }
-
-  if (currentValue < 75) {
-    return difference > 8 ? 2 : 1;
-  }
-
-  return 1;
-};
 
 const getSingingLineCount = (lyrics: LyricsResponse | null) => {
   const singingLineCount = lyrics?.singingKanaLines?.filter((line) => line.trim().length > 0).length ?? 0;
@@ -255,8 +222,6 @@ const App: React.FC = () => {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [shouldAutoplay, setShouldAutoplay] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-  const [progressValue, setProgressValue] = useState(0);
-  const [progressTarget, setProgressTarget] = useState(0);
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
   const [participantAge, setParticipantAge] = useState<number | null>(null);
@@ -295,6 +260,7 @@ const App: React.FC = () => {
   const [hasPlayedGeneratedAudio, setHasPlayedGeneratedAudio] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  const generationRunRef = useRef(false);
   const audioUrlRef = useRef<string | null>(null);
   const experimentAudioRef = useRef<HTMLAudioElement>(null);
   const experimentAudioUrlRef = useRef<string | null>(null);
@@ -310,25 +276,6 @@ const App: React.FC = () => {
       }
     };
   }, []);
-
-  useEffect(() => {
-    if (progressValue >= progressTarget) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setProgressValue((currentValue) => {
-        if (currentValue >= progressTarget) {
-          return currentValue;
-        }
-
-        const step = getProgressStep(currentValue, progressTarget);
-        return Math.min(progressTarget, currentValue + step);
-      });
-    }, getProgressTickDelay(progressValue));
-
-    return () => window.clearTimeout(timer);
-  }, [progressTarget, progressValue]);
 
   useEffect(() => {
     if (!audioUrl || !shouldAutoplay || !audioRef.current) {
@@ -546,8 +493,6 @@ const App: React.FC = () => {
       setShouldAutoplay(false);
       setLyrics(demoRecord.lyrics);
       setError(null);
-      setProgressValue(0);
-      setProgressTarget(0);
       setProgressLabel("準備中...");
       setParticipantAge(demoRecord.participantAge);
       setSelectedDemoDrawing(demoRecord.drawingData);
@@ -603,41 +548,35 @@ const App: React.FC = () => {
     }
   };
 
-  const startProgress = (label: string, target: number) => {
-    setProgressValue(0);
-    setProgressTarget(target);
+  const startProgress = (label: string) => {
     setProgressLabel(label);
   };
 
-  const updateProgress = (label: string, target: number) => {
+  const updateProgress = (label: string) => {
     setProgressLabel(label);
-    setProgressTarget(target);
   };
 
   const finishProgress = async (label: string) => {
     setProgressLabel(label);
-    setProgressValue(100);
-    setProgressTarget(100);
-    await new Promise((resolve) => window.setTimeout(resolve, 220));
   };
 
   const handleVoicevoxProgress = (stage: VoicevoxProgressStage) => {
     if (stage === "query_requested") {
-      updateProgress("VOICEVOX に歌唱クエリを送信中...", 60);
+      updateProgress("歌声に魔法をかけているよ");
       return;
     }
 
     if (stage === "query_ready") {
-      updateProgress("歌唱クエリを受け取りました。音声を組み立てています...", 75);
+      updateProgress("歌声に魔法をかけているよ");
       return;
     }
 
     if (stage === "synthesis_requested") {
-      updateProgress("歌声を合成中...", 84);
+      updateProgress("歌声に魔法をかけているよ");
       return;
     }
 
-    updateProgress("仕上げ中...", 92);
+    updateProgress("歌声に魔法をかけているよ");
   };
 
   const handleExperimentVoicevoxProgress = (stage: VoicevoxProgressStage) => {
@@ -748,6 +687,10 @@ const App: React.FC = () => {
   };
 
   const runGeneration = async (data: DrawingData, recordOptions: GenerationRecordOptions) => {
+    if (generationRunRef.current) {
+      return;
+    }
+
     if (!appFeatures.gemini || !appFeatures.voicevox) {
       setError("公開確認版では、AI生成・音声生成機能は準備中です。描画機能をお試しください。");
       return;
@@ -763,6 +706,7 @@ const App: React.FC = () => {
     let generatedAudioBlob: Blob | null = null;
     let generationErrorMessage: string | null = null;
 
+    generationRunRef.current = true;
     setIsGenerating(true);
     setLyrics(null);
     setError(null);
@@ -774,23 +718,23 @@ const App: React.FC = () => {
     setDrawingDisplayMode("animated");
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
-    startProgress("準備中...", 8);
+    startProgress("絵をじっくり見ているよ");
 
     try {
-      updateProgress("AI が絵を読み取って歌詞を考えています...", 50);
+      updateProgress("絵をじっくり見ているよ");
       generatedLyrics = await generateEkakiUta(groupedDrawingData);
       setLyrics(generatedLyrics);
 
-      updateProgress("VOICEVOX でアクセントを解析しています...", 53);
+      updateProgress("ことばのリズムを整えているよ");
       const accentLineHints = await analyzeLyricsAccents(generatedLyrics);
 
-      updateProgress("メロディを組み立てています...", 55);
+      updateProgress("メロディーを組み立てているよ");
       const seed = createSingingSeed(generatedLyrics, 0);
       generatedScore = buildSingingScore(generatedLyrics, seed, accentLineHints);
       setPlaybackScore(generatedScore);
 
       generatedAudioBlob = await synthesizeSingingVoice(generatedScore, handleVoicevoxProgress);
-      updateProgress("音声データを準備中...", 97);
+      updateProgress("歌声に魔法をかけているよ");
 
       const nextAudioUrl = URL.createObjectURL(generatedAudioBlob);
       stopAudioPlayback();
@@ -801,6 +745,9 @@ const App: React.FC = () => {
     } catch (generationError) {
       generationErrorMessage =
         generationError instanceof Error ? generationError.message : "歌の生成に失敗しました。";
+      setLyrics(null);
+      setPlaybackScore(null);
+      resetAudioState();
       setError(generationErrorMessage);
       await finishProgress("エラーで終了しました");
     } finally {
@@ -829,6 +776,7 @@ const App: React.FC = () => {
       }
 
       setIsGenerating(false);
+      generationRunRef.current = false;
     }
   };
 
@@ -876,8 +824,6 @@ const App: React.FC = () => {
   const handleClear = () => {
     setLyrics(null);
     setError(null);
-    setProgressValue(0);
-    setProgressTarget(0);
     setSaveToast(null);
     setProgressLabel("準備中...");
     setSelectedDemoDrawing(null);
@@ -949,11 +895,11 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-amber-50 via-yellow-50 to-orange-100 p-4 md:p-8 flex flex-col items-center">
+    <div className="app-shell min-h-screen p-4 md:p-8 flex flex-col items-center">
       <button
         type="button"
         onClick={() => window.location.reload()}
-        className="fixed left-4 top-4 z-[80] flex h-12 w-12 items-center justify-center rounded-full border border-white/70 bg-white/90 text-orange-500 shadow-lg backdrop-blur-md transition-all hover:bg-orange-50 active:scale-95"
+        className="floating-reload fixed left-4 top-4 z-[80] flex h-12 w-12 items-center justify-center rounded-full border border-white/70 bg-white/90 text-orange-500 shadow-lg backdrop-blur-md transition-all hover:bg-orange-50 active:scale-95"
         title="再読み込み"
         aria-label="再読み込み"
       >
@@ -985,7 +931,7 @@ const App: React.FC = () => {
       <button
         type="button"
         onClick={() => setIsShortcutHelpOpen((current) => !current)}
-        className="fixed bottom-4 left-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-white/70 bg-white/85 text-lg font-black text-gray-500 shadow-lg backdrop-blur-md transition-all hover:bg-orange-50 hover:text-orange-500 active:scale-95"
+        className="floating-help fixed bottom-4 left-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-white/70 bg-white/85 text-lg font-black text-gray-500 shadow-lg backdrop-blur-md transition-all hover:bg-orange-50 hover:text-orange-500 active:scale-95"
         title="ショートカット一覧 (Ctrl+/)"
         aria-label="ショートカット一覧"
         aria-expanded={isShortcutHelpOpen}
@@ -1138,7 +1084,8 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <header className="mb-4 text-center">
+      <header className="magic-header mb-6 text-center">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.24em] text-violet-600">絵が、魔法で歌になる！</p>
         <h1 className="mx-auto mb-1 w-fit">
           <img
             src="/logo.png"
@@ -1608,8 +1555,8 @@ const App: React.FC = () => {
           </section>
         </main>
       ) : (
-        <main className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-8 items-start mb-16">
-          <section className="min-w-0">
+        <main className="maker-grid w-full max-w-6xl grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-8 items-start mb-16">
+          <section className="canvas-stage min-w-0">
             <PaintCanvas
               onComplete={handleComplete}
               onClear={handleClear}
@@ -1629,26 +1576,19 @@ const App: React.FC = () => {
               isPlaybackActive={isAudioPlaying}
             />
 
-            {error && (
-              <div className="mt-4 whitespace-pre-wrap rounded-xl border-2 border-red-200 bg-red-100 p-4 text-left font-bold text-red-700">
-                エラー: {error}
-              </div>
-            )}
           </section>
 
-          <section className="flex min-w-0 flex-col gap-6">
-            {lyrics || isGenerating ? (
-              <div className="bg-white p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
+          <section className="result-stage flex min-w-0 flex-col gap-6">
+            {lyrics || isGenerating || error ? (
+              <div className="magic-card bg-white p-5 sm:p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
                 {isGenerating ? (
-                  <div className="flex h-full min-h-[340px] flex-col items-center justify-center text-center">
-                    <div className="mb-6 text-6xl font-black text-orange-400 tabular-nums">{progressValue}%</div>
-                    <div className="h-4 w-full max-w-md overflow-hidden rounded-full bg-orange-100">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-r from-orange-400 via-yellow-400 to-pink-400 transition-[width] duration-200 ease-out"
-                        style={{ width: `${progressValue}%` }}
-                      />
-                    </div>
-                    <p className="mt-5 text-lg font-bold text-gray-700">{progressLabel}</p>
+                  <GenerationJourney stageLabel={progressLabel} />
+                ) : error ? (
+                  <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
+                    <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>
+                    <h2 className="text-2xl font-black text-red-700">うまく歌にできませんでした</h2>
+                    <p className="mt-3 max-w-md font-bold leading-relaxed text-slate-600">絵はそのまま残っています。絵にもどって、もう一度ためしてみてね。</p>
+                    <button type="button" onClick={() => setError(null)} className="mt-6 min-h-12 rounded-2xl bg-violet-600 px-6 py-3 font-black text-white shadow-lg">絵にもどる</button>
                   </div>
                 ) : lyrics ? (
                   <>
@@ -1752,10 +1692,10 @@ const App: React.FC = () => {
                 ) : null}
               </div>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center p-12 bg-white/50 border-4 border-dashed border-gray-300 rounded-3xl text-gray-400 text-center">
+              <div className="magic-card h-full flex flex-col items-center justify-center p-8 sm:p-12 bg-white/80 border-4 border-dashed border-violet-200 rounded-3xl text-slate-500 text-center">
                 <div className="text-6xl mb-4 animate-bounce">♪</div>
                 <p className="text-xl font-bold">
-                  左のキャンバスに絵を描いてください。
+                  キャンバスに好きな絵を描いてください。
                   <br />
                   歌詞づくりから歌声生成までまとめて進みます。
                 </p>

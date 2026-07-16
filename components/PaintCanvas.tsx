@@ -489,7 +489,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         <div
           ref={canvasContainerRef}
           onContextMenu={(event) => event.preventDefault()}
-          className={`relative aspect-square select-none overflow-hidden bg-white shadow-2xl ${isFocusMode ? "rounded-2xl border-4 border-violet-300" : "w-full max-w-[42rem] rounded-3xl border-8 border-yellow-200"}`}
+          className={`paint-canvas-frame relative aspect-square select-none overflow-hidden bg-white shadow-2xl ${isFocusMode ? "rounded-2xl border-4 border-violet-300" : "w-full max-w-[42rem] rounded-3xl border-8 border-yellow-200"}`}
           style={isFocusMode ? { width: "min(calc(100vw - 1.5rem), calc(100dvh - 8.75rem))", maxWidth: "64rem" } : undefined}
         >
           <canvas
@@ -522,7 +522,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         ) : (
           <>
             <div className="flex w-full justify-end">
-              <button ref={focusTriggerRef} type="button" onClick={enterFocusMode} disabled={isCanvasLocked} aria-pressed={isFocusMode} className="flex min-h-12 items-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-base font-black text-white shadow-lg transition-all hover:bg-violet-700 disabled:opacity-50 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-300">
+              <button ref={focusTriggerRef} type="button" onClick={enterFocusMode} disabled={isCanvasLocked} aria-pressed={isFocusMode} className="focus-button flex min-h-12 items-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-base font-black text-white shadow-lg transition-all hover:bg-violet-700 disabled:opacity-50 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-300">
                 <span aria-hidden="true">⛶</span> 大きく描く
               </button>
             </div>
@@ -531,7 +531,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
                 絵ができたね！ つぎは「歌をつくる！」を押してみよう <span aria-hidden="true">↓</span>
               </div>
             )}
-            <div className="flex w-full max-w-full flex-wrap gap-2 sm:gap-3">
+            <div className="paint-toolbar flex w-full max-w-full flex-wrap gap-2 sm:gap-3">
               <button type="button" onClick={handleClear} disabled={isCanvasLocked} className="flex h-14 min-w-[7.25rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-slate-200 px-3 text-base font-bold text-slate-700 shadow-md transition-all hover:bg-slate-300 disabled:opacity-50 active:scale-95">ぜんぶ消す</button>
               {undoButton}{redoButton}
               <button type="button" onClick={handleGenerate} disabled={strokes.length === 0 || isCanvasLocked || generationDisabled} className="flex h-14 w-full min-w-[8rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-yellow-400 px-3 text-base font-black text-slate-900 shadow-md transition-all hover:bg-yellow-500 disabled:bg-slate-300 disabled:text-slate-500 disabled:opacity-70 active:scale-95 sm:w-auto" title={generationDisabled ? generationDisabledMessage : "歌をつくる! (Ctrl+S / Cmd+S)"}>
