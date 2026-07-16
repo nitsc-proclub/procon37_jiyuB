@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import PaintCanvas from "./components/PaintCanvas";
+import PaintCanvas, { DrawingMetrics } from "./components/PaintCanvas";
 import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import PrintLayout from "./components/PrintLayout";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
@@ -287,6 +287,12 @@ const App: React.FC = () => {
   const [isExperimentGenerating, setIsExperimentGenerating] = useState(false);
   const [loadingExperimentRecordId, setLoadingExperimentRecordId] = useState<string | null>(null);
   const [isShortcutHelpOpen, setIsShortcutHelpOpen] = useState(false);
+  const [drawingMetrics, setDrawingMetrics] = useState<DrawingMetrics>({
+    strokeCount: 0,
+    pointCount: 0,
+    drawingDurationMs: 0,
+  });
+  const [hasPlayedGeneratedAudio, setHasPlayedGeneratedAudio] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioUrlRef = useRef<string | null>(null);
@@ -758,6 +764,7 @@ const App: React.FC = () => {
     let generationErrorMessage: string | null = null;
 
     setIsGenerating(true);
+    setLyrics(null);
     setError(null);
     setSaveToast(null);
     setSelectedDemoRecordId(null);
@@ -766,6 +773,7 @@ const App: React.FC = () => {
     setPlaybackScore(null);
     setDrawingDisplayMode("animated");
     resetAudioState();
+    setHasPlayedGeneratedAudio(false);
     startProgress("準備中...", 8);
 
     try {
@@ -877,6 +885,7 @@ const App: React.FC = () => {
     setGeneratedDrawing(null);
     setPlaybackScore(null);
     resetAudioState();
+    setHasPlayedGeneratedAudio(false);
   };
 
   const experimentPitchedNotes = experimentScore?.notes.filter((note) => note.key !== null) ?? [];
@@ -888,6 +897,19 @@ const App: React.FC = () => {
   const visibleDemoRecords = showFavoriteOnly ? demoRecords.filter((record) => record.isFavorite) : demoRecords;
   const experimentScoreJson = serializeSingingScore(experimentScore);
   const canShowPrintLayout = !!lyrics && !!playbackDrawing && !isGenerating;
+  const hasEnoughDrawing =
+    drawingMetrics.strokeCount >= 3 ||
+    (drawingMetrics.pointCount >= 60 && drawingMetrics.drawingDurationMs >= 500);
+  const canvasGuideState = isGenerating || error || audioUrl
+    ? null
+    : hasEnoughDrawing
+      ? appFeatures.gemini && appFeatures.voicevox
+        ? "generate"
+        : null
+      : drawingMetrics.strokeCount === 0
+        ? "draw"
+        : null;
+  const shouldGuidePlayback = !!lyrics && !!audioUrl && !error && !isGenerating && !hasPlayedGeneratedAudio;
 
   const handleStartPrint = () => {
     if (!canShowPrintLayout) {
@@ -1591,6 +1613,8 @@ const App: React.FC = () => {
             <PaintCanvas
               onComplete={handleComplete}
               onClear={handleClear}
+              onDrawingMetricsChange={setDrawingMetrics}
+              guideState={canvasGuideState}
               isGenerating={isGenerating}
               generationDisabled={!appFeatures.gemini || !appFeatures.voicevox}
               generationDisabledMessage="AI生成・音声生成は現在準備中です。描画機能はそのまま利用できます。"
@@ -1679,6 +1703,11 @@ const App: React.FC = () => {
                     />
 
                     <div className="mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5">
+                      {shouldGuidePlayback && (
+                        <div className="mb-4 rounded-2xl border-2 border-violet-200 bg-white px-4 py-3 text-center font-black text-violet-800 shadow-sm" role="status" aria-live="polite">
+                          歌ができたよ！ ここから聞いてみよう <span aria-hidden="true">↓</span>
+                        </div>
+                      )}
                       <div className="mb-4 flex justify-end">
                         <div className="flex rounded-full bg-white p-1 shadow-sm">
                           <button
@@ -1704,7 +1733,10 @@ const App: React.FC = () => {
                         src={audioUrl ?? undefined}
                         controls
                         className="w-full"
-                        onPlay={() => setIsAudioPlaying(true)}
+                        onPlay={() => {
+                          setIsAudioPlaying(true);
+                          setHasPlayedGeneratedAudio(true);
+                        }}
                         onPause={() => setIsAudioPlaying(false)}
                         onEnded={() => setIsAudioPlaying(false)}
                         onEmptied={() => setIsAudioPlaying(false)}

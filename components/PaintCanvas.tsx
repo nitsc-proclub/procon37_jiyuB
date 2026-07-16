@@ -12,6 +12,7 @@ interface PaintCanvasProps {
   onComplete: (data: DrawingData) => void;
   onClear: () => void;
   onDrawingMetricsChange?: (metrics: DrawingMetrics) => void;
+  guideState?: "draw" | "generate" | null;
   isGenerating: boolean;
   generationDisabled?: boolean;
   generationDisabledMessage?: string;
@@ -59,6 +60,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   onComplete,
   onClear,
   onDrawingMetricsChange,
+  guideState = null,
   isGenerating,
   generationDisabled = false,
   generationDisabledMessage = "現在、この機能は利用できません",
@@ -477,6 +479,13 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           </div>
         )}
 
+        {!isFocusMode && guideState === "draw" && (
+          <div className="w-full max-w-[42rem] rounded-3xl border-2 border-violet-200 bg-white/95 px-5 py-3 text-center font-black text-violet-800 shadow-lg" role="status" aria-live="polite">
+            <span aria-hidden="true">✨</span> まずは、ここに好きな絵をかいてみよう！
+            <div className="mt-1 text-xl leading-none text-violet-500" aria-hidden="true">↓</div>
+          </div>
+        )}
+
         <div
           ref={canvasContainerRef}
           onContextMenu={(event) => event.preventDefault()}
@@ -517,6 +526,11 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
                 <span aria-hidden="true">⛶</span> 大きく描く
               </button>
             </div>
+            {guideState === "generate" && (
+              <div className="w-full rounded-2xl border-2 border-yellow-300 bg-white/95 px-4 py-3 text-center font-black text-amber-800 shadow-lg" role="status" aria-live="polite">
+                絵ができたね！ つぎは「歌をつくる！」を押してみよう <span aria-hidden="true">↓</span>
+              </div>
+            )}
             <div className="flex w-full max-w-full flex-wrap gap-2 sm:gap-3">
               <button type="button" onClick={handleClear} disabled={isCanvasLocked} className="flex h-14 min-w-[7.25rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-slate-200 px-3 text-base font-bold text-slate-700 shadow-md transition-all hover:bg-slate-300 disabled:opacity-50 active:scale-95">ぜんぶ消す</button>
               {undoButton}{redoButton}
