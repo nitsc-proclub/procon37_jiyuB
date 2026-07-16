@@ -1085,7 +1085,7 @@ const App: React.FC = () => {
       )}
 
       <header className="magic-header mb-6 text-center">
-        <p className="mb-2 text-xs font-black uppercase tracking-[0.24em] text-violet-600">絵が、魔法で歌になる！</p>
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.24em] text-orange-600">絵が、魔法で歌になる！</p>
         <h1 className="mx-auto mb-1 w-fit">
           <img
             src="/logo.png"
