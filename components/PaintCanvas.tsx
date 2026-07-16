@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import DrawingPlaybackCanvas, { DrawingDisplayMode } from "./DrawingPlaybackCanvas";
-import { DrawingData, LyricStrokeMapping, Point, SingingScore, Stroke } from "../types";
+import GenerationJourney from "./GenerationJourney";
+import { DrawingData, LyricsResponse, LyricStrokeMapping, Point, SingingScore, Stroke } from "../types";
 
 export type DrawingMetrics = {
   strokeCount: number;
@@ -14,6 +15,8 @@ interface PaintCanvasProps {
   onDrawingMetricsChange?: (metrics: DrawingMetrics) => void;
   guideState?: "draw" | "generate" | null;
   isGenerating: boolean;
+  generationStageLabel?: string;
+  generationLyrics?: LyricsResponse | null;
   generationDisabled?: boolean;
   generationDisabledMessage?: string;
   initialDrawing?: DrawingData | null;
@@ -62,6 +65,8 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   onDrawingMetricsChange,
   guideState = null,
   isGenerating,
+  generationStageLabel = "絵をじっくり見ているよ",
+  generationLyrics,
   generationDisabled = false,
   generationDisabledMessage = "現在、この機能は利用できません",
   initialDrawing,
@@ -452,6 +457,19 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     redrawStrokes(strokesRef.current);
   }, [isPlaybackActive]);
 
+  useEffect(() => {
+    if (!isGenerating || !canvasContainerRef.current || !window.matchMedia("(max-width: 1023px)").matches) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      canvasContainerRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isGenerating]);
+
   const undoButton = (
     <button type="button" onClick={handleUndo} disabled={strokes.length === 0 || isCanvasLocked} className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white text-slate-700 shadow-md transition-all hover:bg-slate-50 disabled:opacity-40 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-400" title="戻す" aria-label="ひとつ戻す">
       <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 7 4 12l5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M5 12h9.5a4.5 4.5 0 0 1 0 9H12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -507,9 +525,8 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
             <div className="absolute inset-0 z-10 bg-white"><DrawingPlaybackCanvas drawingData={playbackDrawing} audioRef={playbackAudioRef} mode={playbackDisplayMode} animationEndProgress={playbackAnimationEndProgress} lineStrokeMappings={playbackLineStrokeMappings} singingScore={playbackScore} lyricLineCount={playbackLyricLineCount}/></div>
           )}
           {isGenerating && (
-            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/85 backdrop-blur-sm" role="status" aria-live="polite">
-              <div className="mb-4 h-16 w-16 animate-spin rounded-full border-4 border-yellow-400 border-t-transparent" />
-              <p className="text-lg font-bold text-slate-700">AIが歌を考えています...</p>
+            <div className="absolute inset-0 z-20 bg-white">
+              <GenerationJourney stageLabel={generationStageLabel} drawingData={playbackDrawing ?? initialDrawing} lyrics={generationLyrics} compact />
             </div>
           )}
         </div>

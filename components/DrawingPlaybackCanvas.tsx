@@ -227,10 +227,15 @@ const getCurrentFrame = (audio: HTMLAudioElement | null, score: SingingScore | n
   return (audio.currentTime / audio.duration) * totalFrames;
 };
 
-const findCurrentLineTiming = (lineTimings: LineTiming[], currentFrame: number) =>
-  lineTimings.find((timing) => currentFrame >= timing.startFrame && currentFrame < timing.endFrame) ??
-  lineTimings.at(-1) ??
-  null;
+const findCurrentLineTiming = (lineTimings: LineTiming[], currentFrame: number) => {
+  if (lineTimings.length === 0) return null;
+
+  return (
+    lineTimings.find((timing) => currentFrame >= timing.startFrame && currentFrame < timing.endFrame) ??
+    (currentFrame < lineTimings[0].startFrame ? lineTimings[0] : lineTimings.at(-1)) ??
+    null
+  );
+};
 
 const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
   drawingData,
@@ -247,6 +252,19 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
   const [sourceSize, setSourceSize] = useState<SourceSize>(() => getFallbackSourceSize(drawingData));
   const pathData = useMemo(() => buildPathSegments(drawingData), [drawingData]);
   const groupPathMap = useMemo(() => buildGroupPathMap(drawingData), [drawingData]);
+  const unmappedPathData = useMemo(() => {
+    const mappedGroupIds = new Set(lineStrokeMappings?.flatMap((mapping) => mapping.strokeGroupIds) ?? []);
+    const mappedStrokeIndexes = new Set(
+      drawingData.strokeGroups
+        ?.filter((group) => mappedGroupIds.has(group.id))
+        .flatMap((group) => group.rawStrokeIndexes) ?? [],
+    );
+
+    return buildPathSegmentsFromStrokeIndexes(
+      drawingData,
+      drawingData.strokes.map((_, index) => index).filter((index) => !mappedStrokeIndexes.has(index)),
+    );
+  }, [drawingData, lineStrokeMappings]);
   const lineTimings = useMemo(() => buildLineTimings(singingScore, lyricLineCount), [lyricLineCount, singingScore]);
   const canUseLineSync =
     !!lineStrokeMappings?.length && !!drawingData.strokeGroups?.length && groupPathMap.size > 0 && lineTimings.length > 0;
@@ -379,6 +397,9 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
       const currentLineProgress =
         currentLineFrameLength > 0 ? clamp((currentFrame - currentLineTiming.startFrame) / currentLineFrameLength, 0, 1) : 1;
 
+      // Partial AI mappings must never make the child's other strokes disappear.
+      drawPathData(unmappedPathData, getAudioProgress(audioRef.current, animationEndProgress));
+
       lineStrokeMappings.forEach((mapping) => {
         if (mapping.lineIndex > currentLineTiming.lineIndex) {
           return;
@@ -439,6 +460,7 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
     pathData,
     singingScore,
     sourceSize,
+    unmappedPathData,
   ]);
 
   return (

@@ -1563,6 +1563,8 @@ const App: React.FC = () => {
               onDrawingMetricsChange={setDrawingMetrics}
               guideState={canvasGuideState}
               isGenerating={isGenerating}
+              generationStageLabel={progressLabel}
+              generationLyrics={lyrics}
               generationDisabled={!appFeatures.gemini || !appFeatures.voicevox}
               generationDisabledMessage="AI生成・音声生成は現在準備中です。描画機能はそのまま利用できます。"
               initialDrawing={playbackDrawing}
@@ -1582,7 +1584,7 @@ const App: React.FC = () => {
             {lyrics || isGenerating || error ? (
               <div className="magic-card bg-white p-5 sm:p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
                 {isGenerating ? (
-                  <GenerationJourney stageLabel={progressLabel} />
+                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} lyrics={lyrics} />
                 ) : error ? (
                   <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
                     <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>
