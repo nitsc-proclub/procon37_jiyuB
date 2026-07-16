@@ -384,6 +384,10 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (document.body.dataset.drawingFocusMode === "true") {
+        return;
+      }
+
       const key = event.key.toLowerCase();
 
       if (key === "escape" && isShortcutHelpOpen) {

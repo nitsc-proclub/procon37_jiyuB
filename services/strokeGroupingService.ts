@@ -1,8 +1,10 @@
 import { Stroke, StrokeBounds, StrokeGroup } from "../types";
 
-const ENDPOINT_MERGE_DISTANCE = 14;
-const SHORT_STROKE_LENGTH = 28;
-const BOUNDS_MERGE_DISTANCE = 20;
+// PaintCanvas stores new drawings in a 1024px logical coordinate space.
+// Keep the grouping proportions close to the former 500-600px canvas tuning.
+const ENDPOINT_MERGE_DISTANCE = 26;
+const SHORT_STROKE_LENGTH = 52;
+const BOUNDS_MERGE_DISTANCE = 37;
 const MAX_MERGE_TIME_GAP_MS = 900;
 
 type StrokeSummary = {

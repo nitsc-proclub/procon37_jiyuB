@@ -58,6 +58,18 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 const getDistance = (from: Point, to: Point) => Math.hypot(to.x - from.x, to.y - from.y);
 
 const getFallbackSourceSize = (drawingData: DrawingData): SourceSize => {
+  const savedSize = drawingData.canvasSize;
+
+  if (
+    savedSize &&
+    Number.isFinite(savedSize.width) &&
+    Number.isFinite(savedSize.height) &&
+    savedSize.width > 0 &&
+    savedSize.height > 0
+  ) {
+    return savedSize;
+  }
+
   const points = drawingData.strokes.flatMap((stroke) => stroke.points);
 
   if (points.length === 0) {
@@ -269,10 +281,12 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
     const image = new Image();
     image.onload = () => {
       imageRef.current = image;
-      setSourceSize({
-        width: Math.max(1, image.naturalWidth),
-        height: Math.max(1, image.naturalHeight),
-      });
+      setSourceSize(
+        drawingData.canvasSize ?? {
+          width: Math.max(1, image.naturalWidth),
+          height: Math.max(1, image.naturalHeight),
+        },
+      );
     };
     image.onerror = () => {
       imageRef.current = null;
@@ -306,7 +320,8 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
       context.fillRect(0, 0, canvasSize.width, canvasSize.height);
       context.lineCap = "round";
       context.lineJoin = "round";
-      context.lineWidth = LINE_WIDTH;
+      const coordinateLineWidth = drawingData.lineWidth ?? LINE_WIDTH;
+      context.lineWidth = coordinateLineWidth * Math.min(canvasSize.width / sourceSize.width, canvasSize.height / sourceSize.height);
       context.strokeStyle = "#333";
       context.fillStyle = "#333";
     };
@@ -324,7 +339,7 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
         if (segment.type === "dot") {
           const point = scalePoint(segment.point);
           context.beginPath();
-          context.arc(point.x, point.y, LINE_WIDTH / 2, 0, Math.PI * 2);
+          context.arc(point.x, point.y, context.lineWidth / 2, 0, Math.PI * 2);
           context.fill();
           return;
         }
@@ -416,6 +431,7 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
     audioRef,
     canUseLineSync,
     canvasSize,
+    drawingData.lineWidth,
     groupPathMap,
     lineStrokeMappings,
     lineTimings,

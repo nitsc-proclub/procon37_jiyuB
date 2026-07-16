@@ -18,6 +18,18 @@ const uniqueSortedIndexes = (indexes: number[]) =>
   Array.from(new Set(indexes)).sort((first, second) => first - second);
 
 export const getPrintSourceSize = (drawingData: DrawingData): PrintSourceSize => {
+  const savedSize = drawingData.canvasSize;
+
+  if (
+    savedSize &&
+    Number.isFinite(savedSize.width) &&
+    Number.isFinite(savedSize.height) &&
+    savedSize.width > 0 &&
+    savedSize.height > 0
+  ) {
+    return savedSize;
+  }
+
   const points = drawingData.strokes.flatMap((stroke) => stroke.points);
 
   if (points.length === 0) {

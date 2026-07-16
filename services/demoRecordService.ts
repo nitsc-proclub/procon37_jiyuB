@@ -18,6 +18,8 @@ interface DemoRecordMetadata {
     strokeCount: number;
     strokes: DrawingData["strokes"];
     strokeGroups?: DrawingData["strokeGroups"];
+    canvasSize?: DrawingData["canvasSize"];
+    lineWidth?: DrawingData["lineWidth"];
   };
   singingScore: SingingScore | null;
 }
@@ -68,6 +70,8 @@ export const saveDemoRecord = async ({
       strokeCount: drawingData.strokes.length,
       strokes: drawingData.strokes,
       strokeGroups: drawingData.strokeGroups,
+      canvasSize: drawingData.canvasSize,
+      lineWidth: drawingData.lineWidth,
     },
     singingScore,
   };

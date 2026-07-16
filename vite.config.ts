@@ -106,6 +106,11 @@ type StoredDemoRecordMetadata = {
   drawing?: {
     strokes?: unknown[];
     strokeGroups?: unknown[];
+    canvasSize?: {
+      width?: number;
+      height?: number;
+    };
+    lineWidth?: number;
   };
   participantAge?: number | null;
   participant?: {
@@ -262,6 +267,8 @@ const createDemoRecordMiddleware =
             drawingData: {
               strokes: metadata.drawing?.strokes ?? [],
               strokeGroups: metadata.drawing?.strokeGroups,
+              canvasSize: metadata.drawing?.canvasSize,
+              lineWidth: metadata.drawing?.lineWidth,
               imageUri: `/api/demo-records/${encodeURIComponent(recordId)}/image`,
             },
             singingScore: metadata.singingScore ?? null,

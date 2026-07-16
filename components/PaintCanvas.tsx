@@ -1,11 +1,17 @@
+import React, { useEffect, useRef, useState } from "react";
+import DrawingPlaybackCanvas, { DrawingDisplayMode } from "./DrawingPlaybackCanvas";
+import { DrawingData, LyricStrokeMapping, Point, SingingScore, Stroke } from "../types";
 
-import React, { useRef, useEffect, useState } from 'react';
-import DrawingPlaybackCanvas, { DrawingDisplayMode } from './DrawingPlaybackCanvas';
-import { Point, Stroke, DrawingData, LyricStrokeMapping, SingingScore } from '../types';
+export type DrawingMetrics = {
+  strokeCount: number;
+  pointCount: number;
+  drawingDurationMs: number;
+};
 
 interface PaintCanvasProps {
   onComplete: (data: DrawingData) => void;
   onClear: () => void;
+  onDrawingMetricsChange?: (metrics: DrawingMetrics) => void;
   isGenerating: boolean;
   generationDisabled?: boolean;
   generationDisabledMessage?: string;
@@ -20,18 +26,39 @@ interface PaintCanvasProps {
   isPlaybackActive?: boolean;
 }
 
-const isEditableKeyboardTarget = (target: EventTarget | null) => {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
+const LOGICAL_CANVAS_SIZE = 1024;
+const DISPLAY_LINE_WIDTH = 4;
 
+const isEditableKeyboardTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false;
   const tagName = target.tagName.toLowerCase();
-  return target.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select';
+  return target.isContentEditable || tagName === "input" || tagName === "textarea" || tagName === "select";
+};
+
+const scaleStrokes = (strokes: Stroke[], sourceWidth: number, sourceHeight: number): Stroke[] => {
+  const scaleX = LOGICAL_CANVAS_SIZE / Math.max(1, sourceWidth);
+  const scaleY = LOGICAL_CANVAS_SIZE / Math.max(1, sourceHeight);
+
+  return strokes.map((stroke) => ({
+    ...stroke,
+    points: stroke.points.map((point) => ({
+      ...point,
+      x: point.x * scaleX,
+      y: point.y * scaleY,
+    })),
+  }));
+};
+
+const inferLegacySourceSize = (strokes: Stroke[]) => {
+  const points = strokes.flatMap((stroke) => stroke.points);
+  const extent = Math.max(1, ...points.flatMap((point) => [point.x, point.y]));
+  return { width: extent, height: extent };
 };
 
 const PaintCanvas: React.FC<PaintCanvasProps> = ({
   onComplete,
   onClear,
+  onDrawingMetricsChange,
   isGenerating,
   generationDisabled = false,
   generationDisabledMessage = "現在、この機能は利用できません",
@@ -46,478 +73,473 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   isPlaybackActive = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const focusSurfaceRef = useRef<HTMLDivElement>(null);
+  const focusTriggerRef = useRef<HTMLButtonElement>(null);
+  const focusExitRef = useRef<HTMLButtonElement>(null);
+  const clearDialogRef = useRef<HTMLDivElement>(null);
+  const clearConfirmButtonRef = useRef<HTMLButtonElement>(null);
+  const strokesRef = useRef<Stroke[]>([]);
+  const currentStrokeRef = useRef<Point[]>([]);
+  const activePointerIdRef = useRef<number | null>(null);
+  const lineWidthRef = useRef(6);
+  const focusModeRef = useRef(false);
+  const wasFocusedRef = useRef(false);
+  const imageLoadIdRef = useRef(0);
+  const baseImageRef = useRef<HTMLImageElement | null>(null);
+  const shouldUseBaseImageRef = useRef(false);
+
   const [isDrawing, setIsDrawing] = useState(false);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [undoneStrokes, setUndoneStrokes] = useState<Stroke[]>([]);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
-  const currentStrokeRef = useRef<Point[]>([]);
-  const lastPointRef = useRef<Point | null>(null);
+  const [isFocusMode, setIsFocusMode] = useState(false);
   const isCanvasLocked = isGenerating || isPlaybackActive;
 
-  const setupCanvas = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    // Use a temporary canvas to save current content if resizing
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = canvas.width;
-    tempCanvas.height = canvas.height;
-    const tempCtx = tempCanvas.getContext('2d');
-    if (tempCtx) tempCtx.drawImage(canvas, 0, 0);
-
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height;
-
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#333';
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Restore content after resize
-    ctx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, 0, 0, canvas.width, canvas.height);
+  const prepareContext = (context: CanvasRenderingContext2D) => {
+    const displayWidth = Math.max(1, canvasRef.current?.getBoundingClientRect().width ?? LOGICAL_CANVAS_SIZE);
+    lineWidthRef.current = (DISPLAY_LINE_WIDTH * LOGICAL_CANVAS_SIZE) / displayWidth;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.lineWidth = lineWidthRef.current;
+    context.strokeStyle = "#26324d";
+    context.fillStyle = "#26324d";
   };
 
   const redrawStrokes = (nextStrokes: Stroke[]) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
 
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#333';
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (canvas.width !== LOGICAL_CANVAS_SIZE || canvas.height !== LOGICAL_CANVAS_SIZE) {
+      canvas.width = LOGICAL_CANVAS_SIZE;
+      canvas.height = LOGICAL_CANVAS_SIZE;
+    }
 
-    nextStrokes.forEach((stroke) => {
-      if (stroke.points.length === 0) return;
+    prepareContext(context);
+    context.fillStyle = "white";
+    context.fillRect(0, 0, canvas.width, canvas.height);
 
-      if (stroke.points.length === 1) {
-        const point = stroke.points[0];
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, ctx.lineWidth / 2, 0, Math.PI * 2);
-        ctx.fillStyle = '#333';
-        ctx.fill();
-        return;
-      }
-
-      ctx.beginPath();
-      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-      stroke.points.slice(1).forEach((point) => {
-        ctx.lineTo(point.x, point.y);
-      });
-      ctx.stroke();
-    });
-  };
-
-  const drawImageUri = (imageUri: string, fallbackStrokes: Stroke[]) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const image = new Image();
-    image.onload = () => {
-      ctx.fillStyle = 'white';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    };
-    image.onerror = () => redrawStrokes(fallbackStrokes);
-    image.src = imageUri;
-  };
-
-  const drawDot = (point: Point) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.beginPath();
-    ctx.fillStyle = '#333';
-    ctx.arc(point.x, point.y, ctx.lineWidth / 2, 0, Math.PI * 2);
-    ctx.fill();
-  };
-
-  useEffect(() => {
-    setupCanvas();
-    window.addEventListener('resize', setupCanvas);
-    return () => {
-      window.removeEventListener('resize', setupCanvas);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!initialDrawing) return;
-
-    const nextStrokes = initialDrawing.strokes ?? [];
-    setStrokes(nextStrokes);
-    setUndoneStrokes([]);
-    setIsClearConfirmOpen(false);
-    drawImageUri(initialDrawing.imageUri, nextStrokes);
-  }, [initialDrawing]);
-
-  const getCoordinates = (e: React.MouseEvent | React.TouchEvent): Point => {
-    const canvas = canvasRef.current!;
-    const rect = canvas.getBoundingClientRect();
-    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
-
-    return {
-      x: clientX - rect.left,
-      y: clientY - rect.top,
-      timestamp: Date.now()
-    };
-  };
-
-  const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
-    if (isCanvasLocked) return;
-    if ('button' in e && e.button !== 0) return;
-    e.preventDefault();
-    const point = getCoordinates(e);
-    setIsDrawing(true);
-    setUndoneStrokes([]);
-    currentStrokeRef.current = [point];
-    lastPointRef.current = point;
-  };
-
-  const draw = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isDrawing || isCanvasLocked) return;
-    e.preventDefault();
-    const point = getCoordinates(e);
-    const canvas = canvasRef.current!;
-    const ctx = canvas.getContext('2d')!;
-
-    ctx.beginPath();
-    ctx.moveTo(lastPointRef.current!.x, lastPointRef.current!.y);
-    ctx.lineTo(point.x, point.y);
-    ctx.stroke();
-
-    currentStrokeRef.current.push(point);
-    lastPointRef.current = point;
-  };
-
-  const endDrawing = () => {
-    if (!isDrawing) return;
-    setIsDrawing(false);
-
-    if (isCanvasLocked || currentStrokeRef.current.length === 0) {
-      currentStrokeRef.current = [];
-      lastPointRef.current = null;
+    if (nextStrokes.length === 0 && shouldUseBaseImageRef.current && baseImageRef.current) {
+      context.drawImage(baseImageRef.current, 0, 0, canvas.width, canvas.height);
+      prepareContext(context);
       return;
     }
 
-    const newStroke: Stroke = {
-      points: [...currentStrokeRef.current],
-      startTime: currentStrokeRef.current[0].timestamp,
-      endTime: currentStrokeRef.current[currentStrokeRef.current.length - 1].timestamp
-    };
+    nextStrokes.forEach((stroke) => {
+      if (stroke.points.length === 0) return;
+      context.beginPath();
+      if (stroke.points.length === 1) {
+        const point = stroke.points[0];
+        context.arc(point.x, point.y, context.lineWidth / 2, 0, Math.PI * 2);
+        context.fill();
+        return;
+      }
+      context.moveTo(stroke.points[0].x, stroke.points[0].y);
+      stroke.points.slice(1).forEach((point) => context.lineTo(point.x, point.y));
+      context.stroke();
+    });
+  };
 
-    if (newStroke.points.length === 1) {
-      drawDot(newStroke.points[0]);
+  const commitStrokes = (nextStrokes: Stroke[]) => {
+    strokesRef.current = nextStrokes;
+    setStrokes(nextStrokes);
+    redrawStrokes(nextStrokes);
+  };
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = canvasContainerRef.current;
+    if (!canvas || !container) return;
+
+    canvas.width = LOGICAL_CANVAS_SIZE;
+    canvas.height = LOGICAL_CANVAS_SIZE;
+    redrawStrokes(strokesRef.current);
+
+    const observer = new ResizeObserver(() => redrawStrokes(strokesRef.current));
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const loadId = ++imageLoadIdRef.current;
+    if (!initialDrawing) {
+      baseImageRef.current = null;
+      shouldUseBaseImageRef.current = false;
+      commitStrokes([]);
+      setUndoneStrokes([]);
+      return;
     }
 
-    setStrokes(prev => [...prev, newStroke]);
+    const image = new Image();
+    image.onload = () => {
+      if (loadId !== imageLoadIdRef.current) return;
+      const sourceSize = initialDrawing.canvasSize ?? {
+        width: Math.max(1, image.naturalWidth),
+        height: Math.max(1, image.naturalHeight),
+      };
+      const normalized = scaleStrokes(initialDrawing.strokes ?? [], sourceSize.width, sourceSize.height);
+      baseImageRef.current = image;
+      shouldUseBaseImageRef.current = normalized.length === 0;
+      commitStrokes(normalized);
+      setUndoneStrokes([]);
+      setIsClearConfirmOpen(false);
+    };
+    image.onerror = () => {
+      if (loadId !== imageLoadIdRef.current) return;
+      const inferred = initialDrawing.canvasSize ?? inferLegacySourceSize(initialDrawing.strokes ?? []);
+      baseImageRef.current = null;
+      shouldUseBaseImageRef.current = false;
+      commitStrokes(scaleStrokes(initialDrawing.strokes ?? [], inferred.width, inferred.height));
+      setUndoneStrokes([]);
+    };
+    image.src = initialDrawing.imageUri;
+
+    return () => {
+      image.onload = null;
+      image.onerror = null;
+    };
+  }, [initialDrawing]);
+
+  useEffect(() => {
+    onDrawingMetricsChange?.({
+      strokeCount: strokes.length,
+      pointCount: strokes.reduce((total, stroke) => total + stroke.points.length, 0),
+      drawingDurationMs: strokes.reduce((total, stroke) => total + Math.max(0, stroke.endTime - stroke.startTime), 0),
+    });
+  }, [onDrawingMetricsChange, strokes]);
+
+  useEffect(() => {
+    focusModeRef.current = isFocusMode;
+    if (isFocusMode) {
+      wasFocusedRef.current = true;
+      const previousOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      document.body.dataset.drawingFocusMode = "true";
+      window.requestAnimationFrame(() => focusExitRef.current?.focus());
+      return () => {
+        document.body.style.overflow = previousOverflow;
+        delete document.body.dataset.drawingFocusMode;
+      };
+    }
+
+    delete document.body.dataset.drawingFocusMode;
+    if (wasFocusedRef.current) {
+      wasFocusedRef.current = false;
+      window.requestAnimationFrame(() => focusTriggerRef.current?.focus());
+    }
+  }, [isFocusMode]);
+
+  useEffect(() => {
+    if (isClearConfirmOpen) {
+      window.requestAnimationFrame(() => clearConfirmButtonRef.current?.focus());
+    }
+  }, [isClearConfirmOpen]);
+
+  const exitFocusMode = () => {
+    focusModeRef.current = false;
+    setIsFocusMode(false);
+    if (document.fullscreenElement && document.exitFullscreen) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+  };
+
+  const enterFocusMode = () => {
+    if (isCanvasLocked) return;
+    focusModeRef.current = true;
+    setIsFocusMode(true);
+    const surface = focusSurfaceRef.current;
+    if (surface?.requestFullscreen) {
+      void surface.requestFullscreen().catch(() => undefined);
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (focusModeRef.current && !document.fullscreenElement) {
+        focusModeRef.current = false;
+        setIsFocusMode(false);
+      }
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  const getCoordinates = (event: React.PointerEvent<HTMLCanvasElement>): Point => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / Math.max(1, rect.width)) * LOGICAL_CANVAS_SIZE,
+      y: ((event.clientY - rect.top) / Math.max(1, rect.height)) * LOGICAL_CANVAS_SIZE,
+      timestamp: Date.now(),
+    };
+  };
+
+  const startDrawing = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isCanvasLocked || event.button !== 0 || activePointerIdRef.current !== null) return;
+    event.preventDefault();
+    shouldUseBaseImageRef.current = false;
+    activePointerIdRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    currentStrokeRef.current = [getCoordinates(event)];
+    setUndoneStrokes([]);
+    setIsDrawing(true);
+  };
+
+  const draw = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawing || isCanvasLocked || activePointerIdRef.current !== event.pointerId) return;
+    event.preventDefault();
+    const point = getCoordinates(event);
+    const previous = currentStrokeRef.current.at(-1);
+    const context = canvasRef.current?.getContext("2d");
+    if (!previous || !context) return;
+    prepareContext(context);
+    context.beginPath();
+    context.moveTo(previous.x, previous.y);
+    context.lineTo(point.x, point.y);
+    context.stroke();
+    currentStrokeRef.current.push(point);
+  };
+
+  const finishDrawing = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointerIdRef.current !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    activePointerIdRef.current = null;
+    setIsDrawing(false);
+    const points = currentStrokeRef.current;
     currentStrokeRef.current = [];
-    lastPointRef.current = null;
+    if (isCanvasLocked || points.length === 0) {
+      redrawStrokes(strokesRef.current);
+      return;
+    }
+    const nextStroke: Stroke = {
+      points: [...points],
+      startTime: points[0].timestamp,
+      endTime: points.at(-1)?.timestamp ?? points[0].timestamp,
+    };
+    commitStrokes([...strokesRef.current, nextStroke]);
+  };
+
+  const cancelDrawing = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointerIdRef.current !== event.pointerId) return;
+    activePointerIdRef.current = null;
+    currentStrokeRef.current = [];
+    setIsDrawing(false);
+    redrawStrokes(strokesRef.current);
   };
 
   const clearCanvas = () => {
-    const canvas = canvasRef.current!;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    setStrokes([]);
+    shouldUseBaseImageRef.current = false;
+    baseImageRef.current = null;
+    commitStrokes([]);
     setUndoneStrokes([]);
     setIsClearConfirmOpen(false);
     onClear();
   };
 
   const handleClear = () => {
-    if (isCanvasLocked) return;
-    setIsClearConfirmOpen(true);
-  };
-
-  const cancelClear = () => {
-    setIsClearConfirmOpen(false);
-  };
-
-  const submitGenerate = () => {
-    if (strokes.length === 0 || generationDisabled) return;
-    const canvas = canvasRef.current!;
-    const imageUri = canvas.toDataURL('image/png');
-    onComplete({ strokes, imageUri });
-  };
-
-  const handleGenerate = () => {
-    if (strokes.length === 0 || isCanvasLocked || generationDisabled) return;
-
-    submitGenerate();
+    if (!isCanvasLocked) setIsClearConfirmOpen(true);
   };
 
   const handleUndo = () => {
-    if (isCanvasLocked || strokes.length === 0) return;
-
-    const nextStrokes = strokes.slice(0, -1);
-    const undoneStroke = strokes[strokes.length - 1];
-    setStrokes(nextStrokes);
-    setUndoneStrokes((prev) => [undoneStroke, ...prev]);
-    redrawStrokes(nextStrokes);
+    if (isCanvasLocked || strokesRef.current.length === 0) return;
+    shouldUseBaseImageRef.current = false;
+    const undone = strokesRef.current.at(-1)!;
+    commitStrokes(strokesRef.current.slice(0, -1));
+    setUndoneStrokes((current) => [undone, ...current]);
   };
 
   const handleRedo = () => {
     if (isCanvasLocked || undoneStrokes.length === 0) return;
-
-    const redoneStroke = undoneStrokes[0];
-    const nextStrokes = [...strokes, redoneStroke];
-    setStrokes(nextStrokes);
-    setUndoneStrokes((prev) => prev.slice(1));
-    redrawStrokes(nextStrokes);
+    shouldUseBaseImageRef.current = false;
+    commitStrokes([...strokesRef.current, undoneStrokes[0]]);
+    setUndoneStrokes((current) => current.slice(1));
   };
 
-  const preventCanvasContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault();
+  const handleGenerate = () => {
+    if (strokesRef.current.length === 0 || isCanvasLocked || generationDisabled || isFocusMode) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    onComplete({
+      strokes: strokesRef.current,
+      imageUri: canvas.toDataURL("image/png"),
+      canvasSize: { width: LOGICAL_CANVAS_SIZE, height: LOGICAL_CANVAS_SIZE },
+      lineWidth: lineWidthRef.current,
+    });
   };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isEditableKeyboardTarget(event.target)) {
-        return;
-      }
-
+      if (isEditableKeyboardTarget(event.target)) return;
       const key = event.key.toLowerCase();
-
       if (isClearConfirmOpen) {
-        if (key === 'escape') {
+        if (key === "tab") {
+          const focusable = Array.from(
+            clearDialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not([disabled])") ?? [],
+          ) as HTMLButtonElement[];
+          if (focusable.length > 0) {
+            const currentIndex = focusable.indexOf(document.activeElement as HTMLButtonElement);
+            const nextIndex = event.shiftKey
+              ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
+              : (currentIndex + 1) % focusable.length;
+            event.preventDefault();
+            focusable[nextIndex].focus();
+          }
+        } else if (key === "escape") {
           event.preventDefault();
-          cancelClear();
-          return;
-        }
-
-        if (key === 'enter') {
+          setIsClearConfirmOpen(false);
+        } else if (key === "enter") {
           event.preventDefault();
           clearCanvas();
         }
-
         return;
       }
-
-      if (key === 'enter') {
+      if (isFocusMode && key === "tab") {
+        const focusable = Array.from(
+          focusSurfaceRef.current?.querySelectorAll<HTMLButtonElement>("button:not([disabled])") ?? [],
+        ) as HTMLButtonElement[];
+        if (focusable.length > 0) {
+          const currentIndex = focusable.indexOf(document.activeElement as HTMLButtonElement);
+          const nextIndex = event.shiftKey
+            ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
+            : (currentIndex + 1) % focusable.length;
+          event.preventDefault();
+          focusable[nextIndex].focus();
+        }
+        return;
+      }
+      if (isFocusMode && key === "escape") {
+        event.preventDefault();
+        exitFocusMode();
+        return;
+      }
+      if (key === "enter") {
         event.preventDefault();
         handleGenerate();
         return;
       }
-
-      if (key === 's' && (event.ctrlKey || event.metaKey)) {
+      if (key === "s" && (event.ctrlKey || event.metaKey)) {
         event.preventDefault();
         handleGenerate();
         return;
       }
-
-      if (!event.ctrlKey && !event.metaKey && (key === 'delete' || key === 'backspace')) {
+      if (!event.ctrlKey && !event.metaKey && (key === "delete" || key === "backspace")) {
         event.preventDefault();
         handleClear();
         return;
       }
-
       if (!(event.ctrlKey || event.metaKey)) return;
-
-      if (key === 'z' && !event.shiftKey) {
+      if (key === "z" && !event.shiftKey) {
         event.preventDefault();
         handleUndo();
-      } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
+      } else if (key === "y" || (key === "z" && event.shiftKey)) {
         event.preventDefault();
         handleRedo();
       }
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [strokes, undoneStrokes, isCanvasLocked, isClearConfirmOpen]);
-
-  useEffect(() => {
-    if (!isClearConfirmOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        cancelClear();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isClearConfirmOpen]);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [generationDisabled, isCanvasLocked, isClearConfirmOpen, isFocusMode, undoneStrokes]);
 
   useEffect(() => {
     if (!isPlaybackActive) return;
-
-    setIsDrawing(false);
+    activePointerIdRef.current = null;
     currentStrokeRef.current = [];
-    lastPointRef.current = null;
+    setIsDrawing(false);
     setIsClearConfirmOpen(false);
+    redrawStrokes(strokesRef.current);
   }, [isPlaybackActive]);
+
+  const undoButton = (
+    <button type="button" onClick={handleUndo} disabled={strokes.length === 0 || isCanvasLocked} className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white text-slate-700 shadow-md transition-all hover:bg-slate-50 disabled:opacity-40 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-400" title="戻す" aria-label="ひとつ戻す">
+      <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 7 4 12l5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M5 12h9.5a4.5 4.5 0 0 1 0 9H12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+    </button>
+  );
+  const redoButton = (
+    <button type="button" onClick={handleRedo} disabled={undoneStrokes.length === 0 || isCanvasLocked} className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white text-slate-700 shadow-md transition-all hover:bg-slate-50 disabled:opacity-40 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-400" title="進める" aria-label="ひとつ進める">
+      <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m15 7 5 5-5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M19 12H9.5a4.5 4.5 0 0 0 0 9H12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+    </button>
+  );
 
   return (
     <>
-      <div className="relative flex w-full max-w-full flex-col items-center gap-6 transition-all duration-300">
-        <div className="flex w-full flex-col items-center gap-4">
-          <div
-            ref={containerRef}
-            onContextMenu={preventCanvasContextMenu}
-            className="relative w-full max-w-[42rem] aspect-square select-none bg-white rounded-3xl shadow-xl overflow-hidden border-8 border-yellow-200"
-          >
-            <canvas
-              ref={canvasRef}
-              onMouseDown={startDrawing}
-              onMouseMove={draw}
-              onMouseUp={endDrawing}
-              onMouseLeave={endDrawing}
-              onContextMenu={preventCanvasContextMenu}
-              onTouchStart={startDrawing}
-              onTouchMove={draw}
-              onTouchEnd={endDrawing}
-              className="w-full h-full cursor-crosshair touch-none"
-            />
-            {isPlaybackActive && playbackDrawing && playbackAudioRef && (
-              <div className="absolute inset-0 z-10 bg-white">
-                <DrawingPlaybackCanvas
-                  drawingData={playbackDrawing}
-                  audioRef={playbackAudioRef}
-                  mode={playbackDisplayMode}
-                  animationEndProgress={playbackAnimationEndProgress}
-                  lineStrokeMappings={playbackLineStrokeMappings}
-                  singingScore={playbackScore}
-                  lyricLineCount={playbackLyricLineCount}
-                />
-              </div>
-            )}
-            {isGenerating && (
-              <div className="absolute inset-0 bg-white/80 flex flex-col items-center justify-center backdrop-blur-sm z-20">
-                <div className="w-16 h-16 border-4 border-yellow-400 border-t-transparent rounded-full animate-spin mb-4"></div>
-                <p className="text-gray-600 font-bold animate-pulse text-lg">AIが歌を考えています...</p>
-              </div>
-            )}
+      <div
+        ref={focusSurfaceRef}
+        className={isFocusMode ? "fixed inset-0 z-[100] flex min-h-0 w-full flex-col items-center overflow-auto bg-slate-950 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]" : "relative flex w-full max-w-full flex-col items-center gap-4"}
+        role={isFocusMode ? "dialog" : undefined}
+        aria-modal={isFocusMode ? true : undefined}
+        aria-label={isFocusMode ? "大きく描くモード" : undefined}
+      >
+        {isFocusMode && (
+          <div className="mb-2 flex w-full max-w-5xl items-center justify-between gap-3 text-white">
+            <p className="min-w-0 text-sm font-black sm:text-lg">✦ 大きなキャンバスで描こう</p>
+            <button ref={focusExitRef} type="button" onClick={exitFocusMode} className="flex h-12 shrink-0 items-center justify-center rounded-2xl bg-white px-5 font-black text-slate-900 shadow-lg transition active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-yellow-300">× もどる</button>
           </div>
+        )}
 
-          <div className="flex w-full max-w-full gap-2 sm:gap-3 md:col-start-2">
-            <button
-              onClick={handleClear}
-              disabled={isCanvasLocked}
-              className="flex h-14 min-w-[7.5rem] flex-[1.15] items-center justify-center whitespace-nowrap px-3 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-2xl font-bold transition-all disabled:opacity-50 text-base sm:text-lg shadow-md active:scale-95"
-              title="ぜんぶ消す (Delete / Backspace)"
-            >
-              ぜんぶ消す
-            </button>
-            <button
-              type="button"
-              onClick={handleUndo}
-              disabled={strokes.length === 0 || isCanvasLocked}
-              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-gray-700 shadow-md border-2 border-gray-200 transition-all hover:bg-gray-50 disabled:opacity-40 active:scale-95"
-              title="戻す"
-              aria-label="戻す"
-            >
-              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M9 7 4 12l5 5"
-                  stroke="currentColor"
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="M5 12h9.5a4.5 4.5 0 0 1 0 9H12"
-                  stroke="currentColor"
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={handleRedo}
-              disabled={undoneStrokes.length === 0 || isCanvasLocked}
-              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-gray-700 shadow-md border-2 border-gray-200 transition-all hover:bg-gray-50 disabled:opacity-40 active:scale-95"
-              title="進める"
-              aria-label="進める"
-            >
-              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="m15 7 5 5-5 5"
-                  stroke="currentColor"
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="M19 12H9.5a4.5 4.5 0 0 0 0 9H12"
-                  stroke="currentColor"
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-            <button
-              onClick={handleGenerate}
-              disabled={strokes.length === 0 || isCanvasLocked || generationDisabled}
-              className="flex h-14 min-w-[8rem] flex-[1.15] items-center justify-center whitespace-nowrap px-3 bg-yellow-400 hover:bg-yellow-500 text-white rounded-2xl font-bold transition-all disabled:opacity-50 disabled:bg-gray-300 text-base sm:text-lg shadow-md active:scale-95"
-              title={generationDisabled ? generationDisabledMessage : "歌をつくる! (Ctrl+S / Cmd+S)"}
-            >
-              {generationDisabled ? "生成は準備中" : "歌をつくる！"}
-            </button>
-          </div>
-          {generationDisabled && (
-            <p className="w-full text-center text-sm font-bold text-orange-600 md:col-start-2" role="status">
-              {generationDisabledMessage}
-            </p>
+        <div
+          ref={canvasContainerRef}
+          onContextMenu={(event) => event.preventDefault()}
+          className={`relative aspect-square select-none overflow-hidden bg-white shadow-2xl ${isFocusMode ? "rounded-2xl border-4 border-violet-300" : "w-full max-w-[42rem] rounded-3xl border-8 border-yellow-200"}`}
+          style={isFocusMode ? { width: "min(calc(100vw - 1.5rem), calc(100dvh - 8.75rem))", maxWidth: "64rem" } : undefined}
+        >
+          <canvas
+            ref={canvasRef}
+            onPointerDown={startDrawing}
+            onPointerMove={draw}
+            onPointerUp={finishDrawing}
+            onPointerCancel={cancelDrawing}
+            onContextMenu={(event) => event.preventDefault()}
+            className="h-full w-full touch-none cursor-crosshair"
+            aria-label="好きな絵を描くキャンバス"
+            role="img"
+          />
+          {isPlaybackActive && playbackDrawing && playbackAudioRef && (
+            <div className="absolute inset-0 z-10 bg-white"><DrawingPlaybackCanvas drawingData={playbackDrawing} audioRef={playbackAudioRef} mode={playbackDisplayMode} animationEndProgress={playbackAnimationEndProgress} lineStrokeMappings={playbackLineStrokeMappings} singingScore={playbackScore} lyricLineCount={playbackLyricLineCount}/></div>
+          )}
+          {isGenerating && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/85 backdrop-blur-sm" role="status" aria-live="polite">
+              <div className="mb-4 h-16 w-16 animate-spin rounded-full border-4 border-yellow-400 border-t-transparent" />
+              <p className="text-lg font-bold text-slate-700">AIが歌を考えています...</p>
+            </div>
           )}
         </div>
+
+        {isFocusMode ? (
+          <div className="mt-3 flex w-full max-w-xl flex-wrap justify-center gap-2">
+            <button type="button" onClick={handleClear} disabled={isCanvasLocked} className="flex h-14 min-w-[7.5rem] flex-1 items-center justify-center rounded-2xl bg-slate-200 px-3 font-black text-slate-800 shadow-md disabled:opacity-50">ぜんぶ消す</button>
+            {undoButton}{redoButton}
+          </div>
+        ) : (
+          <>
+            <div className="flex w-full justify-end">
+              <button ref={focusTriggerRef} type="button" onClick={enterFocusMode} disabled={isCanvasLocked} aria-pressed={isFocusMode} className="flex min-h-12 items-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-base font-black text-white shadow-lg transition-all hover:bg-violet-700 disabled:opacity-50 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-300">
+                <span aria-hidden="true">⛶</span> 大きく描く
+              </button>
+            </div>
+            <div className="flex w-full max-w-full flex-wrap gap-2 sm:gap-3">
+              <button type="button" onClick={handleClear} disabled={isCanvasLocked} className="flex h-14 min-w-[7.25rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-slate-200 px-3 text-base font-bold text-slate-700 shadow-md transition-all hover:bg-slate-300 disabled:opacity-50 active:scale-95">ぜんぶ消す</button>
+              {undoButton}{redoButton}
+              <button type="button" onClick={handleGenerate} disabled={strokes.length === 0 || isCanvasLocked || generationDisabled} className="flex h-14 w-full min-w-[8rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-yellow-400 px-3 text-base font-black text-slate-900 shadow-md transition-all hover:bg-yellow-500 disabled:bg-slate-300 disabled:text-slate-500 disabled:opacity-70 active:scale-95 sm:w-auto" title={generationDisabled ? generationDisabledMessage : "歌をつくる! (Ctrl+S / Cmd+S)"}>
+                {generationDisabled ? "生成は準備中" : "歌をつくる！"}
+              </button>
+            </div>
+            {generationDisabled && <p className="w-full text-center text-sm font-bold text-orange-700" role="status">{generationDisabledMessage}</p>}
+          </>
+        )}
       </div>
 
       {isClearConfirmOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-white/75 px-4 backdrop-blur-sm"
-          role="presentation"
-          onClick={cancelClear}
-        >
-          <div
-            className="w-full max-w-sm rounded-3xl border-4 border-yellow-200 bg-white p-6 text-center shadow-2xl"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="clear-confirm-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <p id="clear-confirm-title" className="mb-5 text-2xl font-black text-gray-800">
-              ぜんぶ消しますか？
-            </p>
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/55 px-4 backdrop-blur-sm" role="presentation" onClick={() => setIsClearConfirmOpen(false)}>
+          <div ref={clearDialogRef} className="w-full max-w-sm rounded-3xl border-4 border-yellow-200 bg-white p-6 text-center shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="clear-confirm-title" onClick={(event) => event.stopPropagation()}>
+            <p id="clear-confirm-title" className="mb-5 text-2xl font-black text-slate-800">ぜんぶ消しますか？</p>
             <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={clearCanvas}
-                className="flex h-14 flex-1 items-center justify-center rounded-2xl bg-orange-500 px-4 text-base font-black text-white shadow-md transition-all hover:bg-orange-600 active:scale-95"
-              >
-                ぜんぶ消す
-              </button>
-              <button
-                type="button"
-                onClick={cancelClear}
-                className="flex h-14 flex-1 items-center justify-center rounded-2xl bg-gray-200 px-4 text-base font-black text-gray-700 shadow-md transition-all hover:bg-gray-300 active:scale-95"
-              >
-                キャンセル
-              </button>
+              <button ref={clearConfirmButtonRef} type="button" onClick={clearCanvas} className="flex h-14 flex-1 items-center justify-center rounded-2xl bg-orange-600 px-4 font-black text-white shadow-md">ぜんぶ消す</button>
+              <button type="button" onClick={() => setIsClearConfirmOpen(false)} className="flex h-14 flex-1 items-center justify-center rounded-2xl bg-slate-200 px-4 font-black text-slate-700 shadow-md">キャンセル</button>
             </div>
           </div>
         </div>
       )}
-
     </>
   );
 };

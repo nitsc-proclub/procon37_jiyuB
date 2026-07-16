@@ -11,10 +11,19 @@ export interface Stroke {
   endTime: number;
 }
 
+export interface DrawingCanvasSize {
+  width: number;
+  height: number;
+}
+
 export interface DrawingData {
   strokes: Stroke[];
   imageUri: string;
   strokeGroups?: StrokeGroup[];
+  /** Logical coordinate space used by every stroke. Omitted by legacy records. */
+  canvasSize?: DrawingCanvasSize;
+  /** Stroke width in the logical coordinate space. Omitted by legacy records. */
+  lineWidth?: number;
 }
 
 export interface StrokeBounds {
