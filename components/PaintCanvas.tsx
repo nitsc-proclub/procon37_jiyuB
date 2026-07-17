@@ -15,6 +15,7 @@ interface PaintCanvasProps {
   onDrawingMetricsChange?: (metrics: DrawingMetrics) => void;
   guideState?: "draw" | "generate" | null;
   isGenerating: boolean;
+  isInteractionBlocked?: boolean;
   generationStageLabel?: string;
   generationLyrics?: LyricsResponse | null;
   generationDisabled?: boolean;
@@ -65,6 +66,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   onDrawingMetricsChange,
   guideState = null,
   isGenerating,
+  isInteractionBlocked = false,
   generationStageLabel = "絵をじっくり見ているよ",
   generationLyrics,
   generationDisabled = false,
@@ -86,6 +88,8 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const focusExitRef = useRef<HTMLButtonElement>(null);
   const clearDialogRef = useRef<HTMLDivElement>(null);
   const clearConfirmButtonRef = useRef<HTMLButtonElement>(null);
+  const generationButtonRef = useRef<HTMLButtonElement>(null);
+  const wasInteractionBlockedRef = useRef(false);
   const strokesRef = useRef<Stroke[]>([]);
   const currentStrokeRef = useRef<Point[]>([]);
   const activePointerIdRef = useRef<number | null>(null);
@@ -101,7 +105,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const [undoneStrokes, setUndoneStrokes] = useState<Stroke[]>([]);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
-  const isCanvasLocked = isGenerating || isPlaybackActive;
+  const isCanvasLocked = isGenerating || isPlaybackActive || isInteractionBlocked;
 
   const prepareContext = (context: CanvasRenderingContext2D) => {
     const displayWidth = Math.max(1, canvasRef.current?.getBoundingClientRect().width ?? LOGICAL_CANVAS_SIZE);
@@ -345,7 +349,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const handleClear = () => {
-    if (!isGenerating) setIsClearConfirmOpen(true);
+    if (!isGenerating && !isInteractionBlocked) setIsClearConfirmOpen(true);
   };
 
   const handleUndo = () => {
@@ -470,6 +474,13 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     return () => window.cancelAnimationFrame(frameId);
   }, [isGenerating]);
 
+  useEffect(() => {
+    if (wasInteractionBlockedRef.current && !isInteractionBlocked && !isGenerating) {
+      generationButtonRef.current?.focus();
+    }
+    wasInteractionBlockedRef.current = isInteractionBlocked;
+  }, [isGenerating, isInteractionBlocked]);
+
   const undoButton = (
     <button type="button" onClick={handleUndo} disabled={strokes.length === 0 || isCanvasLocked} className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white text-slate-700 shadow-md transition-all hover:bg-slate-50 disabled:opacity-40 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-400" title="戻す" aria-label="ひとつ戻す">
       <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 7 4 12l5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M5 12h9.5a4.5 4.5 0 0 1 0 9H12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -533,7 +544,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
         {isFocusMode ? (
           <div className="mt-3 flex w-full max-w-xl flex-wrap justify-center gap-2">
-            <button type="button" onClick={handleClear} disabled={isGenerating} className="flex h-14 min-w-[7.5rem] flex-1 items-center justify-center rounded-2xl bg-slate-200 px-3 font-black text-slate-800 shadow-md disabled:opacity-50">ぜんぶ消す</button>
+            <button type="button" onClick={handleClear} disabled={isGenerating || isInteractionBlocked} className="flex h-14 min-w-[7.5rem] flex-1 items-center justify-center rounded-2xl bg-slate-200 px-3 font-black text-slate-800 shadow-md disabled:opacity-50">ぜんぶ消す</button>
             {undoButton}{redoButton}
           </div>
         ) : (
@@ -549,9 +560,9 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
               </div>
             )}
             <div className="paint-toolbar flex w-full max-w-full flex-wrap gap-2 sm:gap-3">
-              <button type="button" onClick={handleClear} disabled={isGenerating} className="flex h-14 min-w-[7.25rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-slate-200 px-3 text-base font-bold text-slate-700 shadow-md transition-all hover:bg-slate-300 disabled:opacity-50 active:scale-95">ぜんぶ消す</button>
+              <button type="button" onClick={handleClear} disabled={isGenerating || isInteractionBlocked} className="flex h-14 min-w-[7.25rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-slate-200 px-3 text-base font-bold text-slate-700 shadow-md transition-all hover:bg-slate-300 disabled:opacity-50 active:scale-95">ぜんぶ消す</button>
               {undoButton}{redoButton}
-              <button type="button" onClick={handleGenerate} disabled={strokes.length === 0 || isCanvasLocked || generationDisabled} className="flex h-14 w-full min-w-[8rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-yellow-400 px-3 text-base font-black text-slate-900 shadow-md transition-all hover:bg-yellow-500 disabled:bg-slate-300 disabled:text-slate-500 disabled:opacity-70 active:scale-95 sm:w-auto" title={generationDisabled ? generationDisabledMessage : "歌をつくる! (Ctrl+S / Cmd+S)"}>
+              <button ref={generationButtonRef} type="button" onClick={handleGenerate} disabled={strokes.length === 0 || isCanvasLocked || generationDisabled} className="flex h-14 w-full min-w-[8rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-yellow-400 px-3 text-base font-black text-slate-900 shadow-md transition-all hover:bg-yellow-500 disabled:bg-slate-300 disabled:text-slate-500 disabled:opacity-70 active:scale-95 sm:w-auto" title={generationDisabled ? generationDisabledMessage : "歌をつくる! (Ctrl+S / Cmd+S)"}>
                 {generationDisabled ? "生成は準備中" : "歌をつくる！"}
               </button>
             </div>

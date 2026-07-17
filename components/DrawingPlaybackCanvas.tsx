@@ -356,6 +356,8 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
       const currentLineTiming = findActiveLineTiming(lineTimings, currentFrame);
 
       if (!currentLineTiming || !lineStrokeMappings) {
+        setPathStyle("#334155");
+        drawPathData(pathData, 1);
         return;
       }
 
@@ -386,21 +388,88 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
       return;
     }
 
-    let animationFrameId = 0;
+    let animationFrameId: number | null = null;
+    const audio = audioRef.current;
 
-    const drawFrame = () => {
+    const drawCurrentState = () => {
+      if (
+        !audio ||
+        !Number.isFinite(audio.duration) ||
+        audio.duration <= 0 ||
+        audio.ended ||
+        audio.currentTime >= audio.duration - 0.02 ||
+        (audio.paused && audio.currentTime <= 0.02)
+      ) {
+        drawStaticImage();
+        return;
+      }
+
       if (canUseLineSync) {
         drawLineSyncedPath();
       } else {
-        drawAnimatedPath(getAudioProgress(audioRef.current, animationEndProgress));
+        drawAnimatedPath(getAudioProgress(audio, animationEndProgress));
       }
-
-      animationFrameId = window.requestAnimationFrame(drawFrame);
     };
 
-    drawFrame();
+    const stopLoop = () => {
+      if (animationFrameId === null) return;
+      window.cancelAnimationFrame(animationFrameId);
+      animationFrameId = null;
+    };
 
-    return () => window.cancelAnimationFrame(animationFrameId);
+    const drawLoop = () => {
+      drawCurrentState();
+      if (audio && !audio.paused && !audio.ended) {
+        animationFrameId = window.requestAnimationFrame(drawLoop);
+      } else {
+        animationFrameId = null;
+      }
+    };
+
+    const startLoop = () => {
+      stopLoop();
+      drawLoop();
+    };
+
+    const settleFrame = () => {
+      stopLoop();
+      drawCurrentState();
+    };
+
+    const resumeAfterSeek = () => {
+      if (audio.paused || audio.ended) {
+        settleFrame();
+      } else {
+        startLoop();
+      }
+    };
+
+    drawCurrentState();
+
+    if (!audio) return;
+
+    audio.addEventListener("play", startLoop);
+    audio.addEventListener("pause", settleFrame);
+    audio.addEventListener("ended", settleFrame);
+    audio.addEventListener("seeking", settleFrame);
+    audio.addEventListener("seeked", resumeAfterSeek);
+    audio.addEventListener("timeupdate", drawCurrentState);
+    audio.addEventListener("loadedmetadata", drawCurrentState);
+
+    if (!audio.paused && !audio.ended) {
+      startLoop();
+    }
+
+    return () => {
+      stopLoop();
+      audio.removeEventListener("play", startLoop);
+      audio.removeEventListener("pause", settleFrame);
+      audio.removeEventListener("ended", settleFrame);
+      audio.removeEventListener("seeking", settleFrame);
+      audio.removeEventListener("seeked", resumeAfterSeek);
+      audio.removeEventListener("timeupdate", drawCurrentState);
+      audio.removeEventListener("loadedmetadata", drawCurrentState);
+    };
   }, [
     animationEndProgress,
     audioRef,

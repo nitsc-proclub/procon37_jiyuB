@@ -285,6 +285,8 @@ const App: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement>(null);
   const completionHeadingRef = useRef<HTMLHeadingElement>(null);
   const completionContentRef = useRef<HTMLDivElement>(null);
+  const recordConsentDialogRef = useRef<HTMLElement>(null);
+  const recordConsentPrimaryButtonRef = useRef<HTMLButtonElement>(null);
   const resultTabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const completionDoorTimerRef = useRef<number | null>(null);
   const generationRunRef = useRef(false);
@@ -318,6 +320,12 @@ const App: React.FC = () => {
     const frameId = window.requestAnimationFrame(() => completionHeadingRef.current?.focus());
     return () => window.cancelAnimationFrame(frameId);
   }, [completionDoorState, isGenerating, lyrics]);
+
+  useEffect(() => {
+    if (!isRecordConsentOpen) return;
+    const frameId = window.requestAnimationFrame(() => recordConsentPrimaryButtonRef.current?.focus());
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isRecordConsentOpen]);
 
   useEffect(() => {
     if (!saveToast) {
@@ -365,6 +373,16 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isRecordConsentOpen) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setIsRecordConsentOpen(false);
+          setPendingGenerationData(null);
+          setRecordConsentError(null);
+        }
+        return;
+      }
+
       if (document.body.dataset.drawingFocusMode === "true") {
         return;
       }
@@ -459,6 +477,7 @@ const App: React.FC = () => {
     generatedDrawing,
     isExperimentGenerating,
     isGenerating,
+    isRecordConsentOpen,
     isShortcutHelpOpen,
     loadDemoRecords,
     lyrics,
@@ -907,6 +926,35 @@ const App: React.FC = () => {
     setCompletionDoorState("open");
   };
 
+  const handleRecordConsentKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeRecordConsent();
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+
+    const focusableElements: HTMLElement[] = recordConsentDialogRef.current
+      ? Array.from(
+          recordConsentDialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), select:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        ) as HTMLElement[]
+      : [];
+    if (focusableElements.length === 0) return;
+
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements[focusableElements.length - 1];
+    if (event.shiftKey && document.activeElement === firstElement) {
+      event.preventDefault();
+      lastElement.focus();
+    } else if (!event.shiftKey && document.activeElement === lastElement) {
+      event.preventDefault();
+      firstElement.focus();
+    }
+  };
+
   const handleOpenCompletionDoor = () => {
     if (completionDoorState !== "ready") return;
 
@@ -1114,10 +1162,12 @@ const App: React.FC = () => {
           onClick={closeRecordConsent}
         >
           <section
+            ref={recordConsentDialogRef}
             className="w-full max-w-lg rounded-3xl border-4 border-yellow-200 bg-white p-5 text-left shadow-2xl sm:p-6"
             role="dialog"
             aria-modal="true"
             aria-labelledby="record-consent-title"
+            onKeyDown={handleRecordConsentKeyDown}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-5 border-b border-orange-100 pb-4">
@@ -1166,6 +1216,7 @@ const App: React.FC = () => {
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <button
+                ref={recordConsentPrimaryButtonRef}
                 type="button"
                 onClick={handleRecordAndGenerate}
                 className="flex h-14 items-center justify-center rounded-2xl bg-orange-500 px-4 text-base font-black text-white shadow-md transition-all hover:bg-orange-600 active:scale-95"
@@ -1670,6 +1721,7 @@ const App: React.FC = () => {
               onDrawingMetricsChange={setDrawingMetrics}
               guideState={canvasGuideState}
               isGenerating={isGenerating}
+              isInteractionBlocked={isRecordConsentOpen}
               generationStageLabel={progressLabel}
               generationLyrics={lyrics}
               generationDisabled={!appFeatures.gemini || !appFeatures.voicevox}

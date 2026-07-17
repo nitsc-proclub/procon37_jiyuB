@@ -22,7 +22,6 @@ const CompletionDoor: React.FC<CompletionDoorProps> = ({ state, onOpen }) => {
     <div
       className="absolute inset-0 z-40 overflow-hidden rounded-2xl bg-yellow-50"
       role="dialog"
-      aria-modal="true"
       aria-label="うたの扉"
       onKeyDown={(event) => {
         if (event.key !== "Tab") return;
