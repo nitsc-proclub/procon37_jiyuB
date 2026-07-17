@@ -345,7 +345,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const handleClear = () => {
-    if (!isCanvasLocked) setIsClearConfirmOpen(true);
+    if (!isGenerating) setIsClearConfirmOpen(true);
   };
 
   const handleUndo = () => {
@@ -446,7 +446,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [generationDisabled, isCanvasLocked, isClearConfirmOpen, isFocusMode, undoneStrokes]);
+  }, [generationDisabled, isCanvasLocked, isClearConfirmOpen, isFocusMode, isGenerating, undoneStrokes]);
 
   useEffect(() => {
     if (!isPlaybackActive) return;
@@ -533,7 +533,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
         {isFocusMode ? (
           <div className="mt-3 flex w-full max-w-xl flex-wrap justify-center gap-2">
-            <button type="button" onClick={handleClear} disabled={isCanvasLocked} className="flex h-14 min-w-[7.5rem] flex-1 items-center justify-center rounded-2xl bg-slate-200 px-3 font-black text-slate-800 shadow-md disabled:opacity-50">ぜんぶ消す</button>
+            <button type="button" onClick={handleClear} disabled={isGenerating} className="flex h-14 min-w-[7.5rem] flex-1 items-center justify-center rounded-2xl bg-slate-200 px-3 font-black text-slate-800 shadow-md disabled:opacity-50">ぜんぶ消す</button>
             {undoButton}{redoButton}
           </div>
         ) : (
@@ -549,7 +549,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
               </div>
             )}
             <div className="paint-toolbar flex w-full max-w-full flex-wrap gap-2 sm:gap-3">
-              <button type="button" onClick={handleClear} disabled={isCanvasLocked} className="flex h-14 min-w-[7.25rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-slate-200 px-3 text-base font-bold text-slate-700 shadow-md transition-all hover:bg-slate-300 disabled:opacity-50 active:scale-95">ぜんぶ消す</button>
+              <button type="button" onClick={handleClear} disabled={isGenerating} className="flex h-14 min-w-[7.25rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-slate-200 px-3 text-base font-bold text-slate-700 shadow-md transition-all hover:bg-slate-300 disabled:opacity-50 active:scale-95">ぜんぶ消す</button>
               {undoButton}{redoButton}
               <button type="button" onClick={handleGenerate} disabled={strokes.length === 0 || isCanvasLocked || generationDisabled} className="flex h-14 w-full min-w-[8rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-yellow-400 px-3 text-base font-black text-slate-900 shadow-md transition-all hover:bg-yellow-500 disabled:bg-slate-300 disabled:text-slate-500 disabled:opacity-70 active:scale-95 sm:w-auto" title={generationDisabled ? generationDisabledMessage : "歌をつくる! (Ctrl+S / Cmd+S)"}>
                 {generationDisabled ? "生成は準備中" : "歌をつくる！"}

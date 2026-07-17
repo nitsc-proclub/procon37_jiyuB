@@ -1,11 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { LyricsResponse, SingingScore } from "../types";
-
-type KaraokeLineTiming = {
-    lineIndex: number;
-    startFrame: number;
-    endFrame: number;
-};
+import { buildLineTimings, findActiveLineTiming, getLineStartTimeSeconds, getPlaybackTimelinePosition } from "../utils/playbackTiming";
 
 interface KaraokeLyricsPanelProps {
     lyrics: LyricsResponse;
@@ -15,60 +10,6 @@ interface KaraokeLyricsPanelProps {
     title?: string;
     showKanaLines?: boolean;
 }
-
-const getLeadingRestFrames = (score: SingingScore) => {
-    const firstNote = score.notes[0];
-    return firstNote?.key === null && firstNote.lyric === "" ? firstNote.frame_length : 0;
-};
-
-const buildLineTimings = (score: SingingScore | null | undefined, lineCount: number) => {
-    if (!score || lineCount <= 0) {
-        return [];
-    }
-
-    const totalFrames = score.notes.reduce((sum, note) => sum + note.frame_length, 0);
-    const leadingRestFrames = getLeadingRestFrames(score);
-    const phraseFrameLength = (totalFrames - leadingRestFrames) / lineCount;
-
-    if (totalFrames <= 0 || phraseFrameLength <= 0) {
-        return [];
-    }
-
-    return Array.from({ length: lineCount }, (_, lineIndex) => ({
-        lineIndex,
-        startFrame: leadingRestFrames + phraseFrameLength * lineIndex,
-        endFrame: leadingRestFrames + phraseFrameLength * (lineIndex + 1),
-    }));
-};
-
-const getCurrentFrame = (audio: HTMLAudioElement | null, score: SingingScore | null | undefined, lineCount: number) => {
-    if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) {
-        return 0;
-    }
-
-    if (score) {
-        const totalFrames = score.notes.reduce((sum, note) => sum + note.frame_length, 0);
-
-        if (totalFrames > 0) {
-            return (audio.currentTime / audio.duration) * totalFrames;
-        }
-    }
-
-    return (audio.currentTime / audio.duration) * lineCount;
-};
-
-const findCurrentLineIndex = (lineTimings: KaraokeLineTiming[], currentFrame: number) => {
-    if (lineTimings.length === 0) {
-        return -1;
-    }
-
-    const activeTiming =
-        lineTimings.find((timing) => currentFrame >= timing.startFrame && currentFrame < timing.endFrame) ??
-        lineTimings.at(-1) ??
-        null;
-
-    return activeTiming?.lineIndex ?? -1;
-};
 
 const splitTextSegments = (value: string) => {
     if (typeof Intl !== "undefined" && typeof Intl.Segmenter !== "undefined") {
@@ -163,8 +104,8 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
     }, [audioRef]);
 
     const { activeLineIndex, activeLineProgress } = useMemo(() => {
-        const currentFrame = getCurrentFrame(audioRef?.current ?? null, singingScore, lineCount);
-        const activeLineIndexValue = findCurrentLineIndex(lineTimings, currentFrame);
+        const currentFrame = getPlaybackTimelinePosition(audioRef?.current ?? null, singingScore, lineCount);
+        const activeLineIndexValue = findActiveLineTiming(lineTimings, currentFrame)?.lineIndex ?? -1;
         const activeTiming = lineTimings[activeLineIndexValue];
 
         if (!activeTiming) {
@@ -180,9 +121,30 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
         };
     }, [audioRef, lineCount, lineTimings, renderTick, singingScore]);
 
+    const playFromLine = (lineIndex: number) => {
+        const audio = audioRef?.current;
+        const timing = lineTimings[lineIndex];
+        if (!audio || !timing) return;
+
+        const startTime = getLineStartTimeSeconds(timing, audio.duration, singingScore, lineCount);
+        if (startTime === null) return;
+        audio.currentTime = startTime;
+        setRenderTick((current) => current + 1);
+        void audio.play().catch((playError) => {
+            // A synthetic click can be rejected by autoplay policy. Seeking is
+            // still useful on its own, so preserve the child's selected line.
+            audio.currentTime = startTime;
+            setRenderTick((current) => current + 1);
+            if (import.meta.env.DEV) console.error("Failed to play selected lyric line", playError);
+        });
+    };
+
     return (
         <div className={className}>
             {title && <p className="mb-3 text-sm font-black text-gray-600">{title}</p>}
+            <p className="sr-only" aria-live="polite" aria-atomic="true">
+                {activeLineIndex >= 0 ? `再生中：${lyrics.lines[activeLineIndex]}` : ""}
+            </p>
             <div className="space-y-3 text-center">
                 {lyrics.lines.map((line, index) => {
                     const isActive = index === activeLineIndex;
@@ -200,11 +162,15 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
                             : 0;
 
                     return (
-                        <div
+                        <button
+                            type="button"
                             key={`${line}-${index}`}
-                            className={`rounded-2xl border-2 px-4 py-3 transition-all duration-300 ${lineStyle}`}
+                            onClick={() => playFromLine(index)}
+                            aria-pressed={isActive}
+                            aria-label={`${line}から聞く`}
+                            className={`min-h-11 w-full rounded-2xl border-2 px-4 py-3 transition-all duration-300 focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-300 ${lineStyle}`}
                         >
-                            <p className={`text-xl font-bold leading-relaxed md:text-2xl ${isActive ? "tracking-wide" : ""}`}>
+                            <span className={`block text-xl font-bold leading-relaxed md:text-2xl ${isActive ? "tracking-wide" : ""}`}>
                                 {lineSegments.map((segment, segmentIndex) => {
                                     const isHighlighted = segmentIndex < activeSegmentCount;
                                     const isTail = segmentIndex === activeSegmentCount && isActive && activeLineProgress > 0 && activeLineProgress < 1;
@@ -219,13 +185,8 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
                                         </span>
                                     );
                                 })}
-                            </p>
-                            {lyrics.lineStrokeMappings?.[index] && (
-                                <p className={`mt-2 text-[11px] font-black ${isActive ? "text-orange-500" : "text-gray-400"}`}>
-                                    strokes: {lyrics.lineStrokeMappings[index].strokeGroupIds.join(", ") || "none"}
-                                </p>
-                            )}
-                        </div>
+                            </span>
+                        </button>
                     );
                 })}
             </div>

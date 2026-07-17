@@ -15,6 +15,20 @@ import { DemoRecordSummary, DrawingData, LyricsResponse, SingingScore } from "./
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
 
+const fetchSeekableAudioUrl = async (audioUrl: string) => {
+  const response = await fetch(audioUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to load demo audio (${response.status})`);
+  }
+
+  const audioBlob = await response.blob();
+  if (audioBlob.size === 0) {
+    throw new Error("Demo audio was empty");
+  }
+
+  return URL.createObjectURL(audioBlob);
+};
+
 type AppView = "maker" | "demoRecords" | "melodyExperiment" | "print";
 type DemoBrowseMode = "drawings" | "songs";
 type GenerationRecordOptions = {
@@ -221,7 +235,6 @@ const App: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [shouldAutoplay, setShouldAutoplay] = useState(false);
-  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
   const [participantAge, setParticipantAge] = useState<number | null>(null);
@@ -391,7 +404,6 @@ const App: React.FC = () => {
       ) {
         event.preventDefault();
         audioRef.current?.pause();
-        setIsAudioPlaying(false);
         setAppView("print");
         return;
       }
@@ -444,7 +456,6 @@ const App: React.FC = () => {
 
     audioUrlRef.current = nextUrl;
     setAudioUrl(nextUrl);
-    setIsAudioPlaying(false);
   };
 
   const replaceExperimentAudioUrl = (nextUrl: string | null) => {
@@ -463,7 +474,6 @@ const App: React.FC = () => {
 
     audioRef.current.pause();
     audioRef.current.currentTime = 0;
-    setIsAudioPlaying(false);
   };
 
   const stopExperimentAudioPlayback = () => {
@@ -479,7 +489,6 @@ const App: React.FC = () => {
     stopAudioPlayback();
     replaceAudioUrl(null);
     setShouldAutoplay(false);
-    setIsAudioPlaying(false);
   };
 
   const handleSelectDemoRecord = async (recordId: string) => {
@@ -488,8 +497,20 @@ const App: React.FC = () => {
 
     try {
       const demoRecord = await getDemoRecord(recordId);
+      let nextAudioUrl = demoRecord.audioUrl;
+
+      if (demoRecord.audioUrl) {
+        try {
+          nextAudioUrl = await fetchSeekableAudioUrl(demoRecord.audioUrl);
+        } catch (audioLoadError) {
+          if (import.meta.env.DEV) {
+            console.warn("Failed to prepare seekable demo audio; using the original URL", audioLoadError);
+          }
+        }
+      }
+
       stopAudioPlayback();
-      replaceAudioUrl(demoRecord.audioUrl);
+      replaceAudioUrl(nextAudioUrl);
       setShouldAutoplay(false);
       setLyrics(demoRecord.lyrics);
       setError(null);
@@ -1575,7 +1596,7 @@ const App: React.FC = () => {
               playbackLineStrokeMappings={lyrics?.lineStrokeMappings}
               playbackScore={playbackScore}
               playbackLyricLineCount={playbackLyricLineCount}
-              isPlaybackActive={isAudioPlaying}
+              isPlaybackActive={!!lyrics && !!playbackDrawing && !isGenerating}
             />
 
           </section>
@@ -1676,12 +1697,8 @@ const App: React.FC = () => {
                         controls
                         className="w-full"
                         onPlay={() => {
-                          setIsAudioPlaying(true);
                           setHasPlayedGeneratedAudio(true);
                         }}
-                        onPause={() => setIsAudioPlaying(false)}
-                        onEnded={() => setIsAudioPlaying(false)}
-                        onEmptied={() => setIsAudioPlaying(false)}
                       />
                     </div>
 
