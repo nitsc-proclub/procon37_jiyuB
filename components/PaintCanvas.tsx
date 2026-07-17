@@ -571,7 +571,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
               </button>
             </div>
             {guideState === "generate" && (
-              <div className="w-full rounded-2xl border-2 border-yellow-300 bg-white/95 px-4 py-3 text-center font-black text-amber-800 shadow-lg" role="status" aria-live="polite">
+              <div className="w-full px-4 py-1 text-center font-black text-amber-800" role="status" aria-live="polite">
                 絵ができたね！ つぎは「歌をつくる！」を押してみよう <span aria-hidden="true">↓</span>
               </div>
             )}

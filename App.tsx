@@ -768,21 +768,20 @@ const App: React.FC = () => {
       generatedLyrics = await generateEkakiUta(groupedDrawingData);
       setLyrics(generatedLyrics);
 
-      updateProgress("ことばのリズムを整えているよ");
       const accentLineHints = await analyzeLyricsAccents(generatedLyrics);
 
-      updateProgress("メロディーを組み立てているよ");
       const seed = createSingingSeed(generatedLyrics, 0);
       generatedScore = buildSingingScore(generatedLyrics, seed, accentLineHints);
       setPlaybackScore(generatedScore);
 
+      updateProgress("歌声に魔法をかけているよ");
       generatedAudioBlob = await synthesizeSingingVoice(generatedScore, handleVoicevoxProgress);
       updateProgress("歌声に魔法をかけているよ");
 
       const nextAudioUrl = URL.createObjectURL(generatedAudioBlob);
       stopAudioPlayback();
       replaceAudioUrl(nextAudioUrl);
-      await finishProgress("完成しました");
+      await finishProgress("歌声に魔法をかけているよ");
     } catch (generationError) {
       generationErrorMessage =
         generationError instanceof Error ? generationError.message : "歌の生成に失敗しました。";
@@ -1730,11 +1729,6 @@ const App: React.FC = () => {
                     />
 
                     <div className="mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5">
-                      {shouldGuidePlayback && (
-                        <div className="mb-4 rounded-2xl border-2 border-violet-200 bg-white px-4 py-3 text-center font-black text-violet-800 shadow-sm" role="status" aria-live="polite">
-                          歌ができたよ！ ここから聞いてみよう <span aria-hidden="true">↓</span>
-                        </div>
-                      )}
                       <div className="mb-4 flex justify-end">
                         <div className="flex rounded-full bg-white p-1 shadow-sm">
                           <button
@@ -1768,6 +1762,11 @@ const App: React.FC = () => {
                         onEnded={() => setIsAudioPlaying(false)}
                         onEmptied={() => setIsAudioPlaying(false)}
                       />
+                      {shouldGuidePlayback && (
+                        <p className="mt-3 text-center font-black text-violet-800" role="status" aria-live="polite">
+                          <span aria-hidden="true">↑</span> 歌ができたよ！ ここから聞いてみよう
+                        </p>
+                      )}
                     </div>
 
                     {lyrics.modelName && (

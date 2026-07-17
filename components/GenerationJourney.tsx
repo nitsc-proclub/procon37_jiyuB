@@ -10,8 +10,6 @@ type GenerationJourneyProps = {
 
 const JOURNEY_STEPS = [
   "絵をじっくり見ているよ",
-  "ことばのリズムを整えているよ",
-  "メロディーを組み立てているよ",
   "歌声に魔法をかけているよ",
 ];
 
@@ -103,10 +101,10 @@ const TransformationCanvas: React.FC<{ drawingData: DrawingData }> = ({ drawingD
     let frameId = 0;
     const startedAt = performance.now();
     const drawDuration = Math.min(7000, Math.max(2800, drawingData.strokes.length * 240));
+    const completedHoldDuration = 650;
     const drawFrame = (now: number) => {
-      const elapsed = now - startedAt;
-      draw(Math.min(1, elapsed / drawDuration));
-      if (elapsed >= drawDuration) return;
+      const cycleElapsed = (now - startedAt) % (drawDuration + completedHoldDuration);
+      draw(cycleElapsed >= drawDuration ? 1 : cycleElapsed / drawDuration);
       frameId = window.requestAnimationFrame(drawFrame);
     };
     frameId = window.requestAnimationFrame(drawFrame);
