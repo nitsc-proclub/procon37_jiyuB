@@ -3,9 +3,6 @@ import PaintCanvas, { DrawingMetrics } from "./components/PaintCanvas";
 import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
-import CompletionDoor, { CompletionDoorState } from "./components/CompletionDoor";
-import DiscoveryMap from "./components/DiscoveryMap";
-import TransformationStorybook from "./components/TransformationStorybook";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
 import { deleteDemoRecord, getDemoRecord, listDemoRecords, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
@@ -34,12 +31,6 @@ const fetchSeekableAudioUrl = async (audioUrl: string) => {
 
 type AppView = "maker" | "demoRecords" | "melodyExperiment" | "print";
 type DemoBrowseMode = "drawings" | "songs";
-type ResultExperienceMode = "song" | "discover" | "storybook";
-const RESULT_EXPERIENCE_TABS: ReadonlyArray<{ mode: ResultExperienceMode; label: string }> = [
-  { mode: "song", label: "♪ うた" },
-  { mode: "discover", label: "🔎 発見" },
-  { mode: "storybook", label: "📖 絵本" },
-];
 type GenerationRecordOptions = {
   shouldRecord: boolean;
   participantAge: number | null;
@@ -243,8 +234,6 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [completionDoorState, setCompletionDoorState] = useState<CompletionDoorState>("open");
-  const [resultExperienceMode, setResultExperienceMode] = useState<ResultExperienceMode>("song");
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
   const [participantAge, setParticipantAge] = useState<number | null>(null);
@@ -281,14 +270,12 @@ const App: React.FC = () => {
     drawingDurationMs: 0,
   });
   const [hasPlayedGeneratedAudio, setHasPlayedGeneratedAudio] = useState(false);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const completionHeadingRef = useRef<HTMLHeadingElement>(null);
-  const completionContentRef = useRef<HTMLDivElement>(null);
   const recordConsentDialogRef = useRef<HTMLElement>(null);
   const recordConsentPrimaryButtonRef = useRef<HTMLButtonElement>(null);
-  const resultTabRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const completionDoorTimerRef = useRef<number | null>(null);
   const generationRunRef = useRef(false);
   const audioUrlRef = useRef<string | null>(null);
   const experimentAudioRef = useRef<HTMLAudioElement>(null);
@@ -306,26 +293,28 @@ const App: React.FC = () => {
     };
   }, []);
 
-  useEffect(() => () => {
-    if (completionDoorTimerRef.current !== null) window.clearTimeout(completionDoorTimerRef.current);
-  }, []);
-
   useEffect(() => {
-    if (completionContentRef.current) completionContentRef.current.inert = completionDoorState !== "open";
-  }, [completionDoorState, isGenerating, lyrics]);
-
-  useEffect(() => {
-    if (completionDoorState !== "open" || isGenerating || !lyrics) return;
+    if (isGenerating || !lyrics) return;
 
     const frameId = window.requestAnimationFrame(() => completionHeadingRef.current?.focus());
     return () => window.cancelAnimationFrame(frameId);
-  }, [completionDoorState, isGenerating, lyrics]);
+  }, [isGenerating, lyrics]);
 
   useEffect(() => {
     if (!isRecordConsentOpen) return;
     const frameId = window.requestAnimationFrame(() => recordConsentPrimaryButtonRef.current?.focus());
     return () => window.cancelAnimationFrame(frameId);
   }, [isRecordConsentOpen]);
+
+  useEffect(() => {
+    if (appView !== "maker" || !audioUrl) return;
+    const makerAudio = audioRef.current;
+
+    return () => {
+      makerAudio?.pause();
+      setIsAudioPlaying(false);
+    };
+  }, [appView, audioUrl]);
 
   useEffect(() => {
     if (!saveToast) {
@@ -433,8 +422,7 @@ const App: React.FC = () => {
         appView === "maker" &&
         lyrics &&
         (selectedDemoDrawing || generatedDrawing) &&
-        !isGenerating &&
-        completionDoorState === "open"
+        !isGenerating
       ) {
         event.preventDefault();
         audioRef.current?.pause();
@@ -482,7 +470,6 @@ const App: React.FC = () => {
     loadDemoRecords,
     lyrics,
     selectedDemoDrawing,
-    completionDoorState,
   ]);
 
   const replaceAudioUrl = (nextUrl: string | null) => {
@@ -504,6 +491,7 @@ const App: React.FC = () => {
   };
 
   const stopAudioPlayback = () => {
+    setIsAudioPlaying(false);
     if (!audioRef.current) {
       return;
     }
@@ -522,13 +510,8 @@ const App: React.FC = () => {
   };
 
   const resetAudioState = () => {
-    if (completionDoorTimerRef.current !== null) {
-      window.clearTimeout(completionDoorTimerRef.current);
-      completionDoorTimerRef.current = null;
-    }
     stopAudioPlayback();
     replaceAudioUrl(null);
-    setCompletionDoorState("open");
   };
 
   const handleSelectDemoRecord = async (recordId: string) => {
@@ -551,8 +534,6 @@ const App: React.FC = () => {
 
       stopAudioPlayback();
       replaceAudioUrl(nextAudioUrl);
-      setCompletionDoorState("open");
-      setResultExperienceMode("song");
       setLyrics(demoRecord.lyrics);
       setError(null);
       setProgressLabel("準備中...");
@@ -778,7 +759,6 @@ const App: React.FC = () => {
     setGeneratedDrawing(groupedDrawingData);
     setPlaybackScore(null);
     setDrawingDisplayMode("animated");
-    setResultExperienceMode("song");
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
     startProgress("絵をじっくり見ているよ");
@@ -802,8 +782,6 @@ const App: React.FC = () => {
       const nextAudioUrl = URL.createObjectURL(generatedAudioBlob);
       stopAudioPlayback();
       replaceAudioUrl(nextAudioUrl);
-      setCompletionDoorState("ready");
-
       await finishProgress("完成しました");
     } catch (generationError) {
       generationErrorMessage =
@@ -885,7 +863,6 @@ const App: React.FC = () => {
   };
 
   const handleClear = () => {
-    setResultExperienceMode("song");
     setLyrics(null);
     setError(null);
     setSaveToast(null);
@@ -893,6 +870,16 @@ const App: React.FC = () => {
     setSelectedDemoDrawing(null);
     setSelectedDemoRecordId(null);
     setGeneratedDrawing(null);
+    setPlaybackScore(null);
+    resetAudioState();
+    setHasPlayedGeneratedAudio(false);
+  };
+
+  const handleDrawingEditStart = () => {
+    if (!lyrics) return;
+    setLyrics(null);
+    setError(null);
+    setSelectedDemoRecordId(null);
     setPlaybackScore(null);
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
@@ -920,11 +907,6 @@ const App: React.FC = () => {
         ? "draw"
         : null;
   const shouldGuidePlayback = !!lyrics && !!audioUrl && !error && !isGenerating && !hasPlayedGeneratedAudio;
-
-  const finishOpeningCompletionDoor = () => {
-    completionDoorTimerRef.current = null;
-    setCompletionDoorState("open");
-  };
 
   const handleRecordConsentKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
@@ -955,65 +937,8 @@ const App: React.FC = () => {
     }
   };
 
-  const handleOpenCompletionDoor = () => {
-    if (completionDoorState !== "ready") return;
-
-    const audio = audioRef.current;
-    if (audio && audioUrl) {
-      audio.currentTime = 0;
-      void audio.play().catch((playError) => {
-        if (import.meta.env.DEV) console.error("Failed to play singing voice when opening the door", playError);
-      });
-    }
-
-    setCompletionDoorState("opening");
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      finishOpeningCompletionDoor();
-      return;
-    }
-
-    completionDoorTimerRef.current = window.setTimeout(finishOpeningCompletionDoor, 420);
-  };
-
-  const handleResetCompletionDoor = () => {
-    const audio = audioRef.current;
-    audio?.pause();
-    if (audio) audio.currentTime = 0;
-    setHasPlayedGeneratedAudio(false);
-    setCompletionDoorState("ready");
-  };
-
-  const handleReturnToSong = (playFromStart: boolean) => {
-    const audio = audioRef.current;
-    if (playFromStart && audio) {
-      audio.currentTime = 0;
-      void audio.play().catch((playError) => {
-        if (import.meta.env.DEV) console.error("Failed to restart story song", playError);
-      });
-    }
-    setResultExperienceMode("song");
-  };
-
-  const changeResultExperienceMode = (mode: ResultExperienceMode) => {
-    if (mode !== "song") audioRef.current?.pause();
-    setResultExperienceMode(mode);
-  };
-
-  const handleResultTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % RESULT_EXPERIENCE_TABS.length;
-    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + RESULT_EXPERIENCE_TABS.length) % RESULT_EXPERIENCE_TABS.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = RESULT_EXPERIENCE_TABS.length - 1;
-    if (nextIndex === null) return;
-
-    event.preventDefault();
-    changeResultExperienceMode(RESULT_EXPERIENCE_TABS[nextIndex].mode);
-    resultTabRefs.current[nextIndex]?.focus();
-  };
-
   const handleStartPrint = () => {
-    if (!canShowPrintLayout || completionDoorState !== "open") {
+    if (!canShowPrintLayout) {
       return;
     }
 
@@ -1718,6 +1643,7 @@ const App: React.FC = () => {
             <PaintCanvas
               onComplete={handleComplete}
               onClear={handleClear}
+              onEditStart={handleDrawingEditStart}
               onDrawingMetricsChange={setDrawingMetrics}
               guideState={canvasGuideState}
               isGenerating={isGenerating}
@@ -1734,7 +1660,7 @@ const App: React.FC = () => {
               playbackLineStrokeMappings={lyrics?.lineStrokeMappings}
               playbackScore={playbackScore}
               playbackLyricLineCount={playbackLyricLineCount}
-              isPlaybackActive={!!lyrics && !!playbackDrawing && !isGenerating}
+              isPlaybackActive={!!lyrics && !!playbackDrawing && !isGenerating && isAudioPlaying}
             />
 
           </section>
@@ -1753,11 +1679,6 @@ const App: React.FC = () => {
                   </div>
                 ) : lyrics ? (
                   <>
-                    <div
-                      ref={completionContentRef}
-                      className="contents"
-                      aria-hidden={completionDoorState !== "open" ? true : undefined}
-                    >
                     <button
                       type="button"
                       onClick={handleStartPrint}
@@ -1800,28 +1721,6 @@ const App: React.FC = () => {
                       )}
                     </div>
 
-                    <div className="mb-5 grid grid-cols-3 gap-2" role="tablist" aria-label="完成作品の楽しみ方">
-                      {RESULT_EXPERIENCE_TABS.map(({ mode, label }, index) => (
-                        <button
-                          key={mode}
-                          ref={(node) => { resultTabRefs.current[index] = node; }}
-                          id={`result-${mode}-tab`}
-                          type="button"
-                          role="tab"
-                          aria-selected={resultExperienceMode === mode}
-                          aria-controls={`result-${mode}-panel`}
-                          tabIndex={resultExperienceMode === mode ? 0 : -1}
-                          onClick={() => changeResultExperienceMode(mode)}
-                          onKeyDown={(event) => handleResultTabKeyDown(event, index)}
-                          className={`min-h-11 rounded-2xl border-2 px-2 py-2 text-sm font-black transition focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-300 ${resultExperienceMode === mode ? "border-orange-500 bg-orange-500 text-white shadow-md" : "border-orange-100 bg-white text-slate-600"}`}
-                        >
-                          {resultExperienceMode === mode && <span className="mr-1" aria-hidden="true">●</span>}{label}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div id="result-song-panel" role="tabpanel" aria-labelledby="result-song-tab" hidden={resultExperienceMode !== "song"}>
-
                     <KaraokeLyricsPanel
                       lyrics={lyrics}
                       audioRef={audioRef}
@@ -1863,30 +1762,12 @@ const App: React.FC = () => {
                         className="w-full"
                         onPlay={() => {
                           setHasPlayedGeneratedAudio(true);
+                          setIsAudioPlaying(true);
                         }}
+                        onPause={() => setIsAudioPlaying(false)}
+                        onEnded={() => setIsAudioPlaying(false)}
+                        onEmptied={() => setIsAudioPlaying(false)}
                       />
-                      {completionDoorState === "open" && !selectedDemoRecordId && (
-                        <button
-                          type="button"
-                          onClick={handleResetCompletionDoor}
-                          className="mt-3 min-h-11 rounded-full border-2 border-orange-200 bg-white px-4 py-2 text-sm font-black text-orange-700 transition hover:bg-orange-50 focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-300"
-                        >
-                          とびらを もういちど
-                        </button>
-                      )}
-                    </div>
-                    </div>
-
-                    <div id="result-discover-panel" role="tabpanel" aria-labelledby="result-discover-tab" hidden={resultExperienceMode !== "discover"}>
-                      {playbackDrawing && (
-                        <DiscoveryMap drawingData={playbackDrawing} lyrics={lyrics} audioRef={audioRef} singingScore={playbackScore} />
-                      )}
-                    </div>
-
-                    <div id="result-storybook-panel" role="tabpanel" aria-labelledby="result-storybook-tab" hidden={resultExperienceMode !== "storybook"}>
-                      {playbackDrawing && (
-                        <TransformationStorybook drawingData={playbackDrawing} lyrics={lyrics} singingScore={playbackScore} onReturnToSong={handleReturnToSong} />
-                      )}
                     </div>
 
                     {lyrics.modelName && (
@@ -1894,8 +1775,6 @@ const App: React.FC = () => {
                         model: {lyrics.modelName}
                       </p>
                     )}
-                    </div>
-                    <CompletionDoor state={completionDoorState} onOpen={handleOpenCompletionDoor} />
                   </>
                 ) : null}
               </div>

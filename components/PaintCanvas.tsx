@@ -12,6 +12,7 @@ export type DrawingMetrics = {
 interface PaintCanvasProps {
   onComplete: (data: DrawingData) => void;
   onClear: () => void;
+  onEditStart?: () => void;
   onDrawingMetricsChange?: (metrics: DrawingMetrics) => void;
   guideState?: "draw" | "generate" | null;
   isGenerating: boolean;
@@ -63,6 +64,7 @@ const inferLegacySourceSize = (strokes: Stroke[]) => {
 const PaintCanvas: React.FC<PaintCanvasProps> = ({
   onComplete,
   onClear,
+  onEditStart,
   onDrawingMetricsChange,
   guideState = null,
   isGenerating,
@@ -88,6 +90,8 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const focusExitRef = useRef<HTMLButtonElement>(null);
   const clearDialogRef = useRef<HTMLDivElement>(null);
   const clearConfirmButtonRef = useRef<HTMLButtonElement>(null);
+  const clearTriggerButtonRef = useRef<HTMLButtonElement>(null);
+  const wasClearConfirmOpenRef = useRef(false);
   const generationButtonRef = useRef<HTMLButtonElement>(null);
   const wasInteractionBlockedRef = useRef(false);
   const strokesRef = useRef<Stroke[]>([]);
@@ -244,7 +248,11 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
   useEffect(() => {
     if (isClearConfirmOpen) {
+      wasClearConfirmOpenRef.current = true;
       window.requestAnimationFrame(() => clearConfirmButtonRef.current?.focus());
+    } else if (wasClearConfirmOpenRef.current) {
+      wasClearConfirmOpenRef.current = false;
+      window.requestAnimationFrame(() => clearTriggerButtonRef.current?.focus());
     }
   }, [isClearConfirmOpen]);
 
@@ -288,6 +296,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
   const startDrawing = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (isCanvasLocked || event.button !== 0 || activePointerIdRef.current !== null) return;
+    onEditStart?.();
     event.preventDefault();
     shouldUseBaseImageRef.current = false;
     activePointerIdRef.current = event.pointerId;
@@ -354,6 +363,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
   const handleUndo = () => {
     if (isCanvasLocked || strokesRef.current.length === 0) return;
+    onEditStart?.();
     shouldUseBaseImageRef.current = false;
     const undone = strokesRef.current.at(-1)!;
     commitStrokes(strokesRef.current.slice(0, -1));
@@ -362,6 +372,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
   const handleRedo = () => {
     if (isCanvasLocked || undoneStrokes.length === 0) return;
+    onEditStart?.();
     shouldUseBaseImageRef.current = false;
     commitStrokes([...strokesRef.current, undoneStrokes[0]]);
     setUndoneStrokes((current) => current.slice(1));
@@ -450,7 +461,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [generationDisabled, isCanvasLocked, isClearConfirmOpen, isFocusMode, isGenerating, undoneStrokes]);
+  }, [generationDisabled, isCanvasLocked, isClearConfirmOpen, isFocusMode, isGenerating, onEditStart, undoneStrokes]);
 
   useEffect(() => {
     if (!isPlaybackActive) return;
@@ -496,20 +507,19 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     <>
       <div
         ref={focusSurfaceRef}
-        className={isFocusMode ? "fixed inset-0 z-[100] flex min-h-0 w-full flex-col items-center overflow-auto bg-slate-950 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]" : "relative flex w-full max-w-full flex-col items-center gap-4"}
+        className={isFocusMode ? "fixed inset-0 z-[100] flex min-h-0 w-full flex-col items-center overflow-auto bg-gradient-to-b from-yellow-50 via-orange-50 to-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]" : "relative flex w-full max-w-full flex-col items-center gap-4"}
         role={isFocusMode ? "dialog" : undefined}
         aria-modal={isFocusMode ? true : undefined}
         aria-label={isFocusMode ? "大きく描くモード" : undefined}
       >
         {isFocusMode && (
-          <div className="mb-2 flex w-full max-w-5xl items-center justify-between gap-3 text-white">
-            <p className="min-w-0 text-sm font-black sm:text-lg">✦ 大きなキャンバスで描こう</p>
-            <button ref={focusExitRef} type="button" onClick={exitFocusMode} className="flex h-12 shrink-0 items-center justify-center rounded-2xl bg-white px-5 font-black text-slate-900 shadow-lg transition active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-yellow-300">× もどる</button>
+          <div className="mb-2 flex w-full max-w-5xl items-center justify-center text-slate-800">
+            <p className="text-sm font-black sm:text-lg">✦ 大きなキャンバスで描こう</p>
           </div>
         )}
 
         {!isFocusMode && guideState === "draw" && (
-          <div className="w-full max-w-[42rem] rounded-3xl border-2 border-violet-200 bg-white/95 px-5 py-3 text-center font-black text-violet-800 shadow-lg" role="status" aria-live="polite">
+          <div className="w-full max-w-[42rem] px-5 py-1 text-center font-black text-violet-800" role="status" aria-live="polite">
             <span aria-hidden="true">✨</span> まずは、ここに好きな絵をかいてみよう！
             <div className="mt-1 text-xl leading-none text-violet-500" aria-hidden="true">↓</div>
           </div>
@@ -518,7 +528,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         <div
           ref={canvasContainerRef}
           onContextMenu={(event) => event.preventDefault()}
-          className={`paint-canvas-frame relative aspect-square select-none overflow-hidden bg-white shadow-2xl ${isFocusMode ? "rounded-2xl border-4 border-violet-300" : "w-full max-w-[42rem] rounded-3xl border-8 border-yellow-200"}`}
+          className={`paint-canvas-frame relative aspect-square select-none overflow-hidden bg-white shadow-2xl ${isFocusMode ? "rounded-2xl border-4 border-yellow-300" : "w-full max-w-[42rem] rounded-3xl border-8 border-yellow-200"}`}
           style={isFocusMode ? { width: "min(calc(100vw - 1.5rem), calc(100dvh - 8.75rem))", maxWidth: "64rem" } : undefined}
         >
           <canvas
@@ -543,9 +553,15 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         </div>
 
         {isFocusMode ? (
-          <div className="mt-3 flex w-full max-w-xl flex-wrap justify-center gap-2">
-            <button type="button" onClick={handleClear} disabled={isGenerating || isInteractionBlocked} className="flex h-14 min-w-[7.5rem] flex-1 items-center justify-center rounded-2xl bg-slate-200 px-3 font-black text-slate-800 shadow-md disabled:opacity-50">ぜんぶ消す</button>
-            {undoButton}{redoButton}
+          <div className="mt-3 grid w-full max-w-xl grid-cols-4 gap-2">
+            <button ref={clearTriggerButtonRef} type="button" onClick={handleClear} disabled={isGenerating || isInteractionBlocked} className="flex h-14 min-w-0 items-center justify-center rounded-2xl bg-slate-200 px-1 text-sm font-black text-slate-800 shadow-md disabled:opacity-50 sm:px-3 sm:text-base">ぜんぶ消す</button>
+            <button type="button" onClick={handleUndo} disabled={strokes.length === 0 || isCanvasLocked} className="flex h-14 min-w-0 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white text-slate-700 shadow-md transition hover:bg-slate-50 disabled:opacity-40 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-400" title="戻す" aria-label="ひとつ戻す">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 7 4 12l5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M5 12h9.5a4.5 4.5 0 0 1 0 9H12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+            <button type="button" onClick={handleRedo} disabled={undoneStrokes.length === 0 || isCanvasLocked} className="flex h-14 min-w-0 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white text-slate-700 shadow-md transition hover:bg-slate-50 disabled:opacity-40 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-400" title="進める" aria-label="ひとつ進める">
+              <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m15 7 5 5-5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M19 12H9.5a4.5 4.5 0 0 0 0 9H12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+            <button ref={focusExitRef} type="button" onClick={exitFocusMode} className="flex h-14 min-w-0 items-center justify-center rounded-2xl bg-orange-500 px-1 text-sm font-black text-white shadow-md transition hover:bg-orange-600 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-yellow-300 sm:px-3 sm:text-base">もどる</button>
           </div>
         ) : (
           <>
@@ -560,7 +576,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
               </div>
             )}
             <div className="paint-toolbar flex w-full max-w-full flex-wrap gap-2 sm:gap-3">
-              <button type="button" onClick={handleClear} disabled={isGenerating || isInteractionBlocked} className="flex h-14 min-w-[7.25rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-slate-200 px-3 text-base font-bold text-slate-700 shadow-md transition-all hover:bg-slate-300 disabled:opacity-50 active:scale-95">ぜんぶ消す</button>
+              <button ref={clearTriggerButtonRef} type="button" onClick={handleClear} disabled={isGenerating || isInteractionBlocked} className="flex h-14 min-w-[7.25rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-slate-200 px-3 text-base font-bold text-slate-700 shadow-md transition-all hover:bg-slate-300 disabled:opacity-50 active:scale-95">ぜんぶ消す</button>
               {undoButton}{redoButton}
               <button ref={generationButtonRef} type="button" onClick={handleGenerate} disabled={strokes.length === 0 || isCanvasLocked || generationDisabled} className="flex h-14 w-full min-w-[8rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-yellow-400 px-3 text-base font-black text-slate-900 shadow-md transition-all hover:bg-yellow-500 disabled:bg-slate-300 disabled:text-slate-500 disabled:opacity-70 active:scale-95 sm:w-auto" title={generationDisabled ? generationDisabledMessage : "歌をつくる! (Ctrl+S / Cmd+S)"}>
                 {generationDisabled ? "生成は準備中" : "歌をつくる！"}
