@@ -3,6 +3,7 @@ import PaintCanvas, { DrawingMetrics } from "./components/PaintCanvas";
 import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
+import CompletionDoor, { CompletionDoorState } from "./components/CompletionDoor";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
 import { deleteDemoRecord, getDemoRecord, listDemoRecords, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
@@ -234,7 +235,7 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [shouldAutoplay, setShouldAutoplay] = useState(false);
+  const [completionDoorState, setCompletionDoorState] = useState<CompletionDoorState>("open");
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
   const [participantAge, setParticipantAge] = useState<number | null>(null);
@@ -273,6 +274,9 @@ const App: React.FC = () => {
   const [hasPlayedGeneratedAudio, setHasPlayedGeneratedAudio] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
+  const completionHeadingRef = useRef<HTMLHeadingElement>(null);
+  const completionContentRef = useRef<HTMLDivElement>(null);
+  const completionDoorTimerRef = useRef<number | null>(null);
   const generationRunRef = useRef(false);
   const audioUrlRef = useRef<string | null>(null);
   const experimentAudioRef = useRef<HTMLAudioElement>(null);
@@ -290,19 +294,20 @@ const App: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => () => {
+    if (completionDoorTimerRef.current !== null) window.clearTimeout(completionDoorTimerRef.current);
+  }, []);
+
   useEffect(() => {
-    if (!audioUrl || !shouldAutoplay || !audioRef.current) {
-      return;
-    }
+    if (completionContentRef.current) completionContentRef.current.inert = completionDoorState !== "open";
+  }, [completionDoorState, isGenerating, lyrics]);
 
-    void audioRef.current.play().catch((playError) => {
-      if (import.meta.env.DEV) {
-        console.error("Failed to autoplay generated singing voice", playError);
-      }
-    });
+  useEffect(() => {
+    if (completionDoorState !== "open" || isGenerating || !lyrics) return;
 
-    setShouldAutoplay(false);
-  }, [audioUrl, shouldAutoplay]);
+    const frameId = window.requestAnimationFrame(() => completionHeadingRef.current?.focus());
+    return () => window.cancelAnimationFrame(frameId);
+  }, [completionDoorState, isGenerating, lyrics]);
 
   useEffect(() => {
     if (!saveToast) {
@@ -400,7 +405,8 @@ const App: React.FC = () => {
         appView === "maker" &&
         lyrics &&
         (selectedDemoDrawing || generatedDrawing) &&
-        !isGenerating
+        !isGenerating &&
+        completionDoorState === "open"
       ) {
         event.preventDefault();
         audioRef.current?.pause();
@@ -447,6 +453,7 @@ const App: React.FC = () => {
     loadDemoRecords,
     lyrics,
     selectedDemoDrawing,
+    completionDoorState,
   ]);
 
   const replaceAudioUrl = (nextUrl: string | null) => {
@@ -486,9 +493,13 @@ const App: React.FC = () => {
   };
 
   const resetAudioState = () => {
+    if (completionDoorTimerRef.current !== null) {
+      window.clearTimeout(completionDoorTimerRef.current);
+      completionDoorTimerRef.current = null;
+    }
     stopAudioPlayback();
     replaceAudioUrl(null);
-    setShouldAutoplay(false);
+    setCompletionDoorState("open");
   };
 
   const handleSelectDemoRecord = async (recordId: string) => {
@@ -511,7 +522,7 @@ const App: React.FC = () => {
 
       stopAudioPlayback();
       replaceAudioUrl(nextAudioUrl);
-      setShouldAutoplay(false);
+      setCompletionDoorState("open");
       setLyrics(demoRecord.lyrics);
       setError(null);
       setProgressLabel("準備中...");
@@ -760,7 +771,7 @@ const App: React.FC = () => {
       const nextAudioUrl = URL.createObjectURL(generatedAudioBlob);
       stopAudioPlayback();
       replaceAudioUrl(nextAudioUrl);
-      setShouldAutoplay(true);
+      setCompletionDoorState("ready");
 
       await finishProgress("完成しました");
     } catch (generationError) {
@@ -878,8 +889,41 @@ const App: React.FC = () => {
         : null;
   const shouldGuidePlayback = !!lyrics && !!audioUrl && !error && !isGenerating && !hasPlayedGeneratedAudio;
 
+  const finishOpeningCompletionDoor = () => {
+    completionDoorTimerRef.current = null;
+    setCompletionDoorState("open");
+  };
+
+  const handleOpenCompletionDoor = () => {
+    if (completionDoorState !== "ready") return;
+
+    const audio = audioRef.current;
+    if (audio && audioUrl) {
+      audio.currentTime = 0;
+      void audio.play().catch((playError) => {
+        if (import.meta.env.DEV) console.error("Failed to play singing voice when opening the door", playError);
+      });
+    }
+
+    setCompletionDoorState("opening");
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      finishOpeningCompletionDoor();
+      return;
+    }
+
+    completionDoorTimerRef.current = window.setTimeout(finishOpeningCompletionDoor, 420);
+  };
+
+  const handleResetCompletionDoor = () => {
+    const audio = audioRef.current;
+    audio?.pause();
+    if (audio) audio.currentTime = 0;
+    setHasPlayedGeneratedAudio(false);
+    setCompletionDoorState("ready");
+  };
+
   const handleStartPrint = () => {
-    if (!canShowPrintLayout) {
+    if (!canShowPrintLayout || completionDoorState !== "open") {
       return;
     }
 
@@ -1615,6 +1659,11 @@ const App: React.FC = () => {
                   </div>
                 ) : lyrics ? (
                   <>
+                    <div
+                      ref={completionContentRef}
+                      className="contents"
+                      aria-hidden={completionDoorState !== "open" ? true : undefined}
+                    >
                     <button
                       type="button"
                       onClick={handleStartPrint}
@@ -1651,7 +1700,7 @@ const App: React.FC = () => {
                       <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">
                         {lyrics.identifiedObject}
                       </span>
-                      <h2 className="text-3xl font-bold text-gray-800">{lyrics.title}</h2>
+                      <h2 ref={completionHeadingRef} tabIndex={-1} className="text-3xl font-bold text-gray-800 focus:outline-none">{lyrics.title}</h2>
                       {selectedDemoRecordId && (
                         <p className="mt-2 text-xs font-bold text-gray-400">demo-records から読み込み済み</p>
                       )}
@@ -1700,6 +1749,15 @@ const App: React.FC = () => {
                           setHasPlayedGeneratedAudio(true);
                         }}
                       />
+                      {completionDoorState === "open" && !selectedDemoRecordId && (
+                        <button
+                          type="button"
+                          onClick={handleResetCompletionDoor}
+                          className="mt-3 min-h-11 rounded-full border-2 border-orange-200 bg-white px-4 py-2 text-sm font-black text-orange-700 transition hover:bg-orange-50 focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-300"
+                        >
+                          とびらを もういちど
+                        </button>
+                      )}
                     </div>
 
                     {lyrics.modelName && (
@@ -1707,6 +1765,8 @@ const App: React.FC = () => {
                         model: {lyrics.modelName}
                       </p>
                     )}
+                    </div>
+                    <CompletionDoor state={completionDoorState} onOpen={handleOpenCompletionDoor} />
                   </>
                 ) : null}
               </div>
