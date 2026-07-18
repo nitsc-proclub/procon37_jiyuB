@@ -340,17 +340,12 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
 
     const drawAnimatedPath = (progress: number) => {
       prepareContext();
-      setPathStyle("rgba(51, 65, 85, 0.16)");
-      drawPathData(pathData, 1);
       setPathStyle("#334155");
       drawPathData(pathData, progress);
     };
 
     const drawLineSyncedPath = () => {
       prepareContext();
-
-      setPathStyle("rgba(51, 65, 85, 0.16)");
-      drawPathData(pathData, 1);
 
       const currentFrame = getPlaybackTimelinePosition(audioRef.current, singingScore, lyricLineCount);
       const currentLineTiming = findActiveLineTiming(lineTimings, currentFrame);

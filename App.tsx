@@ -1301,7 +1301,12 @@ const App: React.FC = () => {
                       </div>
                       <div className="p-3">
                         <p className="truncate text-sm font-black text-gray-800">{record.title}</p>
-                        <p className="mt-1 truncate text-xs font-bold text-orange-500">{record.identifiedObject}</p>
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <p className="min-w-0 truncate text-xs font-bold text-orange-500">{record.identifiedObject}</p>
+                          {record.participantAge !== null && (
+                            <span className="shrink-0 text-[10px] font-bold text-gray-400">{record.participantAge}歳</span>
+                          )}
+                        </div>
                         {loadingDemoRecordId === record.recordId && (
                           <p className="mt-2 text-xs font-black text-gray-500">読み込み中...</p>
                         )}
@@ -1388,6 +1393,9 @@ const App: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <span className="min-w-0 truncate text-base font-black text-gray-800">{record.title}</span>
                         {record.isFavorite && <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-black text-orange-500">お気に入り</span>}
+                        {record.participantAge !== null && (
+                          <span className="shrink-0 text-[10px] font-bold text-gray-400">{record.participantAge}歳</span>
+                        )}
                       </div>
                       <span className="mt-1 block text-xs font-bold text-gray-400">
                         {loadingDemoRecordId === record.recordId
