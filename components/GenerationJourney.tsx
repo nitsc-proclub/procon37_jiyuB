@@ -1,10 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { DrawingData, LyricsResponse, Point } from "../types";
+import { DrawingData, Point } from "../types";
 
 type GenerationJourneyProps = {
   stageLabel: string;
   drawingData?: DrawingData | null;
-  lyrics?: LyricsResponse | null;
   compact?: boolean;
 };
 
@@ -114,7 +113,7 @@ const TransformationCanvas: React.FC<{ drawingData: DrawingData }> = ({ drawingD
   return <canvas ref={canvasRef} className="h-full w-full" aria-hidden="true" />;
 };
 
-const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, lyrics, compact = false }) => (
+const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, compact = false }) => (
   <div className={`generation-journey flex h-full flex-col items-center justify-center text-center ${compact ? "min-h-0" : "min-h-[340px]"}`}>
     {compact && <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{stageLabel}</p>}
     {drawingData && compact ? (
@@ -126,15 +125,7 @@ const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawi
           </p>
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white/95 to-transparent px-3 pb-3 pt-10">
-          {lyrics ? (
-            <div className="mx-auto max-w-md rounded-2xl border-2 border-yellow-300 bg-yellow-50/95 px-4 py-3 shadow-md">
-              <p className="text-xs font-black text-orange-700"><span aria-hidden="true">♪ </span>ことばが歌になったよ</p>
-              <p className="mt-1 truncate text-lg font-black text-slate-800">{lyrics.title}</p>
-              <p className="mt-1 line-clamp-2 text-sm font-bold leading-relaxed text-slate-600">{lyrics.lines.filter(Boolean).slice(0, 2).join("　♪　")}</p>
-            </div>
-          ) : (
-            <p className="text-sm font-bold text-slate-600">描いた順に、線が目をさましているよ</p>
-          )}
+          <p className="text-sm font-bold text-slate-600">どんな歌にしようか考えているよ</p>
         </div>
       </div>
     ) : (

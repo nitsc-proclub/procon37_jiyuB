@@ -352,10 +352,6 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
       setPathStyle("rgba(51, 65, 85, 0.16)");
       drawPathData(pathData, 1);
 
-      // Keep the familiar draw-in-order animation while adding the lyric-linked glow.
-      setPathStyle("#334155");
-      drawPathData(pathData, getAudioProgress(audioRef.current, animationEndProgress));
-
       const currentFrame = getPlaybackTimelinePosition(audioRef.current, singingScore, lyricLineCount);
       const currentLineTiming = findActiveLineTiming(lineTimings, currentFrame);
 
@@ -363,12 +359,21 @@ const DrawingPlaybackCanvas: React.FC<DrawingPlaybackCanvasProps> = ({
         return;
       }
 
-      linePathDataItems.forEach((item) => {
-        if (item.lineIndex === currentLineTiming.lineIndex) {
-          setPathStyle("#f97316", 1.75, true);
-          drawPathData(item.pathData, 1);
-        }
-      });
+      setPathStyle("#334155");
+      linePathDataItems
+        .filter((item) => item.lineIndex < currentLineTiming.lineIndex)
+        .forEach((item) => drawPathData(item.pathData, 1));
+
+      const lineDuration = currentLineTiming.endFrame - currentLineTiming.startFrame;
+      const activeLineProgress = lineDuration > 0
+        ? clamp((currentFrame - currentLineTiming.startFrame) / lineDuration, 0, 1)
+        : 0;
+      const activeLinePath = linePathDataItems.find((item) => item.lineIndex === currentLineTiming.lineIndex);
+
+      if (activeLinePath) {
+        setPathStyle("#f97316", 1.35, true);
+        drawPathData(activeLinePath.pathData, activeLineProgress);
+      }
     };
 
     const drawStaticImage = () => {

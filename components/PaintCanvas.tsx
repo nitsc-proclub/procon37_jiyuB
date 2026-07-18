@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import DrawingPlaybackCanvas, { DrawingDisplayMode } from "./DrawingPlaybackCanvas";
 import GenerationJourney from "./GenerationJourney";
-import { DrawingData, LyricsResponse, LyricStrokeMapping, Point, SingingScore, Stroke } from "../types";
+import { DrawingData, LyricStrokeMapping, Point, SingingScore, Stroke } from "../types";
 
 export type DrawingMetrics = {
   strokeCount: number;
@@ -18,7 +18,6 @@ interface PaintCanvasProps {
   isGenerating: boolean;
   isInteractionBlocked?: boolean;
   generationStageLabel?: string;
-  generationLyrics?: LyricsResponse | null;
   generationDisabled?: boolean;
   generationDisabledMessage?: string;
   initialDrawing?: DrawingData | null;
@@ -70,7 +69,6 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   isGenerating,
   isInteractionBlocked = false,
   generationStageLabel = "絵をじっくり見ているよ",
-  generationLyrics,
   generationDisabled = false,
   generationDisabledMessage = "現在、この機能は利用できません",
   initialDrawing,
@@ -519,8 +517,8 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
         )}
 
         {!isFocusMode && guideState === "draw" && (
-          <div className="w-full max-w-[42rem] px-5 py-1 text-center font-black text-violet-800" role="status" aria-live="polite">
-            <span aria-hidden="true">✨</span> まずは、ここに好きな絵をかいてみよう！
+          <div className="pointer-events-none absolute inset-x-0 top-4 z-30 mx-auto w-fit max-w-[calc(100%_-_2rem)] rounded-2xl bg-white/90 px-5 py-3 text-center text-xl font-black text-violet-800 shadow-lg backdrop-blur-sm sm:text-2xl" role="status" aria-live="polite">
+            <span aria-hidden="true">✨</span> ここに好きな絵をかいてみよう！
             <div className="mt-1 text-xl leading-none text-violet-500" aria-hidden="true">↓</div>
           </div>
         )}
@@ -547,7 +545,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           )}
           {isGenerating && (
             <div className="absolute inset-0 z-20 bg-white">
-              <GenerationJourney stageLabel={generationStageLabel} drawingData={playbackDrawing ?? initialDrawing} lyrics={generationLyrics} compact />
+              <GenerationJourney stageLabel={generationStageLabel} drawingData={playbackDrawing ?? initialDrawing} compact />
             </div>
           )}
         </div>
@@ -561,7 +559,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
             <button type="button" onClick={handleRedo} disabled={undoneStrokes.length === 0 || isCanvasLocked} className="flex h-14 min-w-0 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white text-slate-700 shadow-md transition hover:bg-slate-50 disabled:opacity-40 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-400" title="進める" aria-label="ひとつ進める">
               <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m15 7 5 5-5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M19 12H9.5a4.5 4.5 0 0 0 0 9H12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
-            <button ref={focusExitRef} type="button" onClick={exitFocusMode} className="flex h-14 min-w-0 items-center justify-center rounded-2xl bg-orange-500 px-1 text-sm font-black text-white shadow-md transition hover:bg-orange-600 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-yellow-300 sm:px-3 sm:text-base">もどる</button>
+            <button ref={focusExitRef} type="button" onClick={exitFocusMode} className="flex h-14 min-w-0 items-center justify-center rounded-2xl bg-orange-500 px-1 text-sm font-black text-white shadow-md transition hover:bg-orange-600 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-yellow-300 sm:px-3 sm:text-base">できた！</button>
           </div>
         ) : (
           <>

@@ -766,7 +766,6 @@ const App: React.FC = () => {
     try {
       updateProgress("絵をじっくり見ているよ");
       generatedLyrics = await generateEkakiUta(groupedDrawingData);
-      setLyrics(generatedLyrics);
 
       const accentLineHints = await analyzeLyricsAccents(generatedLyrics);
 
@@ -782,6 +781,7 @@ const App: React.FC = () => {
       stopAudioPlayback();
       replaceAudioUrl(nextAudioUrl);
       await finishProgress("歌声に魔法をかけているよ");
+      setLyrics(generatedLyrics);
     } catch (generationError) {
       generationErrorMessage =
         generationError instanceof Error ? generationError.message : "歌の生成に失敗しました。";
@@ -1648,7 +1648,6 @@ const App: React.FC = () => {
               isGenerating={isGenerating}
               isInteractionBlocked={isRecordConsentOpen}
               generationStageLabel={progressLabel}
-              generationLyrics={lyrics}
               generationDisabled={!appFeatures.gemini || !appFeatures.voicevox}
               generationDisabledMessage="AI生成・音声生成は現在準備中です。描画機能はそのまま利用できます。"
               initialDrawing={playbackDrawing}
@@ -1668,7 +1667,7 @@ const App: React.FC = () => {
             {lyrics || isGenerating || error ? (
               <div className="magic-card bg-white p-5 sm:p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
                 {isGenerating ? (
-                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} lyrics={lyrics} />
+                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} />
                 ) : error ? (
                   <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
                     <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>
