@@ -5,7 +5,7 @@ import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
-import { deleteDemoRecord, getDemoRecord, getUsageStats, listDemoRecords, recordExperience, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
+import { deleteDemoRecord, getDemoRecord, getUsageStats, listDemoRecords, recordGeneration, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { groupStrokes } from "./services/strokeGroupingService";
@@ -293,14 +293,9 @@ const App: React.FC = () => {
   const recordConsentDialogRef = useRef<HTMLElement>(null);
   const recordConsentPrimaryButtonRef = useRef<HTMLButtonElement>(null);
   const generationRunRef = useRef(false);
-  const experienceIdRef = useRef<string | null>(null);
   const audioUrlRef = useRef<string | null>(null);
   const experimentAudioRef = useRef<HTMLAudioElement>(null);
   const experimentAudioUrlRef = useRef<string | null>(null);
-
-  if (experienceIdRef.current === null) {
-    experienceIdRef.current = crypto.randomUUID();
-  }
 
   useEffect(() => {
     return () => {
@@ -804,7 +799,7 @@ const App: React.FC = () => {
     setDrawingDisplayMode("animated");
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
-    void recordExperience(recordOptions.shouldRecord, experienceIdRef.current)
+    void recordGeneration(recordOptions.shouldRecord)
       .then(setUsageStats)
       .catch((statsError) => {
         if (import.meta.env.DEV) {
@@ -1185,7 +1180,7 @@ const App: React.FC = () => {
             </div>
 
             <p className="mt-4 rounded-2xl bg-gray-50 px-4 py-3 text-sm font-bold text-gray-600">
-              ※「記録しない」を選んだ場合も、体験人数と日付ごとの生成回数だけは集計します。絵・歌・音声・年齢は保存しません。
+              ※「記録しない」を選んだ場合も、日付ごとの生成回数だけは集計します。絵・歌・音声・年齢は保存しません。
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -1321,7 +1316,7 @@ const App: React.FC = () => {
               <div className="mb-3 flex items-baseline justify-between gap-3">
                 <div>
                   <h3 id="usage-stats-heading" className="text-lg font-black text-slate-800">体験集計</h3>
-                  <p className="text-xs font-semibold text-slate-500">同じページを開いている間の複数生成は、体験人数を1人として数えます。</p>
+                  <p className="text-xs font-semibold text-slate-500">生成を始めた回数を、記録の有無と日付ごとに集計しています。</p>
                 </div>
                 {isDemoRecordsLoading && <span className="text-xs font-bold text-sky-600">更新中...</span>}
               </div>
@@ -1330,11 +1325,7 @@ const App: React.FC = () => {
                 <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{usageStatsError}</p>
               ) : (
                 <>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                    <div className="rounded-xl bg-white p-3 shadow-sm">
-                      <p className="text-xs font-bold text-slate-500">体験人数</p>
-                      <p className="text-2xl font-black text-slate-800">{usageStats?.totalExperiences ?? "-"}</p>
-                    </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <div className="rounded-xl bg-white p-3 shadow-sm">
                       <p className="text-xs font-bold text-slate-500">総生成回数</p>
                       <p className="text-2xl font-black text-slate-800">{usageStats?.totalGenerations ?? "-"}</p>
@@ -1356,7 +1347,7 @@ const App: React.FC = () => {
                       <li>2026/7/10〜7/17：「記録なし」を選んだ生成は集計されていません。</li>
                       <li>2026/7/18以降：「記録あり」「記録なし」の両方を集計しています。</li>
                     </ul>
-                    <p className="mt-2 font-bold">そのため、2026/7/10〜7/17の体験人数・生成回数は、実際より少ない可能性があります。</p>
+                    <p className="mt-2 font-bold">そのため、2026/7/10〜7/17の生成回数は、実際より少ない可能性があります。</p>
                   </div>
 
                   {usageStats && (usageStats.days.length > 0 ? (

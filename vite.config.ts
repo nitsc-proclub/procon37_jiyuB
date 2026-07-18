@@ -10,7 +10,6 @@ const MAX_RECORD_REQUEST_BYTES = 100 * 1024 * 1024;
 const DEFAULT_DEMO_RECORDS_DIR = path.resolve(process.cwd(), "demo-records");
 const USAGE_STATS_FILE_NAME = "usage-stats.json";
 const TOKYO_TIME_ZONE = "Asia/Tokyo";
-const MAX_EXPERIENCE_ID_LENGTH = 128;
 
 const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
   response.statusCode = statusCode;
@@ -129,16 +128,13 @@ type StoredUsageStatsDay = {
 };
 
 type StoredUsageStats = {
-  totalExperiences: number;
   totalGenerations: number;
   recordedGenerations: number;
   unrecordedGenerations: number;
-  /** Opaque page-session IDs used only to prevent double-counting people. */
-  knownExperienceIds: string[];
   days: Record<string, StoredUsageStatsDay>;
 };
 
-type UsageStatsResponse = Omit<StoredUsageStats, "days" | "knownExperienceIds"> & {
+type UsageStatsResponse = Omit<StoredUsageStats, "days"> & {
   days: Array<StoredUsageStatsDay & { date: string }>;
 };
 
@@ -175,17 +171,13 @@ const getTokyoDate = (value: Date) => {
 };
 
 const emptyUsageStats = (): StoredUsageStats => ({
-  totalExperiences: 0,
   totalGenerations: 0,
   recordedGenerations: 0,
   unrecordedGenerations: 0,
-  knownExperienceIds: [],
   days: {},
 });
 
 const isCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-const isExperienceId = (value: unknown): value is string =>
-  typeof value === "string" && value.length > 0 && value.length <= MAX_EXPERIENCE_ID_LENGTH && /^[A-Za-z0-9_-]+$/.test(value);
 
 const parseUsageStats = (value: unknown): StoredUsageStats => {
   if (!value || typeof value !== "object") {
@@ -193,7 +185,7 @@ const parseUsageStats = (value: unknown): StoredUsageStats => {
   }
 
   const candidate = value as Partial<StoredUsageStats>;
-  if (!isCount(candidate.totalExperiences) || !isCount(candidate.totalGenerations) || !isCount(candidate.recordedGenerations) || !isCount(candidate.unrecordedGenerations) || !Array.isArray(candidate.knownExperienceIds) || !candidate.knownExperienceIds.every(isExperienceId) || !candidate.days || typeof candidate.days !== "object") {
+  if (!isCount(candidate.totalGenerations) || !isCount(candidate.recordedGenerations) || !isCount(candidate.unrecordedGenerations) || !candidate.days || typeof candidate.days !== "object") {
     throw new Error("Usage stats file is invalid");
   }
 
@@ -216,11 +208,9 @@ const parseUsageStats = (value: unknown): StoredUsageStats => {
   }
 
   return {
-    totalExperiences: candidate.totalExperiences,
     totalGenerations: candidate.totalGenerations,
     recordedGenerations: candidate.recordedGenerations,
     unrecordedGenerations: candidate.unrecordedGenerations,
-    knownExperienceIds: [...new Set(candidate.knownExperienceIds)],
     days,
   };
 };
@@ -246,10 +236,8 @@ const initializeUsageStats = async (recordsRoot: string) => {
           day.generationCount += 1;
           day.recordedCount += 1;
           stats.days[date] = day;
-          stats.totalExperiences += 1;
           stats.totalGenerations += 1;
           stats.recordedGenerations += 1;
-          stats.knownExperienceIds.push(`legacy-${randomUUID()}`);
         } catch {
           // A broken or partial legacy record must not block stats initialization.
         }
@@ -282,7 +270,6 @@ const readOrInitializeUsageStats = async (recordsRoot: string) => {
 };
 
 const toUsageStatsResponse = (stats: StoredUsageStats): UsageStatsResponse => ({
-  totalExperiences: stats.totalExperiences,
   totalGenerations: stats.totalGenerations,
   recordedGenerations: stats.recordedGenerations,
   unrecordedGenerations: stats.unrecordedGenerations,
@@ -423,17 +410,11 @@ const createDemoRecordMiddleware =
 
     if (isStatsRoute && request.method === "POST") {
       try {
-        const payload = JSON.parse(await readRequestBody(request)) as { recorded?: unknown; experienceId?: unknown };
+        const payload = JSON.parse(await readRequestBody(request)) as { recorded?: unknown };
         if (typeof payload.recorded !== "boolean") {
           sendJson(response, 400, { error: "recorded must be a boolean" });
           return;
         }
-        if (!isExperienceId(payload.experienceId)) {
-          sendJson(response, 400, { error: "experienceId must be a non-empty opaque identifier" });
-          return;
-        }
-        const experienceId = payload.experienceId;
-
         const stats = await runUsageStatsUpdate(async () => {
           const current = await readOrInitializeUsageStats(recordsRoot);
           const date = getTokyoDate(new Date());
@@ -447,10 +428,6 @@ const createDemoRecordMiddleware =
             day.unrecordedCount += 1;
           }
           current.totalGenerations += 1;
-          if (!current.knownExperienceIds.includes(experienceId)) {
-            current.knownExperienceIds.push(experienceId);
-            current.totalExperiences += 1;
-          }
           current.days[date] = day;
           await writeUsageStats(recordsRoot, current);
           return current;

@@ -113,13 +113,13 @@ export const listDemoRecords = () =>
 export const getUsageStats = () =>
   fetchDemoRecordJson<UsageStats>("/api/demo-records/stats");
 
-export const recordExperience = (recorded: boolean, experienceId: string) =>
+export const recordGeneration = (recorded: boolean) =>
   fetchDemoRecordJson<UsageStats>("/api/demo-records/stats", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ recorded, experienceId }),
+    body: JSON.stringify({ recorded }),
   });
 
 export const getDemoRecord = (recordId: string) =>

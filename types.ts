@@ -91,7 +91,6 @@ export interface UsageStatsDay {
 }
 
 export interface UsageStats {
-  totalExperiences: number;
   totalGenerations: number;
   recordedGenerations: number;
   unrecordedGenerations: number;
