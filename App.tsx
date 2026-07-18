@@ -250,7 +250,6 @@ const App: React.FC = () => {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
-  const [generationProgressPhase, setGenerationProgressPhase] = useState<GenerationTimingPhase>("gemini");
   const [generationTimingEstimate, setGenerationTimingEstimate] = useState<GenerationTimingEstimate | null>(null);
   const [generationTimingRunKey, setGenerationTimingRunKey] = useState(0);
   const [participantAge, setParticipantAge] = useState<number | null>(null);
@@ -801,7 +800,6 @@ const App: React.FC = () => {
       }
       activeTimingPhase = phase;
       phaseStartedAt.set(phase, performance.now());
-      setGenerationProgressPhase(phase);
     };
     const completeTimingPhase = (phase = activeTimingPhase) => {
       if (durationsMs[phase] !== undefined) return;
@@ -1845,7 +1843,6 @@ const App: React.FC = () => {
               isGenerating={isGenerating}
               isInteractionBlocked={isRecordConsentOpen}
               generationStageLabel={progressLabel}
-              generationProgressPhase={generationProgressPhase}
               generationTimingEstimate={generationTimingEstimate}
               generationTimingRunKey={generationTimingRunKey}
               generationDisabled={!appFeatures.gemini || !appFeatures.voicevox}
@@ -1867,7 +1864,7 @@ const App: React.FC = () => {
             {lyrics || isGenerating || error ? (
               <div className="magic-card bg-white p-5 sm:p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
                 {isGenerating ? (
-                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} progressPhase={generationProgressPhase} timingEstimate={generationTimingEstimate} runKey={generationTimingRunKey} />
+                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} timingEstimate={generationTimingEstimate} runKey={generationTimingRunKey} />
                 ) : error ? (
                   <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
                     <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>
