@@ -45,8 +45,20 @@ body { margin: 0; min-width: 320px; overflow-x: hidden; }
   border-color: #fde68a !important;
   box-shadow: 0 0 0 3px rgba(254, 215, 170, .68), 0 18px 42px rgba(194, 65, 12, .14) !important;
 }
-.focus-button { background: linear-gradient(135deg, #f97316, #ea580c) !important; }
 .paint-toolbar button { min-height: 3.5rem; }
+
+.drawing-focus-surface {
+  overscroll-behavior: contain;
+}
+
+.focus-toggle-button,
+.focus-controls button,
+.paint-toolbar button {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
 
 .app-shell footer { color: #6b7280 !important; }
 .app-shell button { transition-duration: var(--magic-fast); transition-timing-function: var(--magic-ease); }

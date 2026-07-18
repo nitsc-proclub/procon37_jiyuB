@@ -96,7 +96,6 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const currentStrokeRef = useRef<Point[]>([]);
   const activePointerIdRef = useRef<number | null>(null);
   const lineWidthRef = useRef(6);
-  const focusModeRef = useRef(false);
   const wasFocusedRef = useRef(false);
   const imageLoadIdRef = useRef(0);
   const baseImageRef = useRef<HTMLImageElement | null>(null);
@@ -224,7 +223,6 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   }, [onDrawingMetricsChange, strokes]);
 
   useEffect(() => {
-    focusModeRef.current = isFocusMode;
     if (isFocusMode) {
       wasFocusedRef.current = true;
       const previousOverflow = document.body.style.overflow;
@@ -255,33 +253,13 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   }, [isClearConfirmOpen]);
 
   const exitFocusMode = () => {
-    focusModeRef.current = false;
     setIsFocusMode(false);
-    if (document.fullscreenElement && document.exitFullscreen) {
-      void document.exitFullscreen().catch(() => undefined);
-    }
   };
 
   const enterFocusMode = () => {
     if (isCanvasLocked) return;
-    focusModeRef.current = true;
     setIsFocusMode(true);
-    const surface = focusSurfaceRef.current;
-    if (surface?.requestFullscreen) {
-      void surface.requestFullscreen().catch(() => undefined);
-    }
   };
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      if (focusModeRef.current && !document.fullscreenElement) {
-        focusModeRef.current = false;
-        setIsFocusMode(false);
-      }
-    };
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
-  }, []);
 
   const getCoordinates = (event: React.PointerEvent<HTMLCanvasElement>): Point => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -505,10 +483,11 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     <>
       <div
         ref={focusSurfaceRef}
-        className={isFocusMode ? "fixed inset-0 z-[100] flex min-h-0 w-full flex-col items-center overflow-auto bg-gradient-to-b from-yellow-50 via-orange-50 to-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]" : "relative flex w-full max-w-full flex-col items-center gap-4"}
+        className={isFocusMode ? "drawing-focus-surface fixed inset-0 z-[100] flex min-h-0 w-full flex-col items-center overflow-auto bg-gradient-to-b from-yellow-50 via-orange-50 to-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]" : "relative flex w-full max-w-full flex-col items-center gap-4"}
         role={isFocusMode ? "dialog" : undefined}
         aria-modal={isFocusMode ? true : undefined}
         aria-label={isFocusMode ? "大きく描くモード" : undefined}
+        onContextMenu={isFocusMode ? (event) => event.preventDefault() : undefined}
       >
         {isFocusMode && (
           <div className="mb-2 flex w-full max-w-5xl items-center justify-center text-slate-800">
@@ -548,10 +527,32 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
               <GenerationJourney stageLabel={generationStageLabel} drawingData={playbackDrawing ?? initialDrawing} compact />
             </div>
           )}
+          {isFocusMode ? (
+            <button
+              ref={focusExitRef}
+              type="button"
+              onClick={exitFocusMode}
+              className="focus-toggle-button absolute bottom-3 right-3 z-40 flex h-11 items-center justify-center rounded-full bg-orange-500 px-4 text-sm font-black text-white shadow-lg transition hover:bg-orange-600 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-yellow-300"
+            >
+              できた！
+            </button>
+          ) : (
+            <button
+              ref={focusTriggerRef}
+              type="button"
+              onClick={enterFocusMode}
+              disabled={isCanvasLocked}
+              aria-label="大きく描く"
+              title="大きく描く"
+              className="focus-toggle-button absolute bottom-3 right-3 z-40 flex h-11 w-11 items-center justify-center rounded-full bg-violet-600 text-xl font-black text-white shadow-lg transition-all hover:bg-violet-700 disabled:opacity-50 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-300"
+            >
+              <span aria-hidden="true">⛶</span>
+            </button>
+          )}
         </div>
 
         {isFocusMode ? (
-          <div className="mt-3 grid w-full max-w-xl grid-cols-4 gap-2">
+          <div className="focus-controls mt-3 grid w-full max-w-xl grid-cols-3 gap-2">
             <button ref={clearTriggerButtonRef} type="button" onClick={handleClear} disabled={isGenerating || isInteractionBlocked} className="flex h-14 min-w-0 items-center justify-center rounded-2xl bg-slate-200 px-1 text-sm font-black text-slate-800 shadow-md disabled:opacity-50 sm:px-3 sm:text-base">ぜんぶ消す</button>
             <button type="button" onClick={handleUndo} disabled={strokes.length === 0 || isCanvasLocked} className="flex h-14 min-w-0 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white text-slate-700 shadow-md transition hover:bg-slate-50 disabled:opacity-40 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-400" title="戻す" aria-label="ひとつ戻す">
               <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 7 4 12l5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M5 12h9.5a4.5 4.5 0 0 1 0 9H12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -559,15 +560,9 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
             <button type="button" onClick={handleRedo} disabled={undoneStrokes.length === 0 || isCanvasLocked} className="flex h-14 min-w-0 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white text-slate-700 shadow-md transition hover:bg-slate-50 disabled:opacity-40 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-400" title="進める" aria-label="ひとつ進める">
               <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m15 7 5 5-5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M19 12H9.5a4.5 4.5 0 0 0 0 9H12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
-            <button ref={focusExitRef} type="button" onClick={exitFocusMode} className="flex h-14 min-w-0 items-center justify-center rounded-2xl bg-orange-500 px-1 text-sm font-black text-white shadow-md transition hover:bg-orange-600 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-yellow-300 sm:px-3 sm:text-base">できた！</button>
           </div>
         ) : (
           <>
-            <div className="flex w-full justify-end">
-              <button ref={focusTriggerRef} type="button" onClick={enterFocusMode} disabled={isCanvasLocked} aria-pressed={isFocusMode} className="focus-button flex min-h-12 items-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-base font-black text-white shadow-lg transition-all hover:bg-violet-700 disabled:opacity-50 active:scale-95 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-300">
-                <span aria-hidden="true">⛶</span> 大きく描く
-              </button>
-            </div>
             {guideState === "generate" && (
               <div className="w-full px-4 py-1 text-center font-black text-amber-800" role="status" aria-live="polite">
                 絵ができたね！ つぎは「歌をつくる！」を押してみよう <span aria-hidden="true">↓</span>
