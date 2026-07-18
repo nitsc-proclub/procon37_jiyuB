@@ -32,6 +32,7 @@ VOICEVOX Engine は開発中、既定で `http://127.0.0.1:50021` で起動し�
 | `GEMINI_MODEL_SUB` | 最後に試すフォールバック用モデル名 |
 | `GEMINI_MODEL_CANDIDATES` | カンマまたは空白区切りの明示的なモデル候補。指定時はこの順序を優先する |
 | `DEMO_RECORDS_DIR` | `demo-records` の保存先を変更したいときに使う |
+| `VOICEVOX_TIMING_PROFILE` | VOICEVOX サーバー性能ごとのタイミング推定グループ名。変更すると別の推定群として扱う |
 
 `GEMINI_MODEL_CANDIDATES` を省略した場合は、`GEMINI_MODEL` を第一候補にしたうえで Gemini API のモデル一覧を取得し、利用可能な Flash 系モデルを世代・preview・lite などの名前から優先順に並べて試します。`GEMINI_MODEL_SUB` は、その後に試す最後の保険として扱います。
 
@@ -72,6 +73,8 @@ VOICEVOX Engine は開発中、既定で `http://127.0.0.1:50021` で起動し�
 
 `drawing` の中には、描画ストロークと `strokeGroups` が入ります。歌詞生成が成功した記録では、歌詞の実体も保存されます。
 
+`generation-timings.json` は匿名の生成時間メトリクス専用ファイルです。最大 300 件を保持し、絵・歌詞・音声・年齢は含みません。
+
 ## 6. デモ記録 API
 
 `vite.config.ts` の middleware が `demo-records` を API として公開します。
@@ -83,6 +86,8 @@ VOICEVOX Engine は開発中、既定で `http://127.0.0.1:50021` で起動し�
 | `GET` | `/api/demo-records/:recordId/image` | 入力画像を取得する |
 | `GET` | `/api/demo-records/:recordId/audio` | 音声を取得する |
 | `POST` | `/api/demo-records` | 新規保存する |
+| `GET` | `/api/demo-records/timing-estimates` | 匿名の生成時間推定を取得する |
+| `POST` | `/api/demo-records/timings` | 匿名の生成時間メトリクスを保存する |
 | `PATCH` | `/api/demo-records/:recordId` | お気に入り状態を更新する |
 | `DELETE` | `/api/demo-records/:recordId` | 記録を削除する |
 

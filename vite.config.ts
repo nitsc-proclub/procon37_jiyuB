@@ -9,6 +9,9 @@ import { createGeminiMiddleware } from "./server/geminiMiddleware";
 const MAX_RECORD_REQUEST_BYTES = 100 * 1024 * 1024;
 const DEFAULT_DEMO_RECORDS_DIR = path.resolve(process.cwd(), "demo-records");
 const USAGE_STATS_FILE_NAME = "usage-stats.json";
+const GENERATION_TIMINGS_FILE_NAME = "generation-timings.json";
+const GENERATION_TIMINGS_SCHEMA_VERSION = 1;
+const MAX_GENERATION_TIMING_ENTRIES = 300;
 const TOKYO_TIME_ZONE = "Asia/Tokyo";
 
 const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
@@ -139,6 +142,141 @@ type UsageStatsResponse = Omit<StoredUsageStats, "days"> & {
 };
 
 let usageStatsWriteQueue: Promise<void> = Promise.resolve();
+let generationTimingsWriteQueue: Promise<void> = Promise.resolve();
+
+const GENERATION_TIMING_PHASES = ["gemini", "accent", "score", "voicevoxQuery", "voicevoxSynthesis", "finalize"] as const;
+type GenerationTimingPhase = (typeof GENERATION_TIMING_PHASES)[number];
+type StoredGenerationTimingEntry = {
+  recordedAt: string;
+  success: boolean;
+  failedStage: GenerationTimingPhase | null;
+  modelName: string | null;
+  voicevoxProfile: string;
+  strokeCount: number;
+  strokeGroupCount: number;
+  pointCount: number;
+  lyricLineCount: number;
+  noteCount: number;
+  totalFrames: number;
+  durationsMs: Partial<Record<GenerationTimingPhase, number>>;
+  totalMs: number;
+};
+
+type StoredGenerationTimings = {
+  schemaVersion: number;
+  entries: StoredGenerationTimingEntry[];
+};
+
+const isSafeNonNegativeNumber = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 86_400_000;
+const isSafeMetric = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 10_000_000;
+
+const normalizeGenerationTimingEntry = (value: unknown, voicevoxProfile: string, recordedAt = new Date().toISOString()): StoredGenerationTimingEntry | null => {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.success !== "boolean" || !isSafeNonNegativeNumber(candidate.totalMs)) return null;
+
+  const failedStage = candidate.failedStage;
+  if (failedStage !== null && !GENERATION_TIMING_PHASES.includes(failedStage as GenerationTimingPhase)) return null;
+  const durationsSource = candidate.durationsMs;
+  const durationsMs: Partial<Record<GenerationTimingPhase, number>> = {};
+  if (durationsSource && typeof durationsSource === "object") {
+    for (const phase of GENERATION_TIMING_PHASES) {
+      const duration = (durationsSource as Record<string, unknown>)[phase];
+      if (isSafeNonNegativeNumber(duration)) durationsMs[phase] = Math.round(Number(duration));
+    }
+  }
+
+  const metric = (name: string) => isSafeMetric(candidate[name]) ? Number(candidate[name]) : 0;
+  return {
+    recordedAt,
+    success: candidate.success,
+    failedStage: failedStage as GenerationTimingPhase | null,
+    modelName: typeof candidate.modelName === "string" ? candidate.modelName.slice(0, 160) : null,
+    voicevoxProfile,
+    strokeCount: metric("strokeCount"),
+    strokeGroupCount: metric("strokeGroupCount"),
+    pointCount: metric("pointCount"),
+    lyricLineCount: metric("lyricLineCount"),
+    noteCount: metric("noteCount"),
+    totalFrames: metric("totalFrames"),
+    durationsMs,
+    totalMs: Math.round(Number(candidate.totalMs)),
+  };
+};
+
+const parseGenerationTimings = (value: unknown): StoredGenerationTimings => {
+  if (!value || typeof value !== "object") throw new Error("Generation timings file is invalid");
+  const candidate = value as Partial<StoredGenerationTimings>;
+  if (candidate.schemaVersion !== GENERATION_TIMINGS_SCHEMA_VERSION || !Array.isArray(candidate.entries)) {
+    throw new Error("Generation timings file is invalid");
+  }
+  // The on-disk file only ever contains normalized entries. Filter rather than fail so one old row cannot block estimates.
+  return {
+    schemaVersion: GENERATION_TIMINGS_SCHEMA_VERSION,
+    entries: candidate.entries
+      .map((entry) => {
+        const stored = entry as Partial<StoredGenerationTimingEntry>;
+        const recordedAt = typeof stored.recordedAt === "string" && Number.isFinite(Date.parse(stored.recordedAt)) ? stored.recordedAt : new Date().toISOString();
+        return normalizeGenerationTimingEntry(entry, typeof stored.voicevoxProfile === "string" ? stored.voicevoxProfile : "local-pc", recordedAt);
+      })
+      .filter((entry): entry is StoredGenerationTimingEntry => entry !== null)
+      .slice(-MAX_GENERATION_TIMING_ENTRIES),
+  };
+};
+
+const readGenerationTimings = async (recordsRoot: string): Promise<StoredGenerationTimings> => {
+  const timingsPath = path.join(recordsRoot, GENERATION_TIMINGS_FILE_NAME);
+  try {
+    return parseGenerationTimings(JSON.parse(await fs.readFile(timingsPath, "utf8")));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { schemaVersion: GENERATION_TIMINGS_SCHEMA_VERSION, entries: [] };
+    }
+    throw error;
+  }
+};
+
+const writeGenerationTimings = async (recordsRoot: string, timings: StoredGenerationTimings) => {
+  await fs.mkdir(recordsRoot, { recursive: true });
+  const timingsPath = path.join(recordsRoot, GENERATION_TIMINGS_FILE_NAME);
+  const temporaryPath = path.join(recordsRoot, `${GENERATION_TIMINGS_FILE_NAME}.${process.pid}.${randomUUID()}.tmp`);
+  await fs.writeFile(temporaryPath, `${JSON.stringify({ ...timings, entries: timings.entries.slice(-MAX_GENERATION_TIMING_ENTRIES) }, null, 2)}\n`, "utf8");
+  await fs.rename(temporaryPath, timingsPath);
+};
+
+const runGenerationTimingsUpdate = <T>(operation: () => Promise<T>) => {
+  const result = generationTimingsWriteQueue.then(operation, operation);
+  generationTimingsWriteQueue = result.then(() => undefined, () => undefined);
+  return result;
+};
+
+const percentile75 = (values: number[]) => {
+  const sorted = values.filter((value) => value > 0 && Number.isFinite(value)).sort((first, second) => first - second);
+  if (sorted.length === 0) return undefined;
+  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.75) - 1)];
+};
+
+const getGenerationTimingEstimate = (entries: StoredGenerationTimingEntry[], voicevoxProfile: string) => {
+  const successes = entries.filter((entry) => entry.success && entry.totalMs > 0).slice(-MAX_GENERATION_TIMING_ENTRIES);
+  const profileEntries = successes.filter((entry) => entry.voicevoxProfile === voicevoxProfile);
+  const modelCounts = new Map<string, number>();
+  for (const entry of profileEntries) {
+    if (entry.modelName) modelCounts.set(entry.modelName, (modelCounts.get(entry.modelName) ?? 0) + 1);
+  }
+  const preferredModel = [...modelCounts.entries()]
+    .filter(([, count]) => count >= 5)
+    .sort(([, firstCount], [, secondCount]) => secondCount - firstCount)[0]?.[0];
+  // Never mix timing profiles. A model-specific subset is used only when it has enough samples itself.
+  const selected = preferredModel ? profileEntries.filter((entry) => entry.modelName === preferredModel) : profileEntries;
+  const phaseDurationsMs = Object.fromEntries(
+    GENERATION_TIMING_PHASES.map((phase) => [phase, percentile75(selected.map((entry) => entry.durationsMs[phase] ?? 0)) ?? 0]),
+  ) as Record<GenerationTimingPhase, number>;
+  return {
+    determinate: selected.length >= 3,
+    sampleCount: selected.length,
+    phaseDurationsMs,
+  };
+};
 
 const isPathInside = (parentDirectory: string, targetPath: string) => {
   const relativePath = path.relative(parentDirectory, targetPath);
@@ -378,7 +516,7 @@ const sendDemoRecordFile = async (
 };
 
 const createDemoRecordMiddleware =
-  (recordsRoot: string) => async (request: IncomingMessage, response: ServerResponse, next: () => void) => {
+  (recordsRoot: string, voicevoxTimingProfile: string) => async (request: IncomingMessage, response: ServerResponse, next: () => void) => {
     if (!request.url?.startsWith("/api/demo-records")) {
       next();
       return;
@@ -392,6 +530,41 @@ const createDemoRecordMiddleware =
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
       response.end();
+      return;
+    }
+
+    // Keep named API routes ahead of recordId parsing: "timings" is not a record id.
+    const isTimingEstimatesRoute = pathParts.length === 3 && recordId === "timing-estimates";
+    if (isTimingEstimatesRoute && request.method === "GET") {
+      try {
+        const timings = await runGenerationTimingsUpdate(() => readGenerationTimings(recordsRoot));
+        sendJson(response, 200, getGenerationTimingEstimate(timings.entries, voicevoxTimingProfile));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to read generation timings";
+        sendJson(response, 500, { error: message });
+      }
+      return;
+    }
+
+    const isTimingsRoute = pathParts.length === 3 && recordId === "timings";
+    if (isTimingsRoute && request.method === "POST") {
+      try {
+        const entry = normalizeGenerationTimingEntry(JSON.parse(await readRequestBody(request)), voicevoxTimingProfile);
+        if (!entry) {
+          sendJson(response, 400, { error: "Invalid generation timing payload" });
+          return;
+        }
+        await runGenerationTimingsUpdate(async () => {
+          const current = await readGenerationTimings(recordsRoot);
+          current.entries.push(entry);
+          current.entries = current.entries.slice(-MAX_GENERATION_TIMING_ENTRIES);
+          await writeGenerationTimings(recordsRoot, current);
+        });
+        sendJson(response, 201, { saved: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to save generation timing";
+        sendJson(response, 500, { error: message });
+      }
       return;
     }
 
@@ -617,11 +790,11 @@ export default defineConfig(({ mode }) => {
         name: "local-api",
         configureServer(server) {
           server.middlewares.use(createGeminiMiddleware(env));
-          server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir));
+          server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir, env.VOICEVOX_TIMING_PROFILE?.trim() || "local-pc"));
         },
         configurePreviewServer(server) {
           server.middlewares.use(createGeminiMiddleware(env));
-          server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir));
+          server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir, env.VOICEVOX_TIMING_PROFILE?.trim() || "local-pc"));
         },
       },
     ],

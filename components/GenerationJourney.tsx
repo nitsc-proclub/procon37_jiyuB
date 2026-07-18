@@ -1,10 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { DrawingData, Point } from "../types";
+import { DrawingData, GenerationTimingEstimate, GenerationTimingPhase, GENERATION_TIMING_PHASES, Point } from "../types";
 
 type GenerationJourneyProps = {
   stageLabel: string;
   drawingData?: DrawingData | null;
   compact?: boolean;
+  progressPhase?: GenerationTimingPhase;
+  timingEstimate?: GenerationTimingEstimate | null;
+  runKey?: number;
 };
 
 const JOURNEY_STEPS = [
@@ -113,7 +116,50 @@ const TransformationCanvas: React.FC<{ drawingData: DrawingData }> = ({ drawingD
   return <canvas ref={canvasRef} className="h-full w-full" aria-hidden="true" />;
 };
 
-const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, compact = false }) => (
+const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "progressPhase" | "timingEstimate" | "runKey">> = ({ progressPhase = "gemini" as GenerationTimingPhase, timingEstimate, runKey = 0 }) => {
+  const [value, setValue] = useState<number | null>(null);
+  const valueRef = useRef(0);
+
+  useEffect(() => {
+    valueRef.current = 0;
+    setValue(null);
+  }, [runKey]);
+
+  useEffect(() => {
+    if (!timingEstimate?.determinate) {
+      setValue(null);
+      return;
+    }
+    const phaseIndex = GENERATION_TIMING_PHASES.indexOf(progressPhase);
+    const rawDurations = GENERATION_TIMING_PHASES.map((phase) => Math.max(0, timingEstimate.phaseDurationsMs[phase] ?? 0));
+    const durations = rawDurations.some((duration) => duration > 0) ? rawDurations : rawDurations.map(() => 1);
+    const totalDuration = durations.reduce((sum, duration) => sum + duration, 0);
+    const completedDuration = durations.slice(0, Math.max(0, phaseIndex)).reduce((sum, duration) => sum + duration, 0);
+    const phaseDuration = Math.max(1, durations[phaseIndex] ?? 1);
+    const phaseStartedAt = performance.now();
+    let frameId = 0;
+    const update = (now: number) => {
+      const elapsed = Math.max(0, now - phaseStartedAt);
+      const withinPhase = elapsed <= phaseDuration ? 0.85 * (elapsed / phaseDuration) : 0.85 + 0.14 * (1 - Math.exp(-(elapsed - phaseDuration) / phaseDuration));
+      const nextValue = Math.min(99, ((completedDuration + phaseDuration * Math.min(0.99, withinPhase)) / totalDuration) * 100);
+      const monotonicValue = Math.max(valueRef.current, nextValue);
+      valueRef.current = monotonicValue;
+      setValue(monotonicValue);
+      frameId = window.requestAnimationFrame(update);
+    };
+    frameId = window.requestAnimationFrame(update);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [progressPhase, runKey, timingEstimate]);
+
+  const isDeterminate = value !== null;
+  return <div className="mt-3 w-full max-w-md" role="progressbar" aria-label="歌を作っています" aria-valuemin={isDeterminate ? 0 : undefined} aria-valuemax={isDeterminate ? 100 : undefined} aria-valuenow={isDeterminate ? Math.round(value) : undefined} aria-valuetext={isDeterminate ? undefined : "歌を作っています"}>
+    <div className="h-1.5 overflow-hidden rounded-full bg-orange-100" aria-hidden="true">
+      {isDeterminate ? <div className="h-full rounded-full bg-orange-400 transition-[width] duration-200" style={{ width: `${value}%` }} /> : <div className="h-full w-2/5 animate-pulse rounded-full bg-orange-400" />}
+    </div>
+  </div>;
+};
+
+const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, compact = false, progressPhase, timingEstimate, runKey }) => (
   <div className={`generation-journey flex h-full flex-col items-center justify-center text-center ${compact ? "min-h-0" : "min-h-[340px]"}`}>
     {compact && <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{stageLabel}</p>}
     {drawingData && compact ? (
@@ -125,6 +171,7 @@ const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawi
           </p>
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white/95 to-transparent px-3 pb-3 pt-10">
+          <GenerationProgressBar progressPhase={progressPhase} timingEstimate={timingEstimate} runKey={runKey} />
           <p className="text-sm font-bold text-slate-600">どんな歌にしようか考えているよ</p>
         </div>
       </div>
@@ -138,6 +185,7 @@ const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawi
     {!compact && (
       <>
         <p className="mt-5 text-sm font-bold text-slate-500">AIとずんだもんが、順番に歌をつくっています</p>
+        <GenerationProgressBar progressPhase={progressPhase} timingEstimate={timingEstimate} runKey={runKey} />
         <div className="mt-4 grid w-full max-w-xl gap-2 sm:grid-cols-2">
           {JOURNEY_STEPS.map((step) => (
             <div key={step} className={`rounded-2xl border px-3 py-2 text-sm font-bold ${step === stageLabel ? "border-orange-400 bg-orange-50 text-orange-900 shadow-sm" : "border-orange-100 bg-white/70 text-slate-500"}`}>

@@ -1,4 +1,4 @@
-import { DemoRecordDetail, DemoRecordSummary, DrawingData, LyricsResponse, SingingScore, UsageStats } from "../types";
+import { DemoRecordDetail, DemoRecordSummary, DrawingData, GenerationTimingEntry, GenerationTimingEstimate, LyricsResponse, SingingScore, UsageStats } from "../types";
 
 type DemoRecordStatus = "success" | "error";
 
@@ -120,6 +120,18 @@ export const recordGeneration = (recorded: boolean) =>
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ recorded }),
+  });
+
+export const getGenerationTimingEstimate = () =>
+  fetchDemoRecordJson<GenerationTimingEstimate>("/api/demo-records/timing-estimates");
+
+export const saveGenerationTiming = (timing: Omit<GenerationTimingEntry, "recordedAt" | "voicevoxProfile">) =>
+  fetchDemoRecordJson<{ saved: true }>("/api/demo-records/timings", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(timing),
   });
 
 export const getDemoRecord = (recordId: string) =>

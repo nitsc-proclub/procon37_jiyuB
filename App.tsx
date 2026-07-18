@@ -5,13 +5,13 @@ import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
-import { deleteDemoRecord, getDemoRecord, getUsageStats, listDemoRecords, recordGeneration, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
+import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, getUsageStats, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { groupStrokes } from "./services/strokeGroupingService";
 import { analyzeAccentLines } from "./services/voicevoxAccentService";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
-import { DemoRecordSummary, DrawingData, LyricsResponse, SingingScore, UsageStats } from "./types";
+import { DemoRecordSummary, DrawingData, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsResponse, SingingScore, UsageStats } from "./types";
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
 
@@ -250,6 +250,9 @@ const App: React.FC = () => {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
+  const [generationProgressPhase, setGenerationProgressPhase] = useState<GenerationTimingPhase>("gemini");
+  const [generationTimingEstimate, setGenerationTimingEstimate] = useState<GenerationTimingEstimate | null>(null);
+  const [generationTimingRunKey, setGenerationTimingRunKey] = useState(0);
   const [participantAge, setParticipantAge] = useState<number | null>(null);
   const [pendingGenerationData, setPendingGenerationData] = useState<DrawingData | null>(null);
   const [isRecordConsentOpen, setIsRecordConsentOpen] = useState(false);
@@ -293,6 +296,7 @@ const App: React.FC = () => {
   const recordConsentDialogRef = useRef<HTMLElement>(null);
   const recordConsentPrimaryButtonRef = useRef<HTMLButtonElement>(null);
   const generationRunRef = useRef(false);
+  const generationTimingRunKeyRef = useRef(0);
   const audioUrlRef = useRef<string | null>(null);
   const experimentAudioRef = useRef<HTMLAudioElement>(null);
   const experimentAudioUrlRef = useRef<string | null>(null);
@@ -786,8 +790,38 @@ const App: React.FC = () => {
     let generatedScore: SingingScore | null = null;
     let generatedAudioBlob: Blob | null = null;
     let generationErrorMessage: string | null = null;
+    const timingStartedAt = performance.now();
+    const phaseStartedAt = new Map<GenerationTimingPhase, number>();
+    const durationsMs: GenerationTimingDurations = {};
+    let activeTimingPhase: GenerationTimingPhase = "gemini";
+    let failedStage: GenerationTimingPhase | null = null;
+    const beginTimingPhase = (phase: GenerationTimingPhase) => {
+      if (phaseStartedAt.has(activeTimingPhase) && durationsMs[activeTimingPhase] === undefined) {
+        durationsMs[activeTimingPhase] = Math.round(performance.now() - (phaseStartedAt.get(activeTimingPhase) ?? performance.now()));
+      }
+      activeTimingPhase = phase;
+      phaseStartedAt.set(phase, performance.now());
+      setGenerationProgressPhase(phase);
+    };
+    const completeTimingPhase = (phase = activeTimingPhase) => {
+      if (durationsMs[phase] !== undefined) return;
+      const started = phaseStartedAt.get(phase);
+      if (started !== undefined) durationsMs[phase] = Math.round(performance.now() - started);
+    };
 
     generationRunRef.current = true;
+    const runKey = generationTimingRunKeyRef.current + 1;
+    generationTimingRunKeyRef.current = runKey;
+    setGenerationTimingRunKey(runKey);
+    setGenerationTimingEstimate(null);
+    beginTimingPhase("gemini");
+    void getGenerationTimingEstimate()
+      .then((estimate) => {
+        if (generationRunRef.current && generationTimingRunKeyRef.current === runKey) setGenerationTimingEstimate(estimate);
+      })
+      .catch(() => {
+        // Timing estimates are optional and must never interrupt generation.
+      });
     setIsGenerating(true);
     setLyrics(null);
     setError(null);
@@ -811,15 +845,29 @@ const App: React.FC = () => {
     try {
       updateProgress("絵をじっくり見ているよ");
       generatedLyrics = await generateEkakiUta(groupedDrawingData);
+      completeTimingPhase("gemini");
+      beginTimingPhase("accent");
 
       const accentLineHints = await analyzeLyricsAccents(generatedLyrics);
 
+      completeTimingPhase("accent");
+      beginTimingPhase("score");
       const seed = createSingingSeed(generatedLyrics, 0);
       generatedScore = buildSingingScore(generatedLyrics, seed, accentLineHints);
+      completeTimingPhase("score");
       setPlaybackScore(generatedScore);
 
       updateProgress("歌声に魔法をかけているよ");
-      generatedAudioBlob = await synthesizeSingingVoice(generatedScore, handleVoicevoxProgress);
+      beginTimingPhase("voicevoxQuery");
+      generatedAudioBlob = await synthesizeSingingVoice(generatedScore, (stage) => {
+        if (stage === "synthesis_requested") {
+          completeTimingPhase("voicevoxQuery");
+          beginTimingPhase("voicevoxSynthesis");
+        }
+        handleVoicevoxProgress(stage);
+      });
+      completeTimingPhase("voicevoxSynthesis");
+      beginTimingPhase("finalize");
       updateProgress("歌声に魔法をかけているよ");
 
       const nextAudioUrl = URL.createObjectURL(generatedAudioBlob);
@@ -828,6 +876,8 @@ const App: React.FC = () => {
       await finishProgress("歌声に魔法をかけているよ");
       setLyrics(generatedLyrics);
     } catch (generationError) {
+      failedStage = activeTimingPhase;
+      completeTimingPhase();
       generationErrorMessage =
         generationError instanceof Error ? generationError.message : "歌の生成に失敗しました。";
       setLyrics(null);
@@ -860,6 +910,23 @@ const App: React.FC = () => {
         setSaveToast({ message: "絵や歌を記録せずに作成しました", tone: "success" });
       }
 
+      completeTimingPhase("finalize");
+      const scoreNotes = generatedScore?.notes ?? [];
+      void saveGenerationTiming({
+        success: generationErrorMessage === null,
+        failedStage,
+        modelName: generatedLyrics?.modelName ?? null,
+        strokeCount: groupedDrawingData.strokes.length,
+        strokeGroupCount: groupedDrawingData.strokeGroups?.length ?? 0,
+        pointCount: groupedDrawingData.strokes.reduce((sum, stroke) => sum + stroke.points.length, 0),
+        lyricLineCount: generatedLyrics?.lines.filter((line) => line.trim().length > 0).length ?? 0,
+        noteCount: scoreNotes.length,
+        totalFrames: scoreNotes.reduce((sum, note) => sum + note.frame_length, 0),
+        durationsMs,
+        totalMs: Math.round(performance.now() - timingStartedAt),
+      }).catch(() => {
+        // Anonymous timing storage is best-effort and must not change the result flow.
+      });
       setIsGenerating(false);
       generationRunRef.current = false;
     }
@@ -1180,7 +1247,7 @@ const App: React.FC = () => {
             </div>
 
             <p className="mt-4 rounded-2xl bg-gray-50 px-4 py-3 text-sm font-bold text-gray-600">
-              ※「記録しない」を選んだ場合も、日付ごとの生成回数だけは集計します。絵・歌・音声・年齢は保存しません。
+              「記録しない」を選んでも、日別の生成回数と処理時間・モデル名・ストローク数・曲の長さなどの匿名メトリクスは保存します。絵・歌・音声・年齢は保存しません。
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -1778,6 +1845,9 @@ const App: React.FC = () => {
               isGenerating={isGenerating}
               isInteractionBlocked={isRecordConsentOpen}
               generationStageLabel={progressLabel}
+              generationProgressPhase={generationProgressPhase}
+              generationTimingEstimate={generationTimingEstimate}
+              generationTimingRunKey={generationTimingRunKey}
               generationDisabled={!appFeatures.gemini || !appFeatures.voicevox}
               generationDisabledMessage="AI生成・音声生成は現在準備中です。描画機能はそのまま利用できます。"
               initialDrawing={playbackDrawing}
@@ -1797,7 +1867,7 @@ const App: React.FC = () => {
             {lyrics || isGenerating || error ? (
               <div className="magic-card bg-white p-5 sm:p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
                 {isGenerating ? (
-                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} />
+                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} progressPhase={generationProgressPhase} timingEstimate={generationTimingEstimate} runKey={generationTimingRunKey} />
                 ) : error ? (
                   <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
                     <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>

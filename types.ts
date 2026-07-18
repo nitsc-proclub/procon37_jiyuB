@@ -96,3 +96,32 @@ export interface UsageStats {
   unrecordedGenerations: number;
   days: UsageStatsDay[];
 }
+
+export const GENERATION_TIMING_PHASES = ["gemini", "accent", "score", "voicevoxQuery", "voicevoxSynthesis", "finalize"] as const;
+
+export type GenerationTimingPhase = (typeof GENERATION_TIMING_PHASES)[number];
+
+export type GenerationTimingDurations = Partial<Record<GenerationTimingPhase, number>>;
+
+/** Anonymous, aggregate-only measurements. This intentionally excludes drawing, lyrics, audio, and age. */
+export interface GenerationTimingEntry {
+  recordedAt: string;
+  success: boolean;
+  failedStage: GenerationTimingPhase | null;
+  modelName: string | null;
+  voicevoxProfile?: string;
+  strokeCount: number;
+  strokeGroupCount: number;
+  pointCount: number;
+  lyricLineCount: number;
+  noteCount: number;
+  totalFrames: number;
+  durationsMs: GenerationTimingDurations;
+  totalMs: number;
+}
+
+export interface GenerationTimingEstimate {
+  determinate: boolean;
+  sampleCount: number;
+  phaseDurationsMs: GenerationTimingDurations;
+}
