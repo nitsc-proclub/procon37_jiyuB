@@ -1843,8 +1843,6 @@ const App: React.FC = () => {
               isGenerating={isGenerating}
               isInteractionBlocked={isRecordConsentOpen}
               generationStageLabel={progressLabel}
-              generationTimingEstimate={generationTimingEstimate}
-              generationTimingRunKey={generationTimingRunKey}
               generationDisabled={!appFeatures.gemini || !appFeatures.voicevox}
               generationDisabledMessage="AI生成・音声生成は現在準備中です。描画機能はそのまま利用できます。"
               initialDrawing={playbackDrawing}

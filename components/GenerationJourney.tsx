@@ -202,7 +202,6 @@ const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawi
           </p>
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white/95 to-transparent px-3 pb-3 pt-10">
-          <GenerationProgressBar timingEstimate={timingEstimate} runKey={runKey} />
           <p className="text-sm font-bold text-slate-600">どんな歌にしようか考えているよ</p>
         </div>
       </div>

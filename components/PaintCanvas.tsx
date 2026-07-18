@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import DrawingPlaybackCanvas, { DrawingDisplayMode } from "./DrawingPlaybackCanvas";
 import GenerationJourney from "./GenerationJourney";
-import { DrawingData, GenerationTimingEstimate, LyricStrokeMapping, Point, SingingScore, Stroke } from "../types";
+import { DrawingData, LyricStrokeMapping, Point, SingingScore, Stroke } from "../types";
 
 export type DrawingMetrics = {
   strokeCount: number;
@@ -18,8 +18,6 @@ interface PaintCanvasProps {
   isGenerating: boolean;
   isInteractionBlocked?: boolean;
   generationStageLabel?: string;
-  generationTimingEstimate?: GenerationTimingEstimate | null;
-  generationTimingRunKey?: number;
   generationDisabled?: boolean;
   generationDisabledMessage?: string;
   initialDrawing?: DrawingData | null;
@@ -71,8 +69,6 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   isGenerating,
   isInteractionBlocked = false,
   generationStageLabel = "絵をじっくり見ているよ",
-  generationTimingEstimate,
-  generationTimingRunKey,
   generationDisabled = false,
   generationDisabledMessage = "現在、この機能は利用できません",
   initialDrawing,
@@ -528,7 +524,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           )}
           {isGenerating && (
             <div className="absolute inset-0 z-20 bg-white">
-              <GenerationJourney stageLabel={generationStageLabel} drawingData={playbackDrawing ?? initialDrawing} compact timingEstimate={generationTimingEstimate} runKey={generationTimingRunKey} />
+              <GenerationJourney stageLabel={generationStageLabel} drawingData={playbackDrawing ?? initialDrawing} compact />
             </div>
           )}
           {isFocusMode ? (
