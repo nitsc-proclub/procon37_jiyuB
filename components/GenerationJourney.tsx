@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { DrawingData, GenerationTimingEstimate, GENERATION_TIMING_PHASES, Point } from "../types";
+import { DrawingData, GenerationTimingEstimate, Point } from "../types";
 
 type GenerationJourneyProps = {
   stageLabel: string;
@@ -120,18 +120,14 @@ const ESTIMATED_PROGRESS_LIMIT = 90;
 const OVERDUE_PROGRESS_LIMIT = 97.9;
 const PROGRESS_CATCH_UP_MS = 1000;
 const COMPLETION_ANIMATION_MS = 200;
+const FALLBACK_ESTIMATED_DURATION_MS = 20_000;
 
 export const getEstimatedGenerationDurationMs = (timingEstimate?: GenerationTimingEstimate | null) => {
-  if (!timingEstimate?.determinate) return null;
+  const estimatedTotalMs = timingEstimate?.estimatedTotalMs;
+  if (timingEstimate?.determinate && Number.isFinite(estimatedTotalMs) && estimatedTotalMs > 0) return estimatedTotalMs;
 
-  const estimatedTotalMs = timingEstimate.estimatedTotalMs;
-  if (Number.isFinite(estimatedTotalMs) && estimatedTotalMs > 0) return estimatedTotalMs;
-
-  const totalDuration = GENERATION_TIMING_PHASES.reduce(
-    (sum, phase) => sum + Math.max(0, timingEstimate.phaseDurationsMs[phase] ?? 0),
-    0,
-  );
-  return totalDuration > 0 ? totalDuration : null;
+  // A safe fallback keeps the bar moving while the optional timing API is unavailable.
+  return FALLBACK_ESTIMATED_DURATION_MS;
 };
 
 export const getGenerationProgressTarget = (elapsedMs: number, estimatedDurationMs: number) => {
@@ -195,12 +191,10 @@ const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstima
         setValue(nextValue);
       } else {
         const estimatedDurationMs = getEstimatedGenerationDurationMs(timingEstimateRef.current);
-        if (estimatedDurationMs) {
-          const target = getGenerationProgressTarget(now - startedAt, estimatedDurationMs);
-          const nextValue = smoothlyAdvanceProgress(valueRef.current, target, now - previousFrameAt);
-          valueRef.current = nextValue;
-          setValue(nextValue);
-        }
+        const target = getGenerationProgressTarget(now - startedAt, estimatedDurationMs);
+        const nextValue = smoothlyAdvanceProgress(valueRef.current, target, now - previousFrameAt);
+        valueRef.current = nextValue;
+        setValue(nextValue);
       }
       previousFrameAt = now;
       frameId = window.requestAnimationFrame(update);
@@ -209,11 +203,9 @@ const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstima
     return () => window.cancelAnimationFrame(frameId);
   }, [runKey]);
 
-  const isDeterminate = getEstimatedGenerationDurationMs(timingEstimate) !== null;
-  const isVisible = isDeterminate || isComplete;
-  return <div className="mt-3 w-full max-w-md" role="progressbar" aria-label="歌を作っています" aria-valuemin={0} aria-valuemax={100} aria-valuenow={isVisible ? Math.round(value) : 0} aria-valuetext={isVisible ? undefined : "時間を見積もっています"}>
-    <div className={`h-1.5 overflow-hidden rounded-full bg-orange-100 ${isVisible ? "" : "animate-pulse"}`} aria-hidden="true">
-      <div className={`h-full rounded-full bg-orange-400 ${isComplete ? "" : "transition-[width] duration-200"}`} style={{ width: `${isVisible ? value : 0}%` }} />
+  return <div className="mt-3 w-full max-w-md" role="progressbar" aria-label="歌を作っています" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value)}>
+    <div className="h-1.5 overflow-hidden rounded-full bg-orange-100" aria-hidden="true">
+      <div className={`h-full rounded-full bg-orange-400 ${isComplete ? "" : "transition-[width] duration-200"}`} style={{ width: `${value}%` }} />
     </div>
   </div>;
 };

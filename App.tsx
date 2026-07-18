@@ -813,15 +813,17 @@ const App: React.FC = () => {
     const runKey = generationTimingRunKeyRef.current + 1;
     generationTimingRunKeyRef.current = runKey;
     setGenerationTimingRunKey(runKey);
-    setGenerationTimingEstimate(null);
     setIsGenerationProgressComplete(false);
     beginTimingPhase("gemini");
     void getGenerationTimingEstimate()
       .then((estimate) => {
         if (generationRunRef.current && generationTimingRunKeyRef.current === runKey) setGenerationTimingEstimate(estimate);
       })
-      .catch(() => {
+      .catch((timingEstimateError) => {
         // Timing estimates are optional and must never interrupt generation.
+        if (import.meta.env.DEV) {
+          console.warn("Failed to load generation timing estimate", timingEstimateError);
+        }
       });
     setIsGenerating(true);
     setLyrics(null);
