@@ -5,13 +5,13 @@ import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
-import { deleteDemoRecord, getDemoRecord, listDemoRecords, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
+import { deleteDemoRecord, getDemoRecord, getUsageStats, listDemoRecords, recordExperience, saveDemoRecord, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { groupStrokes } from "./services/strokeGroupingService";
 import { analyzeAccentLines } from "./services/voicevoxAccentService";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
-import { DemoRecordSummary, DrawingData, LyricsResponse, SingingScore } from "./types";
+import { DemoRecordSummary, DrawingData, LyricsResponse, SingingScore, UsageStats } from "./types";
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
 
@@ -244,8 +244,10 @@ const App: React.FC = () => {
   const [demoBrowseMode, setDemoBrowseMode] = useState<DemoBrowseMode>("drawings");
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
   const [demoRecords, setDemoRecords] = useState<DemoRecordSummary[]>([]);
+  const [usageStats, setUsageStats] = useState<UsageStats | null>(null);
   const [isDemoRecordsLoading, setIsDemoRecordsLoading] = useState(false);
   const [demoRecordsError, setDemoRecordsError] = useState<string | null>(null);
+  const [usageStatsError, setUsageStatsError] = useState<string | null>(null);
   const [loadingDemoRecordId, setLoadingDemoRecordId] = useState<string | null>(null);
   const [updatingDemoRecordId, setUpdatingDemoRecordId] = useState<string | null>(null);
   const [deletingDemoRecordId, setDeletingDemoRecordId] = useState<string | null>(null);
@@ -277,9 +279,14 @@ const App: React.FC = () => {
   const recordConsentDialogRef = useRef<HTMLElement>(null);
   const recordConsentPrimaryButtonRef = useRef<HTMLButtonElement>(null);
   const generationRunRef = useRef(false);
+  const experienceIdRef = useRef<string | null>(null);
   const audioUrlRef = useRef<string | null>(null);
   const experimentAudioRef = useRef<HTMLAudioElement>(null);
   const experimentAudioUrlRef = useRef<string | null>(null);
+
+  if (experienceIdRef.current === null) {
+    experienceIdRef.current = crypto.randomUUID();
+  }
 
   useEffect(() => {
     return () => {
@@ -328,9 +335,20 @@ const App: React.FC = () => {
   const loadDemoRecords = async () => {
     setIsDemoRecordsLoading(true);
     setDemoRecordsError(null);
+    setUsageStatsError(null);
 
     try {
-      setDemoRecords(await listDemoRecords());
+      const [recordsResult, statsResult] = await Promise.allSettled([listDemoRecords(), getUsageStats()]);
+      if (recordsResult.status === "fulfilled") {
+        setDemoRecords(recordsResult.value);
+      } else {
+        setDemoRecordsError(recordsResult.reason instanceof Error ? recordsResult.reason.message : "デモ記録を読み込めませんでした。");
+      }
+      if (statsResult.status === "fulfilled") {
+        setUsageStats(statsResult.value);
+      } else {
+        setUsageStatsError(statsResult.reason instanceof Error ? statsResult.reason.message : "体験集計を読み込めませんでした。");
+      }
     } catch (loadError) {
       setDemoRecordsError(loadError instanceof Error ? loadError.message : "デモ記録を読み込めませんでした。");
     } finally {
@@ -340,9 +358,20 @@ const App: React.FC = () => {
 
   const refreshDemoRecords = async () => {
     setDemoRecordsError(null);
+    setUsageStatsError(null);
 
     try {
-      setDemoRecords(await listDemoRecords());
+      const [recordsResult, statsResult] = await Promise.allSettled([listDemoRecords(), getUsageStats()]);
+      if (recordsResult.status === "fulfilled") {
+        setDemoRecords(recordsResult.value);
+      } else {
+        setDemoRecordsError(recordsResult.reason instanceof Error ? recordsResult.reason.message : "デモ記録を読み込めませんでした。");
+      }
+      if (statsResult.status === "fulfilled") {
+        setUsageStats(statsResult.value);
+      } else {
+        setUsageStatsError(statsResult.reason instanceof Error ? statsResult.reason.message : "体験集計を読み込めませんでした。");
+      }
     } catch (loadError) {
       setDemoRecordsError(loadError instanceof Error ? loadError.message : "デモ記録を読み込めませんでした。");
     }
@@ -761,6 +790,13 @@ const App: React.FC = () => {
     setDrawingDisplayMode("animated");
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
+    void recordExperience(recordOptions.shouldRecord, experienceIdRef.current)
+      .then(setUsageStats)
+      .catch((statsError) => {
+        if (import.meta.env.DEV) {
+          console.warn("Failed to record usage stats", statsError);
+        }
+      });
     startProgress("絵をじっくり見ているよ");
 
     try {
@@ -812,7 +848,7 @@ const App: React.FC = () => {
           setSaveToast({ message: "記録に失敗しました", tone: "error" });
         }
       } else {
-        setSaveToast({ message: "記録せずに作成しました", tone: "success" });
+        setSaveToast({ message: "絵や歌を記録せずに作成しました", tone: "success" });
       }
 
       setIsGenerating(false);
@@ -1135,7 +1171,7 @@ const App: React.FC = () => {
             </div>
 
             <p className="mt-4 rounded-2xl bg-gray-50 px-4 py-3 text-sm font-bold text-gray-600">
-              ※記録しない場合でも、歌はつくれます。
+              ※「記録しない」を選んだ場合も、体験人数と日付ごとの生成回数だけは集計します。絵・歌・音声・年齢は保存しません。
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -1266,6 +1302,68 @@ const App: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            <section className="mb-5 rounded-2xl border-2 border-sky-100 bg-sky-50 p-4" aria-labelledby="usage-stats-heading">
+              <div className="mb-3 flex items-baseline justify-between gap-3">
+                <div>
+                  <h3 id="usage-stats-heading" className="text-lg font-black text-slate-800">体験集計</h3>
+                  <p className="text-xs font-semibold text-slate-500">同じページを開いている間の複数生成は、体験人数を1人として数えます。</p>
+                </div>
+                {isDemoRecordsLoading && <span className="text-xs font-bold text-sky-600">更新中...</span>}
+              </div>
+
+              {usageStatsError ? (
+                <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{usageStatsError}</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                    <div className="rounded-xl bg-white p-3 shadow-sm">
+                      <p className="text-xs font-bold text-slate-500">体験人数</p>
+                      <p className="text-2xl font-black text-slate-800">{usageStats?.totalExperiences ?? "-"}</p>
+                    </div>
+                    <div className="rounded-xl bg-white p-3 shadow-sm">
+                      <p className="text-xs font-bold text-slate-500">総生成回数</p>
+                      <p className="text-2xl font-black text-slate-800">{usageStats?.totalGenerations ?? "-"}</p>
+                    </div>
+                    <div className="rounded-xl bg-white p-3 shadow-sm">
+                      <p className="text-xs font-bold text-slate-500">記録あり生成</p>
+                      <p className="text-2xl font-black text-emerald-600">{usageStats?.recordedGenerations ?? "-"}</p>
+                    </div>
+                    <div className="rounded-xl bg-white p-3 shadow-sm">
+                      <p className="text-xs font-bold text-slate-500">記録なし生成</p>
+                      <p className="text-2xl font-black text-sky-600">{usageStats?.unrecordedGenerations ?? "-"}</p>
+                    </div>
+                  </div>
+
+                  {usageStats && (usageStats.days.length > 0 ? (
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="min-w-full text-left text-sm">
+                        <thead className="border-b border-sky-100 text-xs text-slate-500">
+                          <tr>
+                            <th className="px-2 py-2 font-bold">日付（日本時間）</th>
+                            <th className="px-2 py-2 text-right font-bold">生成回数</th>
+                            <th className="px-2 py-2 text-right font-bold">記録あり</th>
+                            <th className="px-2 py-2 text-right font-bold">記録なし</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-sky-100">
+                          {usageStats.days.map((day) => (
+                            <tr key={day.date} className="bg-white/70 text-slate-700">
+                              <td className="px-2 py-2 font-bold">{day.date}</td>
+                              <td className="px-2 py-2 text-right font-black">{day.generationCount}</td>
+                              <td className="px-2 py-2 text-right">{day.recordedCount}</td>
+                              <td className="px-2 py-2 text-right">{day.unrecordedCount}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="mt-4 text-sm font-bold text-slate-500">まだ体験集計はありません。</p>
+                  ))}
+                </>
+              )}
+            </section>
 
             {demoRecordsError && (
               <div className="mb-5 rounded-2xl border-2 border-red-200 bg-red-50 p-4 text-center font-bold text-red-700">

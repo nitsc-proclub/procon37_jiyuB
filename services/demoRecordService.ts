@@ -1,4 +1,4 @@
-import { DemoRecordDetail, DemoRecordSummary, DrawingData, LyricsResponse, SingingScore } from "../types";
+import { DemoRecordDetail, DemoRecordSummary, DrawingData, LyricsResponse, SingingScore, UsageStats } from "../types";
 
 type DemoRecordStatus = "success" | "error";
 
@@ -109,6 +109,18 @@ const fetchDemoRecordJson = async <T>(url: string, init?: RequestInit) => {
 
 export const listDemoRecords = () =>
   fetchDemoRecordJson<{ records: DemoRecordSummary[] }>("/api/demo-records").then(({ records }) => records);
+
+export const getUsageStats = () =>
+  fetchDemoRecordJson<UsageStats>("/api/demo-records/stats");
+
+export const recordExperience = (recorded: boolean, experienceId: string) =>
+  fetchDemoRecordJson<UsageStats>("/api/demo-records/stats", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ recorded, experienceId }),
+  });
 
 export const getDemoRecord = (recordId: string) =>
   fetchDemoRecordJson<DemoRecordDetail>(`/api/demo-records/${encodeURIComponent(recordId)}`);

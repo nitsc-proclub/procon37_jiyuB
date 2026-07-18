@@ -8,6 +8,9 @@ import { createGeminiMiddleware } from "./server/geminiMiddleware";
 
 const MAX_RECORD_REQUEST_BYTES = 100 * 1024 * 1024;
 const DEFAULT_DEMO_RECORDS_DIR = path.resolve(process.cwd(), "demo-records");
+const USAGE_STATS_FILE_NAME = "usage-stats.json";
+const TOKYO_TIME_ZONE = "Asia/Tokyo";
+const MAX_EXPERIENCE_ID_LENGTH = 128;
 
 const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
   response.statusCode = statusCode;
@@ -119,6 +122,28 @@ type StoredDemoRecordMetadata = {
   singingScore?: unknown;
 };
 
+type StoredUsageStatsDay = {
+  generationCount: number;
+  recordedCount: number;
+  unrecordedCount: number;
+};
+
+type StoredUsageStats = {
+  totalExperiences: number;
+  totalGenerations: number;
+  recordedGenerations: number;
+  unrecordedGenerations: number;
+  /** Opaque page-session IDs used only to prevent double-counting people. */
+  knownExperienceIds: string[];
+  days: Record<string, StoredUsageStatsDay>;
+};
+
+type UsageStatsResponse = Omit<StoredUsageStats, "days" | "knownExperienceIds"> & {
+  days: Array<StoredUsageStatsDay & { date: string }>;
+};
+
+let usageStatsWriteQueue: Promise<void> = Promise.resolve();
+
 const isPathInside = (parentDirectory: string, targetPath: string) => {
   const relativePath = path.relative(parentDirectory, targetPath);
   return relativePath === "" || (!!relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath));
@@ -136,6 +161,144 @@ const getRecordDirectory = (recordsRoot: string, recordId: string) => {
 
 const readDemoRecordMetadata = async (recordDirectory: string) =>
   JSON.parse(await fs.readFile(path.join(recordDirectory, "metadata.json"), "utf8")) as StoredDemoRecordMetadata;
+
+const getTokyoDate = (value: Date) => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TOKYO_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((entry) => entry.type === type)?.value;
+
+  return `${part("year")}-${part("month")}-${part("day")}`;
+};
+
+const emptyUsageStats = (): StoredUsageStats => ({
+  totalExperiences: 0,
+  totalGenerations: 0,
+  recordedGenerations: 0,
+  unrecordedGenerations: 0,
+  knownExperienceIds: [],
+  days: {},
+});
+
+const isCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isExperienceId = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0 && value.length <= MAX_EXPERIENCE_ID_LENGTH && /^[A-Za-z0-9_-]+$/.test(value);
+
+const parseUsageStats = (value: unknown): StoredUsageStats => {
+  if (!value || typeof value !== "object") {
+    throw new Error("Usage stats file is invalid");
+  }
+
+  const candidate = value as Partial<StoredUsageStats>;
+  if (!isCount(candidate.totalExperiences) || !isCount(candidate.totalGenerations) || !isCount(candidate.recordedGenerations) || !isCount(candidate.unrecordedGenerations) || !Array.isArray(candidate.knownExperienceIds) || !candidate.knownExperienceIds.every(isExperienceId) || !candidate.days || typeof candidate.days !== "object") {
+    throw new Error("Usage stats file is invalid");
+  }
+
+  const days: Record<string, StoredUsageStatsDay> = {};
+  for (const [date, counts] of Object.entries(candidate.days)) {
+    if (!counts || typeof counts !== "object") {
+      throw new Error("Usage stats file is invalid");
+    }
+
+    const day = counts as Partial<StoredUsageStatsDay>;
+    if (!isCount(day.generationCount) || !isCount(day.recordedCount) || !isCount(day.unrecordedCount)) {
+      throw new Error("Usage stats file is invalid");
+    }
+
+    days[date] = {
+      generationCount: day.generationCount,
+      recordedCount: day.recordedCount,
+      unrecordedCount: day.unrecordedCount,
+    };
+  }
+
+  return {
+    totalExperiences: candidate.totalExperiences,
+    totalGenerations: candidate.totalGenerations,
+    recordedGenerations: candidate.recordedGenerations,
+    unrecordedGenerations: candidate.unrecordedGenerations,
+    knownExperienceIds: [...new Set(candidate.knownExperienceIds)],
+    days,
+  };
+};
+
+const initializeUsageStats = async (recordsRoot: string) => {
+  const stats = emptyUsageStats();
+  await fs.mkdir(recordsRoot, { recursive: true });
+  const entries = await fs.readdir(recordsRoot, { withFileTypes: true });
+
+  await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry) => {
+        try {
+          const metadata = await readDemoRecordMetadata(getRecordDirectory(recordsRoot, entry.name));
+          const savedAt = typeof metadata.savedAt === "string" ? new Date(metadata.savedAt) : null;
+          if (!savedAt || Number.isNaN(savedAt.getTime())) {
+            return;
+          }
+
+          const date = getTokyoDate(savedAt);
+          const day = stats.days[date] ?? { generationCount: 0, recordedCount: 0, unrecordedCount: 0 };
+          day.generationCount += 1;
+          day.recordedCount += 1;
+          stats.days[date] = day;
+          stats.totalExperiences += 1;
+          stats.totalGenerations += 1;
+          stats.recordedGenerations += 1;
+          stats.knownExperienceIds.push(`legacy-${randomUUID()}`);
+        } catch {
+          // A broken or partial legacy record must not block stats initialization.
+        }
+      }),
+  );
+
+  return stats;
+};
+
+const writeUsageStats = async (recordsRoot: string, stats: StoredUsageStats) => {
+  const statsPath = path.join(recordsRoot, USAGE_STATS_FILE_NAME);
+  const temporaryPath = path.join(recordsRoot, `${USAGE_STATS_FILE_NAME}.${process.pid}.${randomUUID()}.tmp`);
+  await fs.writeFile(temporaryPath, `${JSON.stringify(stats, null, 2)}\n`, "utf8");
+  await fs.rename(temporaryPath, statsPath);
+};
+
+const readOrInitializeUsageStats = async (recordsRoot: string) => {
+  const statsPath = path.join(recordsRoot, USAGE_STATS_FILE_NAME);
+  try {
+    return parseUsageStats(JSON.parse(await fs.readFile(statsPath, "utf8")));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+
+    const stats = await initializeUsageStats(recordsRoot);
+    await writeUsageStats(recordsRoot, stats);
+    return stats;
+  }
+};
+
+const toUsageStatsResponse = (stats: StoredUsageStats): UsageStatsResponse => ({
+  totalExperiences: stats.totalExperiences,
+  totalGenerations: stats.totalGenerations,
+  recordedGenerations: stats.recordedGenerations,
+  unrecordedGenerations: stats.unrecordedGenerations,
+  days: Object.entries(stats.days)
+    .map(([date, counts]) => ({ date, ...counts }))
+    .sort((first, second) => second.date.localeCompare(first.date)),
+});
+
+const runUsageStatsUpdate = <T>(operation: () => Promise<T>) => {
+  const result = usageStatsWriteQueue.then(operation, operation);
+  usageStatsWriteQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+};
 
 const buildRecordUrls = (recordId: string, metadata: StoredDemoRecordMetadata) => ({
   imageUrl: `/api/demo-records/${encodeURIComponent(recordId)}/image`,
@@ -242,6 +405,62 @@ const createDemoRecordMiddleware =
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
       response.end();
+      return;
+    }
+
+    const isStatsRoute = pathParts.length === 3 && recordId === "stats";
+
+    if (isStatsRoute && request.method === "GET") {
+      try {
+        const stats = await runUsageStatsUpdate(() => readOrInitializeUsageStats(recordsRoot));
+        sendJson(response, 200, toUsageStatsResponse(stats));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to read usage stats";
+        sendJson(response, 500, { error: message });
+      }
+      return;
+    }
+
+    if (isStatsRoute && request.method === "POST") {
+      try {
+        const payload = JSON.parse(await readRequestBody(request)) as { recorded?: unknown; experienceId?: unknown };
+        if (typeof payload.recorded !== "boolean") {
+          sendJson(response, 400, { error: "recorded must be a boolean" });
+          return;
+        }
+        if (!isExperienceId(payload.experienceId)) {
+          sendJson(response, 400, { error: "experienceId must be a non-empty opaque identifier" });
+          return;
+        }
+        const experienceId = payload.experienceId;
+
+        const stats = await runUsageStatsUpdate(async () => {
+          const current = await readOrInitializeUsageStats(recordsRoot);
+          const date = getTokyoDate(new Date());
+          const day = current.days[date] ?? { generationCount: 0, recordedCount: 0, unrecordedCount: 0 };
+          day.generationCount += 1;
+          if (payload.recorded) {
+            current.recordedGenerations += 1;
+            day.recordedCount += 1;
+          } else {
+            current.unrecordedGenerations += 1;
+            day.unrecordedCount += 1;
+          }
+          current.totalGenerations += 1;
+          if (!current.knownExperienceIds.includes(experienceId)) {
+            current.knownExperienceIds.push(experienceId);
+            current.totalExperiences += 1;
+          }
+          current.days[date] = day;
+          await writeUsageStats(recordsRoot, current);
+          return current;
+        });
+
+        sendJson(response, 200, toUsageStatsResponse(stats));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to update usage stats";
+        sendJson(response, 500, { error: message });
+      }
       return;
     }
 

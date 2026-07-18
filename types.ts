@@ -82,3 +82,18 @@ export interface DemoRecordDetail extends DemoRecordSummary {
   drawingData: DrawingData;
   singingScore: SingingScore | null;
 }
+
+export interface UsageStatsDay {
+  date: string;
+  generationCount: number;
+  recordedCount: number;
+  unrecordedCount: number;
+}
+
+export interface UsageStats {
+  totalExperiences: number;
+  totalGenerations: number;
+  recordedGenerations: number;
+  unrecordedGenerations: number;
+  days: UsageStatsDay[];
+}
