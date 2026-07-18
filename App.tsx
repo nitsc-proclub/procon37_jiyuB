@@ -37,6 +37,20 @@ type GenerationRecordOptions = {
 };
 
 const PARTICIPANT_AGE_OPTIONS = Array.from({ length: 100 }, (_, index) => index);
+const RECORDING_OPTION_INTRODUCED_DATE = "2026-07-10";
+const COMPLETE_USAGE_STATS_START_DATE = "2026-07-18";
+
+const getUsageStatsCoverage = (date: string) => {
+  if (date < RECORDING_OPTION_INTRODUCED_DATE) {
+    return { label: "記録なし未導入", className: "bg-gray-100 text-gray-600" };
+  }
+
+  if (date < COMPLETE_USAGE_STATS_START_DATE) {
+    return { label: "記録なし未集計", className: "bg-amber-100 text-amber-700" };
+  }
+
+  return { label: "両方を集計", className: "bg-emerald-100 text-emerald-700" };
+};
 
 const EXPERIMENT_LYRICS: LyricsResponse = {
   title: "ネコの絵描き歌",
@@ -1335,6 +1349,16 @@ const App: React.FC = () => {
                     </div>
                   </div>
 
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold leading-relaxed text-amber-900" role="note">
+                    <p className="font-black">集計期間について</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-5">
+                      <li>2026/7/9以前：「記録なし」の選択肢はありませんでした。</li>
+                      <li>2026/7/10〜7/17：「記録なし」を選んだ生成は集計されていません。</li>
+                      <li>2026/7/18以降：「記録あり」「記録なし」の両方を集計しています。</li>
+                    </ul>
+                    <p className="mt-2 font-bold">そのため、2026/7/10〜7/17の体験人数・生成回数は、実際より少ない可能性があります。</p>
+                  </div>
+
                   {usageStats && (usageStats.days.length > 0 ? (
                     <div className="mt-4 overflow-x-auto">
                       <table className="min-w-full text-left text-sm">
@@ -1344,17 +1368,26 @@ const App: React.FC = () => {
                             <th className="px-2 py-2 text-right font-bold">生成回数</th>
                             <th className="px-2 py-2 text-right font-bold">記録あり</th>
                             <th className="px-2 py-2 text-right font-bold">記録なし</th>
+                            <th className="px-2 py-2 text-right font-bold">集計範囲</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-sky-100">
-                          {usageStats.days.map((day) => (
-                            <tr key={day.date} className="bg-white/70 text-slate-700">
-                              <td className="px-2 py-2 font-bold">{day.date}</td>
-                              <td className="px-2 py-2 text-right font-black">{day.generationCount}</td>
-                              <td className="px-2 py-2 text-right">{day.recordedCount}</td>
-                              <td className="px-2 py-2 text-right">{day.unrecordedCount}</td>
-                            </tr>
-                          ))}
+                          {usageStats.days.map((day) => {
+                            const coverage = getUsageStatsCoverage(day.date);
+                            return (
+                              <tr key={day.date} className="bg-white/70 text-slate-700">
+                                <td className="px-2 py-2 font-bold">{day.date}</td>
+                                <td className="px-2 py-2 text-right font-black">{day.generationCount}</td>
+                                <td className="px-2 py-2 text-right">{day.recordedCount}</td>
+                                <td className="px-2 py-2 text-right">{day.unrecordedCount}</td>
+                                <td className="px-2 py-2 text-right">
+                                  <span className={`inline-block whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-black ${coverage.className}`}>
+                                    {coverage.label}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
