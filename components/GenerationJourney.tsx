@@ -7,6 +7,7 @@ type GenerationJourneyProps = {
   compact?: boolean;
   timingEstimate?: GenerationTimingEstimate | null;
   runKey?: number;
+  isComplete?: boolean;
 };
 
 const JOURNEY_STEPS = [
@@ -115,12 +116,16 @@ const TransformationCanvas: React.FC<{ drawingData: DrawingData }> = ({ drawingD
   return <canvas ref={canvasRef} className="h-full w-full" aria-hidden="true" />;
 };
 
-const ESTIMATED_PROGRESS_LIMIT = 85;
+const ESTIMATED_PROGRESS_LIMIT = 90;
 const OVERDUE_PROGRESS_LIMIT = 97.9;
 const PROGRESS_CATCH_UP_MS = 1000;
+const COMPLETION_ANIMATION_MS = 200;
 
 export const getEstimatedGenerationDurationMs = (timingEstimate?: GenerationTimingEstimate | null) => {
   if (!timingEstimate?.determinate) return null;
+
+  const estimatedTotalMs = timingEstimate.estimatedTotalMs;
+  if (Number.isFinite(estimatedTotalMs) && estimatedTotalMs > 0) return estimatedTotalMs;
 
   const totalDuration = GENERATION_TIMING_PHASES.reduce(
     (sum, phase) => sum + Math.max(0, timingEstimate.phaseDurationsMs[phase] ?? 0),
@@ -139,7 +144,7 @@ export const getGenerationProgressTarget = (elapsedMs: number, estimatedDuration
   const overdueMs = elapsed - estimatedDurationMs;
   return Math.min(
     OVERDUE_PROGRESS_LIMIT,
-    ESTIMATED_PROGRESS_LIMIT + 1.5 * Math.log1p(overdueMs / 1000),
+    ESTIMATED_PROGRESS_LIMIT + Math.log1p(overdueMs / 1000),
   );
 };
 
@@ -151,29 +156,51 @@ export const smoothlyAdvanceProgress = (currentValue: number, targetValue: numbe
   return currentValue + (targetValue - currentValue) * catchUp;
 };
 
-const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstimate" | "runKey">> = ({ timingEstimate, runKey = 0 }) => {
+const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstimate" | "runKey" | "isComplete">> = ({ timingEstimate, runKey = 0, isComplete = false }) => {
   const [value, setValue] = useState(0);
   const valueRef = useRef(0);
   const timingEstimateRef = useRef(timingEstimate);
+  const completionStartedAtRef = useRef<number | null>(null);
+  const completionStartValueRef = useRef(0);
 
   useEffect(() => {
     timingEstimateRef.current = timingEstimate;
   }, [timingEstimate]);
 
   useEffect(() => {
+    if (!isComplete) {
+      completionStartedAtRef.current = null;
+      return;
+    }
+
+    completionStartValueRef.current = valueRef.current;
+    completionStartedAtRef.current = performance.now();
+  }, [isComplete]);
+
+  useEffect(() => {
     valueRef.current = 0;
+    completionStartedAtRef.current = null;
+    completionStartValueRef.current = 0;
     setValue(0);
 
     const startedAt = performance.now();
     let previousFrameAt = startedAt;
     let frameId = 0;
     const update = (now: number) => {
-      const estimatedDurationMs = getEstimatedGenerationDurationMs(timingEstimateRef.current);
-      if (estimatedDurationMs) {
-        const target = getGenerationProgressTarget(now - startedAt, estimatedDurationMs);
-        const nextValue = smoothlyAdvanceProgress(valueRef.current, target, now - previousFrameAt);
+      const completionStartedAt = completionStartedAtRef.current;
+      if (completionStartedAt !== null) {
+        const completionProgress = Math.min(1, Math.max(0, (now - completionStartedAt) / COMPLETION_ANIMATION_MS));
+        const nextValue = completionStartValueRef.current + (100 - completionStartValueRef.current) * completionProgress;
         valueRef.current = nextValue;
         setValue(nextValue);
+      } else {
+        const estimatedDurationMs = getEstimatedGenerationDurationMs(timingEstimateRef.current);
+        if (estimatedDurationMs) {
+          const target = getGenerationProgressTarget(now - startedAt, estimatedDurationMs);
+          const nextValue = smoothlyAdvanceProgress(valueRef.current, target, now - previousFrameAt);
+          valueRef.current = nextValue;
+          setValue(nextValue);
+        }
       }
       previousFrameAt = now;
       frameId = window.requestAnimationFrame(update);
@@ -183,14 +210,15 @@ const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstima
   }, [runKey]);
 
   const isDeterminate = getEstimatedGenerationDurationMs(timingEstimate) !== null;
-  return <div className="mt-3 w-full max-w-md" role="progressbar" aria-label="歌を作っています" aria-valuemin={0} aria-valuemax={100} aria-valuenow={isDeterminate ? Math.round(value) : 0} aria-valuetext={isDeterminate ? undefined : "時間を見積もっています"}>
-    <div className={`h-1.5 overflow-hidden rounded-full bg-orange-100 ${isDeterminate ? "" : "animate-pulse"}`} aria-hidden="true">
-      <div className="h-full rounded-full bg-orange-400 transition-[width] duration-200" style={{ width: `${isDeterminate ? value : 0}%` }} />
+  const isVisible = isDeterminate || isComplete;
+  return <div className="mt-3 w-full max-w-md" role="progressbar" aria-label="歌を作っています" aria-valuemin={0} aria-valuemax={100} aria-valuenow={isVisible ? Math.round(value) : 0} aria-valuetext={isVisible ? undefined : "時間を見積もっています"}>
+    <div className={`h-1.5 overflow-hidden rounded-full bg-orange-100 ${isVisible ? "" : "animate-pulse"}`} aria-hidden="true">
+      <div className={`h-full rounded-full bg-orange-400 ${isComplete ? "" : "transition-[width] duration-200"}`} style={{ width: `${isVisible ? value : 0}%` }} />
     </div>
   </div>;
 };
 
-const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, compact = false, timingEstimate, runKey }) => (
+const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, compact = false, timingEstimate, runKey, isComplete }) => (
   <div className={`generation-journey flex h-full flex-col items-center justify-center text-center ${compact ? "min-h-0" : "min-h-[340px]"}`}>
     {compact && <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{stageLabel}</p>}
     {drawingData && compact ? (
@@ -215,7 +243,7 @@ const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawi
     {!compact && (
       <>
         <p className="mt-5 text-sm font-bold text-slate-500">AIとずんだもんが、順番に歌をつくっています</p>
-        <GenerationProgressBar timingEstimate={timingEstimate} runKey={runKey} />
+        <GenerationProgressBar timingEstimate={timingEstimate} runKey={runKey} isComplete={isComplete} />
         <div className="mt-4 grid w-full max-w-xl gap-2 sm:grid-cols-2">
           {JOURNEY_STEPS.map((step) => (
             <div key={step} className={`rounded-2xl border px-3 py-2 text-sm font-bold ${step === stageLabel ? "border-orange-400 bg-orange-50 text-orange-900 shadow-sm" : "border-orange-100 bg-white/70 text-slate-500"}`}>

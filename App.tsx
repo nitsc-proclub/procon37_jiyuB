@@ -14,6 +14,7 @@ import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicev
 import { DemoRecordSummary, DrawingData, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsResponse, SingingScore, UsageStats } from "./types";
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
+const waitForGenerationCompletion = () => new Promise<void>((resolve) => window.setTimeout(resolve, 350));
 
 const fetchSeekableAudioUrl = async (audioUrl: string) => {
   const response = await fetch(audioUrl);
@@ -252,6 +253,7 @@ const App: React.FC = () => {
   const [progressLabel, setProgressLabel] = useState("準備中...");
   const [generationTimingEstimate, setGenerationTimingEstimate] = useState<GenerationTimingEstimate | null>(null);
   const [generationTimingRunKey, setGenerationTimingRunKey] = useState(0);
+  const [isGenerationProgressComplete, setIsGenerationProgressComplete] = useState(false);
   const [participantAge, setParticipantAge] = useState<number | null>(null);
   const [pendingGenerationData, setPendingGenerationData] = useState<DrawingData | null>(null);
   const [isRecordConsentOpen, setIsRecordConsentOpen] = useState(false);
@@ -812,6 +814,7 @@ const App: React.FC = () => {
     generationTimingRunKeyRef.current = runKey;
     setGenerationTimingRunKey(runKey);
     setGenerationTimingEstimate(null);
+    setIsGenerationProgressComplete(false);
     beginTimingPhase("gemini");
     void getGenerationTimingEstimate()
       .then((estimate) => {
@@ -910,6 +913,7 @@ const App: React.FC = () => {
 
       completeTimingPhase("finalize");
       const scoreNotes = generatedScore?.notes ?? [];
+      const totalMs = Math.round(performance.now() - timingStartedAt);
       void saveGenerationTiming({
         success: generationErrorMessage === null,
         failedStage,
@@ -921,10 +925,14 @@ const App: React.FC = () => {
         noteCount: scoreNotes.length,
         totalFrames: scoreNotes.reduce((sum, note) => sum + note.frame_length, 0),
         durationsMs,
-        totalMs: Math.round(performance.now() - timingStartedAt),
+        totalMs,
       }).catch(() => {
         // Anonymous timing storage is best-effort and must not change the result flow.
       });
+      if (generationErrorMessage === null) {
+        setIsGenerationProgressComplete(true);
+        await waitForGenerationCompletion();
+      }
       setIsGenerating(false);
       generationRunRef.current = false;
     }
@@ -1862,7 +1870,7 @@ const App: React.FC = () => {
             {lyrics || isGenerating || error ? (
               <div className="magic-card bg-white p-5 sm:p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
                 {isGenerating ? (
-                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} timingEstimate={generationTimingEstimate} runKey={generationTimingRunKey} />
+                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} timingEstimate={generationTimingEstimate} runKey={generationTimingRunKey} isComplete={isGenerationProgressComplete} />
                 ) : error ? (
                   <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
                     <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>

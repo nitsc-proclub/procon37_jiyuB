@@ -123,5 +123,6 @@ export interface GenerationTimingEntry {
 export interface GenerationTimingEstimate {
   determinate: boolean;
   sampleCount: number;
+  estimatedTotalMs: number;
   phaseDurationsMs: GenerationTimingDurations;
 }

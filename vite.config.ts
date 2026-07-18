@@ -268,12 +268,14 @@ const getGenerationTimingEstimate = (entries: StoredGenerationTimingEntry[], voi
     .sort(([, firstCount], [, secondCount]) => secondCount - firstCount)[0]?.[0];
   // Never mix timing profiles. A model-specific subset is used only when it has enough samples itself.
   const selected = preferredModel ? profileEntries.filter((entry) => entry.modelName === preferredModel) : profileEntries;
+  const recentSelected = selected.slice(-10);
   const phaseDurationsMs = Object.fromEntries(
     GENERATION_TIMING_PHASES.map((phase) => [phase, percentile75(selected.map((entry) => entry.durationsMs[phase] ?? 0)) ?? 0]),
   ) as Record<GenerationTimingPhase, number>;
   return {
-    determinate: selected.length >= 3,
-    sampleCount: selected.length,
+    determinate: recentSelected.length >= 3,
+    sampleCount: recentSelected.length,
+    estimatedTotalMs: percentile75(recentSelected.map((entry) => entry.totalMs)) ?? 0,
     phaseDurationsMs,
   };
 };
