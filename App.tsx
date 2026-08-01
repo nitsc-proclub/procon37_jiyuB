@@ -14,7 +14,6 @@ import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicev
 import { DemoRecordSummary, DrawingData, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsResponse, SingingScore, UsageStats } from "./types";
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
-const waitForGenerationCompletion = () => new Promise<void>((resolve) => window.setTimeout(resolve, 350));
 
 const fetchSeekableAudioUrl = async (audioUrl: string) => {
   const response = await fetch(audioUrl);
@@ -51,6 +50,10 @@ const getUsageStatsCoverage = (date: string) => {
   }
 
   return { label: "両方を集計", className: "bg-emerald-100 text-emerald-700" };
+};
+type GenerationCompletionWaiter = {
+  runKey: number;
+  resolve: () => void;
 };
 
 const EXPERIMENT_LYRICS: LyricsResponse = {
@@ -253,6 +256,7 @@ const App: React.FC = () => {
   const [progressLabel, setProgressLabel] = useState("準備中...");
   const [generationTimingEstimate, setGenerationTimingEstimate] = useState<GenerationTimingEstimate | null>(null);
   const [generationTimingRunKey, setGenerationTimingRunKey] = useState(0);
+  const [generationProgressPhase, setGenerationProgressPhase] = useState<GenerationTimingPhase>("gemini");
   const [isGenerationProgressComplete, setIsGenerationProgressComplete] = useState(false);
   const [participantAge, setParticipantAge] = useState<number | null>(null);
   const [pendingGenerationData, setPendingGenerationData] = useState<DrawingData | null>(null);
@@ -298,12 +302,29 @@ const App: React.FC = () => {
   const recordConsentPrimaryButtonRef = useRef<HTMLButtonElement>(null);
   const generationRunRef = useRef(false);
   const generationTimingRunKeyRef = useRef(0);
+  const generationCompletionWaiterRef = useRef<GenerationCompletionWaiter | null>(null);
+  const isMountedRef = useRef(true);
   const audioUrlRef = useRef<string | null>(null);
   const experimentAudioRef = useRef<HTMLAudioElement>(null);
   const experimentAudioUrlRef = useRef<string | null>(null);
 
+  const handleGenerationProgressDisplayComplete = (runKey: number) => {
+    const waiter = generationCompletionWaiterRef.current;
+    if (!waiter || waiter.runKey !== runKey) return;
+
+    generationCompletionWaiterRef.current = null;
+    waiter.resolve();
+  };
+
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
+      generationRunRef.current = false;
+      const completionWaiter = generationCompletionWaiterRef.current;
+      generationCompletionWaiterRef.current = null;
+      completionWaiter?.resolve();
+
       if (isBlobUrl(audioUrlRef.current)) {
         URL.revokeObjectURL(audioUrlRef.current);
       }
@@ -802,6 +823,7 @@ const App: React.FC = () => {
       }
       activeTimingPhase = phase;
       phaseStartedAt.set(phase, performance.now());
+      setGenerationProgressPhase(phase);
     };
     const completeTimingPhase = (phase = activeTimingPhase) => {
       if (durationsMs[phase] !== undefined) return;
@@ -811,8 +833,15 @@ const App: React.FC = () => {
 
     generationRunRef.current = true;
     const runKey = generationTimingRunKeyRef.current + 1;
+    let resolveGenerationCompletion!: () => void;
+    const generationCompletion = new Promise<void>((resolve) => {
+      resolveGenerationCompletion = resolve;
+    });
+    generationCompletionWaiterRef.current = { runKey, resolve: resolveGenerationCompletion };
     generationTimingRunKeyRef.current = runKey;
     setGenerationTimingRunKey(runKey);
+    setGenerationProgressPhase("gemini");
+    setGenerationTimingEstimate(null);
     setIsGenerationProgressComplete(false);
     beginTimingPhase("gemini");
     void getGenerationTimingEstimate()
@@ -933,10 +962,14 @@ const App: React.FC = () => {
       });
       if (generationErrorMessage === null) {
         setIsGenerationProgressComplete(true);
-        await waitForGenerationCompletion();
+        await generationCompletion;
+      } else if (generationCompletionWaiterRef.current?.runKey === runKey) {
+        generationCompletionWaiterRef.current = null;
       }
-      setIsGenerating(false);
-      generationRunRef.current = false;
+      if (isMountedRef.current && generationTimingRunKeyRef.current === runKey) {
+        setIsGenerating(false);
+        generationRunRef.current = false;
+      }
     }
   };
 
@@ -1872,7 +1905,7 @@ const App: React.FC = () => {
             {lyrics || isGenerating || error ? (
               <div className="magic-card bg-white p-5 sm:p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
                 {isGenerating ? (
-                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} timingEstimate={generationTimingEstimate} runKey={generationTimingRunKey} isComplete={isGenerationProgressComplete} />
+                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} timingEstimate={generationTimingEstimate} progressPhase={generationProgressPhase} runKey={generationTimingRunKey} isComplete={isGenerationProgressComplete} onCompletionDisplayComplete={handleGenerationProgressDisplayComplete} />
                 ) : error ? (
                   <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
                     <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>

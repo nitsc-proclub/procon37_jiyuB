@@ -1,13 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { DrawingData, GenerationTimingEstimate, Point } from "../types";
+import { DrawingData, GenerationTimingEstimate, GenerationTimingPhase, Point } from "../types";
+import { getGenerationPhaseProgressTarget, smoothlyAdvanceProgress } from "../utils/generationProgress";
 
 type GenerationJourneyProps = {
   stageLabel: string;
   drawingData?: DrawingData | null;
   compact?: boolean;
   timingEstimate?: GenerationTimingEstimate | null;
+  progressPhase?: GenerationTimingPhase;
   runKey?: number;
   isComplete?: boolean;
+  onCompletionDisplayComplete?: (runKey: number) => void;
 };
 
 const JOURNEY_STEPS = [
@@ -116,70 +119,87 @@ const TransformationCanvas: React.FC<{ drawingData: DrawingData }> = ({ drawingD
   return <canvas ref={canvasRef} className="h-full w-full" aria-hidden="true" />;
 };
 
-const ESTIMATED_PROGRESS_LIMIT = 90;
-const OVERDUE_PROGRESS_LIMIT = 97.9;
-const PROGRESS_CATCH_UP_MS = 1000;
-const COMPLETION_ANIMATION_MS = 200;
-const FALLBACK_ESTIMATED_DURATION_MS = 20_000;
+const COMPLETION_ANIMATION_MS = 500;
+const COMPLETION_HOLD_MS = 600;
+const COMPLETION_FALLBACK_MS = COMPLETION_ANIMATION_MS + COMPLETION_HOLD_MS + 1_000;
 
-export const getEstimatedGenerationDurationMs = (timingEstimate?: GenerationTimingEstimate | null) => {
-  const estimatedTotalMs = timingEstimate?.estimatedTotalMs;
-  if (timingEstimate?.determinate && Number.isFinite(estimatedTotalMs) && estimatedTotalMs > 0) return estimatedTotalMs;
-
-  // A safe fallback keeps the bar moving while the optional timing API is unavailable.
-  return FALLBACK_ESTIMATED_DURATION_MS;
-};
-
-export const getGenerationProgressTarget = (elapsedMs: number, estimatedDurationMs: number) => {
-  const elapsed = Math.max(0, elapsedMs);
-  if (elapsed <= estimatedDurationMs) {
-    return ESTIMATED_PROGRESS_LIMIT * (elapsed / estimatedDurationMs);
-  }
-
-  // Keep moving after the estimate without making an overdue generation look complete.
-  const overdueMs = elapsed - estimatedDurationMs;
-  return Math.min(
-    OVERDUE_PROGRESS_LIMIT,
-    ESTIMATED_PROGRESS_LIMIT + Math.log1p(overdueMs / 1000),
-  );
-};
-
-export const smoothlyAdvanceProgress = (currentValue: number, targetValue: number, elapsedMs: number) => {
-  if (targetValue <= currentValue) return currentValue;
-
-  // Reaches about 95% of a newly available target in one second.
-  const catchUp = 1 - Math.exp((-3 * Math.max(0, elapsedMs)) / PROGRESS_CATCH_UP_MS);
-  return currentValue + (targetValue - currentValue) * catchUp;
-};
-
-const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstimate" | "runKey" | "isComplete">> = ({ timingEstimate, runKey = 0, isComplete = false }) => {
+const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstimate" | "progressPhase" | "runKey" | "isComplete" | "onCompletionDisplayComplete">> = ({ timingEstimate, progressPhase = "gemini", runKey = 0, isComplete = false, onCompletionDisplayComplete }) => {
   const [value, setValue] = useState(0);
   const valueRef = useRef(0);
   const timingEstimateRef = useRef(timingEstimate);
+  const progressPhaseRef = useRef(progressPhase);
+  const phaseStartedAtRef = useRef<number | null>(null);
   const completionStartedAtRef = useRef<number | null>(null);
   const completionStartValueRef = useRef(0);
+  const completionReachedAtRef = useRef<number | null>(null);
+  const completionNotifiedRef = useRef(false);
+  const onCompletionDisplayCompleteRef = useRef(onCompletionDisplayComplete);
 
   useEffect(() => {
     timingEstimateRef.current = timingEstimate;
   }, [timingEstimate]);
 
   useEffect(() => {
+    onCompletionDisplayCompleteRef.current = onCompletionDisplayComplete;
+  }, [onCompletionDisplayComplete]);
+
+  useEffect(() => {
+    progressPhaseRef.current = progressPhase;
+    phaseStartedAtRef.current = performance.now();
+  }, [progressPhase, runKey]);
+
+  useEffect(() => {
     if (!isComplete) {
       completionStartedAtRef.current = null;
+      completionReachedAtRef.current = null;
       return;
     }
 
     completionStartValueRef.current = valueRef.current;
     completionStartedAtRef.current = performance.now();
-  }, [isComplete]);
+    completionReachedAtRef.current = null;
+    completionNotifiedRef.current = false;
+
+    // requestAnimationFrame can be suspended in a background tab. Keep the
+    // normal visible path tied to the rendered 100% frame, but never leave App
+    // waiting forever when frames are unavailable.
+    let remainingHoldTimer: number | null = null;
+    const notifyCompletion = () => {
+      if (completionNotifiedRef.current) return;
+      completionNotifiedRef.current = true;
+      onCompletionDisplayCompleteRef.current?.(runKey);
+    };
+    const fallbackTimer = window.setTimeout(() => {
+      const completionReachedAt = completionReachedAtRef.current;
+      if (completionReachedAt === null) {
+        notifyCompletion();
+        return;
+      }
+
+      const remainingHoldMs = COMPLETION_HOLD_MS - (performance.now() - completionReachedAt);
+      if (remainingHoldMs <= 0) {
+        notifyCompletion();
+        return;
+      }
+
+      remainingHoldTimer = window.setTimeout(notifyCompletion, remainingHoldMs);
+    }, COMPLETION_FALLBACK_MS);
+    return () => {
+      window.clearTimeout(fallbackTimer);
+      if (remainingHoldTimer !== null) window.clearTimeout(remainingHoldTimer);
+    };
+  }, [isComplete, runKey]);
 
   useEffect(() => {
     valueRef.current = 0;
     completionStartedAtRef.current = null;
     completionStartValueRef.current = 0;
+    completionReachedAtRef.current = null;
+    completionNotifiedRef.current = false;
     setValue(0);
 
     const startedAt = performance.now();
+    phaseStartedAtRef.current = startedAt;
     let previousFrameAt = startedAt;
     let frameId = 0;
     const update = (now: number) => {
@@ -189,9 +209,17 @@ const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstima
         const nextValue = completionStartValueRef.current + (100 - completionStartValueRef.current) * completionProgress;
         valueRef.current = nextValue;
         setValue(nextValue);
+        if (completionProgress === 1) {
+          if (completionReachedAtRef.current === null) {
+            completionReachedAtRef.current = now;
+          } else if (!completionNotifiedRef.current && now - completionReachedAtRef.current >= COMPLETION_HOLD_MS) {
+            completionNotifiedRef.current = true;
+            onCompletionDisplayCompleteRef.current?.(runKey);
+          }
+        }
       } else {
-        const estimatedDurationMs = getEstimatedGenerationDurationMs(timingEstimateRef.current);
-        const target = getGenerationProgressTarget(now - startedAt, estimatedDurationMs);
+        const phaseStartedAt = phaseStartedAtRef.current ?? startedAt;
+        const target = getGenerationPhaseProgressTarget(progressPhaseRef.current, now - phaseStartedAt, timingEstimateRef.current);
         const nextValue = smoothlyAdvanceProgress(valueRef.current, target, now - previousFrameAt);
         valueRef.current = nextValue;
         setValue(nextValue);
@@ -210,7 +238,7 @@ const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstima
   </div>;
 };
 
-const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, compact = false, timingEstimate, runKey, isComplete }) => (
+const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, compact = false, timingEstimate, progressPhase, runKey, isComplete, onCompletionDisplayComplete }) => (
   <div className={`generation-journey flex h-full flex-col items-center justify-center text-center ${compact ? "min-h-0" : "min-h-[340px]"}`}>
     {compact && <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{stageLabel}</p>}
     {drawingData && compact ? (
@@ -235,7 +263,7 @@ const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawi
     {!compact && (
       <>
         <p className="mt-5 text-sm font-bold text-slate-500">AIとずんだもんが、順番に歌をつくっています</p>
-        <GenerationProgressBar timingEstimate={timingEstimate} runKey={runKey} isComplete={isComplete} />
+        <GenerationProgressBar timingEstimate={timingEstimate} progressPhase={progressPhase} runKey={runKey} isComplete={isComplete} onCompletionDisplayComplete={onCompletionDisplayComplete} />
         <div className="mt-4 grid w-full max-w-xl gap-2 sm:grid-cols-2">
           {JOURNEY_STEPS.map((step) => (
             <div key={step} className={`rounded-2xl border px-3 py-2 text-sm font-bold ${step === stageLabel ? "border-orange-400 bg-orange-50 text-orange-900 shadow-sm" : "border-orange-100 bg-white/70 text-slate-500"}`}>

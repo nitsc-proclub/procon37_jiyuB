@@ -256,8 +256,12 @@ const percentile75 = (values: number[]) => {
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.75) - 1)];
 };
 
+const MAX_ESTIMATE_TOTAL_MS = 60_000;
+
 const getGenerationTimingEstimate = (entries: StoredGenerationTimingEntry[], voicevoxProfile: string) => {
-  const successes = entries.filter((entry) => entry.success && entry.totalMs > 0).slice(-MAX_GENERATION_TIMING_ENTRIES);
+  const successes = entries
+    .filter((entry) => entry.success && entry.totalMs > 0 && entry.totalMs < MAX_ESTIMATE_TOTAL_MS)
+    .slice(-MAX_GENERATION_TIMING_ENTRIES);
   const profileEntries = successes.filter((entry) => entry.voicevoxProfile === voicevoxProfile);
   const modelCounts = new Map<string, number>();
   for (const entry of profileEntries) {
@@ -270,7 +274,7 @@ const getGenerationTimingEstimate = (entries: StoredGenerationTimingEntry[], voi
   const selected = preferredModel ? profileEntries.filter((entry) => entry.modelName === preferredModel) : profileEntries;
   const recentSelected = selected.slice(-10);
   const phaseDurationsMs = Object.fromEntries(
-    GENERATION_TIMING_PHASES.map((phase) => [phase, percentile75(selected.map((entry) => entry.durationsMs[phase] ?? 0)) ?? 0]),
+    GENERATION_TIMING_PHASES.map((phase) => [phase, percentile75(recentSelected.map((entry) => entry.durationsMs[phase] ?? 0)) ?? 0]),
   ) as Record<GenerationTimingPhase, number>;
   return {
     determinate: recentSelected.length >= 3,
