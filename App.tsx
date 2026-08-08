@@ -798,8 +798,8 @@ const App: React.FC = () => {
       return;
     }
 
-    if (!appFeatures.gemini || !appFeatures.voicevox) {
-      setError("公開確認版では、AI生成・音声生成機能は準備中です。描画機能をお試しください。");
+    if (!appFeatures.gemini) {
+      setError("公開確認版では、AI生成機能は準備中です。描画機能をお試しください。");
       return;
     }
 
@@ -844,16 +844,18 @@ const App: React.FC = () => {
     setGenerationTimingEstimate(null);
     setIsGenerationProgressComplete(false);
     beginTimingPhase("gemini");
-    void getGenerationTimingEstimate()
-      .then((estimate) => {
-        if (generationRunRef.current && generationTimingRunKeyRef.current === runKey) setGenerationTimingEstimate(estimate);
-      })
-      .catch((timingEstimateError) => {
-        // Timing estimates are optional and must never interrupt generation.
-        if (import.meta.env.DEV) {
-          console.warn("Failed to load generation timing estimate", timingEstimateError);
-        }
-      });
+    if (appFeatures.generationTelemetry) {
+      void getGenerationTimingEstimate()
+        .then((estimate) => {
+          if (generationRunRef.current && generationTimingRunKeyRef.current === runKey) setGenerationTimingEstimate(estimate);
+        })
+        .catch((timingEstimateError) => {
+          // Timing estimates are optional and must never interrupt generation.
+          if (import.meta.env.DEV) {
+            console.warn("Failed to load generation timing estimate", timingEstimateError);
+          }
+        });
+    }
     setIsGenerating(true);
     setLyrics(null);
     setError(null);
@@ -865,19 +867,30 @@ const App: React.FC = () => {
     setDrawingDisplayMode("animated");
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
-    void recordGeneration(recordOptions.shouldRecord)
-      .then(setUsageStats)
-      .catch((statsError) => {
-        if (import.meta.env.DEV) {
-          console.warn("Failed to record usage stats", statsError);
-        }
-      });
+    if (appFeatures.dataSaving) {
+      void recordGeneration(recordOptions.shouldRecord)
+        .then(setUsageStats)
+        .catch((statsError) => {
+          if (import.meta.env.DEV) {
+            console.warn("Failed to record usage stats", statsError);
+          }
+        });
+    }
     startProgress("絵をじっくり見ているよ");
 
     try {
       updateProgress("絵をじっくり見ているよ");
       generatedLyrics = await generateEkakiUta(groupedDrawingData);
       completeTimingPhase("gemini");
+
+      if (!appFeatures.voicevox) {
+        beginTimingPhase("finalize");
+        updateProgress("絵描き歌ができたよ");
+        await finishProgress("絵描き歌ができたよ");
+        setLyrics(generatedLyrics);
+        return;
+      }
+
       beginTimingPhase("accent");
 
       const accentLineHints = await analyzeLyricsAccents(generatedLyrics);
@@ -912,9 +925,13 @@ const App: React.FC = () => {
       completeTimingPhase();
       generationErrorMessage =
         generationError instanceof Error ? generationError.message : "歌の生成に失敗しました。";
-      setLyrics(null);
-      setPlaybackScore(null);
-      resetAudioState();
+      // Gemini succeeded before a later VOICEVOX stage failed. Keep that useful
+      // lyric result visible instead of discarding it with the audio error.
+      setLyrics(generatedLyrics);
+      if (!generatedLyrics) {
+        setPlaybackScore(null);
+        resetAudioState();
+      }
       setError(generationErrorMessage);
       await finishProgress("エラーで終了しました");
     } finally {
@@ -945,21 +962,23 @@ const App: React.FC = () => {
       completeTimingPhase("finalize");
       const scoreNotes = generatedScore?.notes ?? [];
       const totalMs = Math.round(performance.now() - timingStartedAt);
-      void saveGenerationTiming({
-        success: generationErrorMessage === null,
-        failedStage,
-        modelName: generatedLyrics?.modelName ?? null,
-        strokeCount: groupedDrawingData.strokes.length,
-        strokeGroupCount: groupedDrawingData.strokeGroups?.length ?? 0,
-        pointCount: groupedDrawingData.strokes.reduce((sum, stroke) => sum + stroke.points.length, 0),
-        lyricLineCount: generatedLyrics?.lines.filter((line) => line.trim().length > 0).length ?? 0,
-        noteCount: scoreNotes.length,
-        totalFrames: scoreNotes.reduce((sum, note) => sum + note.frame_length, 0),
-        durationsMs,
-        totalMs,
-      }).catch(() => {
-        // Anonymous timing storage is best-effort and must not change the result flow.
-      });
+      if (appFeatures.generationTelemetry) {
+        void saveGenerationTiming({
+          success: generationErrorMessage === null,
+          failedStage,
+          modelName: generatedLyrics?.modelName ?? null,
+          strokeCount: groupedDrawingData.strokes.length,
+          strokeGroupCount: groupedDrawingData.strokeGroups?.length ?? 0,
+          pointCount: groupedDrawingData.strokes.reduce((sum, stroke) => sum + stroke.points.length, 0),
+          lyricLineCount: generatedLyrics?.lines.filter((line) => line.trim().length > 0).length ?? 0,
+          noteCount: scoreNotes.length,
+          totalFrames: scoreNotes.reduce((sum, note) => sum + note.frame_length, 0),
+          durationsMs,
+          totalMs,
+        }).catch(() => {
+          // Anonymous timing storage is best-effort and must not change the result flow.
+        });
+      }
       if (generationErrorMessage === null) {
         setIsGenerationProgressComplete(true);
         await generationCompletion;
@@ -974,8 +993,8 @@ const App: React.FC = () => {
   };
 
   const handleComplete = async (data: DrawingData) => {
-    if (!appFeatures.gemini || !appFeatures.voicevox) {
-      setError("公開確認版では、AI生成・音声生成機能は準備中です。描画機能をお試しください。");
+    if (!appFeatures.gemini) {
+      setError("公開確認版では、AI生成機能は準備中です。描画機能をお試しください。");
       return;
     }
 
@@ -1052,7 +1071,7 @@ const App: React.FC = () => {
   const canvasGuideState = isGenerating || error || audioUrl
     ? null
     : hasEnoughDrawing
-      ? appFeatures.gemini && appFeatures.voicevox
+      ? appFeatures.gemini
         ? "generate"
         : null
       : drawingMetrics.strokeCount === 0
@@ -1328,12 +1347,16 @@ const App: React.FC = () => {
             className="h-14 w-auto drop-shadow-sm md:h-16"
           />
         </h1>
-        <p className="text-sm text-gray-600 font-medium">絵を描くと、AI が歌詞を作り、ずんだもん（VOICEVOX）が歌ってくれます！</p>
+        <p className="text-sm text-gray-600 font-medium">
+          {appFeatures.voicevox
+            ? "絵を描くと、AI が歌詞を作り、ずんだもん（VOICEVOX）が歌ってくれます！"
+            : "絵を描くと、AI が絵描き歌の歌詞を作ってくれます！"}
+        </p>
         {appConfig.isDeploymentPreview && (
           <div className="mx-auto mt-4 max-w-2xl rounded-2xl border-2 border-orange-200 bg-orange-50 px-5 py-3 text-left shadow-sm" role="status">
             <p className="font-black text-orange-700">公開確認版</p>
             <p className="mt-1 text-sm font-semibold leading-relaxed text-orange-700">
-              アプリの画面と描画機能を確認できます。AI生成・音声生成・データ保存は現在準備中です。
+              AIが絵描き歌の歌詞を作れます。歌声生成とデータ保存は現在準備中です。
             </p>
           </div>
         )}
@@ -1886,8 +1909,8 @@ const App: React.FC = () => {
               isGenerating={isGenerating}
               isInteractionBlocked={isRecordConsentOpen}
               generationStageLabel={progressLabel}
-              generationDisabled={!appFeatures.gemini || !appFeatures.voicevox}
-              generationDisabledMessage="AI生成・音声生成は現在準備中です。描画機能はそのまま利用できます。"
+              generationDisabled={!appFeatures.gemini}
+              generationDisabledMessage="AI生成は現在準備中です。描画機能はそのまま利用できます。"
               initialDrawing={playbackDrawing}
               playbackDrawing={playbackDrawing}
               playbackAudioRef={audioRef}
@@ -1906,6 +1929,41 @@ const App: React.FC = () => {
               <div className="magic-card bg-white p-5 sm:p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
                 {isGenerating ? (
                   <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} timingEstimate={generationTimingEstimate} progressPhase={generationProgressPhase} runKey={generationTimingRunKey} isComplete={isGenerationProgressComplete} onCompletionDisplayComplete={handleGenerationProgressDisplayComplete} />
+                ) : lyrics && !audioUrl ? (
+                  <>
+                    {error && (
+                      <p className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800" role="alert">
+                        歌詞はできましたが、歌声の生成に失敗しました。{error}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleStartPrint}
+                      disabled={!canShowPrintLayout}
+                      className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border-2 border-orange-100 bg-white text-orange-500 shadow-sm transition-all hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                      title="印刷する"
+                      aria-label="印刷する"
+                    >
+                      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M7 9V4h10v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M7 14h10v6H7z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                    <div className="mb-6 text-center border-b-2 border-orange-50 pb-4">
+                      <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">{lyrics.identifiedObject}</span>
+                      <h2 ref={completionHeadingRef} tabIndex={-1} className="text-3xl font-bold text-gray-800 focus:outline-none">{lyrics.title}</h2>
+                    </div>
+                    <KaraokeLyricsPanel lyrics={lyrics} audioRef={audioRef} singingScore={playbackScore} className="mt-2" showKanaLines />
+                    <div className="mt-6 rounded-2xl border-2 border-orange-100 bg-orange-50/60 p-4">
+                      <p className="mb-2 text-sm font-black text-gray-700">描く順番</p>
+                      <div className="space-y-2 text-sm font-semibold text-gray-600">
+                        {lyrics.lineStrokeMappings?.map((mapping) => <p key={mapping.lineIndex}>{mapping.lineIndex + 1}行目: {mapping.strokeGroupIds.length > 0 ? mapping.strokeGroupIds.join("、") : "対応する線なし"}</p>)}
+                      </div>
+                    </div>
+                    <p className="mt-6 text-center text-sm font-bold text-gray-500">歌声は、ローカルVOICEVOX連携の実装後に再生できます。</p>
+                    {lyrics.modelName && <p className="mt-3 text-right text-xs font-bold text-gray-400">model: {lyrics.modelName}</p>}
+                  </>
                 ) : error ? (
                   <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
                     <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>
@@ -2020,7 +2078,9 @@ const App: React.FC = () => {
                 <p className="text-xl font-bold">
                   キャンバスに好きな絵を描いてください。
                   <br />
-                  歌詞づくりから歌声生成までまとめて進みます。
+                  {appFeatures.voicevox
+                    ? "歌詞づくりから歌声生成までまとめて進みます。"
+                    : "AIが絵描き歌の歌詞を作ります。歌声生成は現在準備中です。"}
                 </p>
               </div>
             )}

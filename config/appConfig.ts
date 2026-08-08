@@ -6,8 +6,11 @@ export const appConfig = {
 } as const;
 
 export const appFeatures = {
-  gemini: !isDeploymentPreview,
+  // The Worker route holds the Gemini key as a Cloudflare Secret. VOICEVOX
+  // remains intentionally unavailable in the public deployment for Goal 1.
+  gemini: true,
   voicevox: !isDeploymentPreview,
   demoRecords: !isDeploymentPreview,
   dataSaving: !isDeploymentPreview,
+  generationTelemetry: !isDeploymentPreview,
 } as const;
