@@ -3,10 +3,13 @@ import PaintCanvas, { DrawingMetrics } from "./components/PaintCanvas";
 import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
+import DebugExportDialog from "./components/DebugExportDialog";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
+import { appBuildId } from "./config/buildInfo";
 import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, getUsageStats, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
+import { createDebugBundle, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { createSilentPlaybackAudio } from "./services/silentPlaybackService";
 import { groupStrokes } from "./services/strokeGroupingService";
@@ -40,6 +43,7 @@ type AppView = "maker" | "demoRecords" | "melodyExperiment" | "print";
 type DemoBrowseMode = "drawings" | "songs";
 type PlaybackKind = "voice" | "animation-only";
 type VoicevoxConnectionStatus = "idle" | "checking" | "connected" | "unavailable";
+type DebugExportSource = DebugBundleSource;
 type GenerationRecordOptions = {
   shouldRecord: boolean;
   participantAge: number | null;
@@ -303,6 +307,11 @@ const App: React.FC = () => {
   const [generatedDrawing, setGeneratedDrawing] = useState<DrawingData | null>(null);
   const [playbackScore, setPlaybackScore] = useState<SingingScore | null>(null);
   const [drawingDisplayMode, setDrawingDisplayMode] = useState<DrawingDisplayMode>("animated");
+  const [debugExportSource, setDebugExportSource] = useState<DebugExportSource | null>(null);
+  const [isDebugExportOpen, setIsDebugExportOpen] = useState(false);
+  const [debugReporterNote, setDebugReporterNote] = useState("");
+  const [isDebugBundleDownloading, setIsDebugBundleDownloading] = useState(false);
+  const [debugBundleError, setDebugBundleError] = useState<string | null>(null);
   const [experimentVariant, setExperimentVariant] = useState(0);
   const [experimentLyricsSource, setExperimentLyricsSource] = useState("fixed");
   const [experimentLyrics, setExperimentLyrics] = useState<LyricsResponse>(EXPERIMENT_LYRICS);
@@ -634,6 +643,7 @@ const App: React.FC = () => {
       setSelectedDemoRecordId(demoRecord.recordId);
       setGeneratedDrawing(null);
       setPlaybackScore(demoRecord.singingScore);
+      setDebugExportSource(null);
       setDrawingDisplayMode("animated");
       setAppView("maker");
       setSaveToast({ message: "デモ記録を読み込みました", tone: "success" });
@@ -884,7 +894,11 @@ const App: React.FC = () => {
     let generatedLyrics: LyricsResponse | null = null;
     let generatedScore: SingingScore | null = null;
     let generatedAudioBlob: Blob | null = null;
+    let generatedVoiceAudioBlob: Blob | null = null;
     let generationErrorMessage: string | null = null;
+    let voicevoxIssue: string | null = null;
+    let voicevoxStatus: DebugBundleSource["voicevoxStatus"] = "not-attempted";
+    let voicevoxFailedStage: GenerationTimingPhase | null = null;
     const timingStartedAt = performance.now();
     const phaseStartedAt = new Map<GenerationTimingPhase, number>();
     const durationsMs: GenerationTimingDurations = {};
@@ -938,6 +952,10 @@ const App: React.FC = () => {
     setSelectedDemoDrawing(null);
     setGeneratedDrawing(groupedDrawingData);
     setPlaybackScore(null);
+    setDebugExportSource(null);
+    setIsDebugExportOpen(false);
+    setDebugReporterNote("");
+    setDebugBundleError(null);
     setDrawingDisplayMode("animated");
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
@@ -964,6 +982,7 @@ const App: React.FC = () => {
 
       const canUseLocalVoicevox = await localVoicevoxProbe;
       if (appFeatures.localVoicevox && !canUseLocalVoicevox) {
+        voicevoxStatus = "unavailable";
         setVoicevoxWarning(
           "VOICEVOX Engineを起動し、本番OriginのCORS許可とブラウザのローカルネットワークアクセス許可を確認してください。",
         );
@@ -1009,6 +1028,8 @@ const App: React.FC = () => {
           handleVoicevoxProgress(stage);
         });
         completeTimingPhase("voicevoxSynthesis");
+        generatedVoiceAudioBlob = generatedAudioBlob;
+        voicevoxStatus = "voice";
 
         const nextAudioUrl = URL.createObjectURL(generatedAudioBlob);
         stopAudioPlayback();
@@ -1016,11 +1037,12 @@ const App: React.FC = () => {
         setPlaybackKind("voice");
       } catch (voicevoxError) {
         completeTimingPhase();
+        voicevoxStatus = "failed";
+        voicevoxFailedStage = activeTimingPhase;
+        voicevoxIssue = voicevoxError instanceof Error ? voicevoxError.message : "VOICEVOXで歌声を作れませんでした。";
         setVoicevoxConnectionStatus("unavailable");
         setVoicevoxConnectionMessage("接続は確認できましたが、歌声合成を完了できませんでした。");
-        setVoicevoxWarning(
-          voicevoxError instanceof Error ? voicevoxError.message : "VOICEVOXで歌声を作れませんでした。",
-        );
+        setVoicevoxWarning(voicevoxIssue);
       }
 
       beginTimingPhase("finalize");
@@ -1069,6 +1091,20 @@ const App: React.FC = () => {
       completeTimingPhase("finalize");
       const scoreNotes = generatedScore?.notes ?? [];
       const totalMs = Math.round(performance.now() - timingStartedAt);
+      setDebugExportSource({
+        drawingData: groupedDrawingData,
+        lyrics: generatedLyrics,
+        singingScore: generatedScore,
+        voiceAudioBlob: generatedVoiceAudioBlob,
+        playbackKind: generatedVoiceAudioBlob ? "voice" : "animation-only",
+        voicevoxStatus,
+        voicevoxIssue,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        failedStage: failedStage ?? voicevoxFailedStage,
+        error: generationErrorMessage,
+        durationsMs: { ...durationsMs },
+      });
       if (appFeatures.generationTelemetry) {
         void saveGenerationTiming({
           success: generationErrorMessage === null,
@@ -1150,6 +1186,8 @@ const App: React.FC = () => {
     setSelectedDemoRecordId(null);
     setGeneratedDrawing(null);
     setPlaybackScore(null);
+    setDebugExportSource(null);
+    setIsDebugExportOpen(false);
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
   };
@@ -1161,6 +1199,8 @@ const App: React.FC = () => {
     setVoicevoxWarning(null);
     setSelectedDemoRecordId(null);
     setPlaybackScore(null);
+    setDebugExportSource(null);
+    setIsDebugExportOpen(false);
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
   };
@@ -1224,6 +1264,55 @@ const App: React.FC = () => {
 
     stopAudioPlayback();
     setAppView("print");
+  };
+
+  const openDebugExport = () => {
+    if (!debugExportSource || isGenerating) return;
+    setDebugBundleError(null);
+    setIsDebugExportOpen(true);
+  };
+
+  const closeDebugExport = () => {
+    if (isDebugBundleDownloading) return;
+    setIsDebugExportOpen(false);
+  };
+
+  const handleDownloadDebugBundle = async () => {
+    if (!debugExportSource) return;
+
+    setIsDebugBundleDownloading(true);
+    setDebugBundleError(null);
+    try {
+      const bundle = await createDebugBundle({
+        source: debugExportSource,
+        reporterNote: debugReporterNote,
+        buildId: appBuildId,
+        mode: appConfig.mode,
+        origin: window.location.origin,
+      });
+      downloadDebugBundle(bundle);
+      setIsDebugExportOpen(false);
+      setSaveToast({ message: "デバッグ用ZIPをダウンロードしました", tone: "success" });
+    } catch (exportError) {
+      setDebugBundleError(exportError instanceof Error ? exportError.message : "デバッグ用ZIPを作成できませんでした。");
+    } finally {
+      setIsDebugBundleDownloading(false);
+    }
+  };
+
+  const renderDebugExportButton = () => {
+    if (!debugExportSource || isGenerating || selectedDemoRecordId) return null;
+    return (
+      <div className="mt-6 flex justify-center">
+        <button
+          type="button"
+          onClick={openDebugExport}
+          className="rounded-full border-2 border-violet-200 bg-violet-50 px-5 py-3 text-sm font-black text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 active:scale-95"
+        >
+          デバッグ用ZIPを保存
+        </button>
+      </div>
+    );
   };
 
   const handleCopyExperimentScore = async () => {
@@ -1358,6 +1447,21 @@ const App: React.FC = () => {
             </div>
           </section>
         </div>
+      )}
+
+      {isDebugExportOpen && debugExportSource && (
+        <DebugExportDialog
+          hasLyrics={!!debugExportSource.lyrics}
+          hasScore={!!debugExportSource.singingScore}
+          hasVoice={debugExportSource.playbackKind === "voice" && !!debugExportSource.voiceAudioBlob}
+          hasError={!!debugExportSource.error || !!debugExportSource.voicevoxIssue}
+          reporterNote={debugReporterNote}
+          isDownloading={isDebugBundleDownloading}
+          downloadError={debugBundleError}
+          onReporterNoteChange={setDebugReporterNote}
+          onClose={closeDebugExport}
+          onDownload={() => void handleDownloadDebugBundle()}
+        />
       )}
 
       {isRecordConsentOpen && (
@@ -2136,10 +2240,12 @@ const App: React.FC = () => {
                       </div>
                     </div>
                     <p className="mt-6 text-center text-sm font-bold text-gray-500">歌声は、ローカルVOICEVOX連携の実装後に再生できます。</p>
+                    {renderDebugExportButton()}
                     {lyrics.modelName && <p className="mt-3 text-right text-xs font-bold text-gray-400">model: {lyrics.modelName}</p>}
                   </>
                 ) : error ? (
                   <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
+                    {renderDebugExportButton()}
                     <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>
                     <h2 className="text-2xl font-black text-red-700">うまく歌にできませんでした</h2>
                     <p className="mt-3 max-w-md font-bold leading-relaxed text-slate-600">絵はそのまま残っています。絵にもどって、もう一度ためしてみてね。</p>
@@ -2147,6 +2253,7 @@ const App: React.FC = () => {
                   </div>
                 ) : lyrics ? (
                   <>
+                    {renderDebugExportButton()}
                     <button
                       type="button"
                       onClick={handleStartPrint}

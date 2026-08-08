@@ -1,5 +1,6 @@
 import path from "path";
 import { randomUUID } from "crypto";
+import { execFileSync } from "child_process";
 import { promises as fs } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
 import { defineConfig, loadEnv } from "vite";
@@ -13,6 +14,20 @@ const GENERATION_TIMINGS_FILE_NAME = "generation-timings.json";
 const GENERATION_TIMINGS_SCHEMA_VERSION = 1;
 const MAX_GENERATION_TIMING_ENTRIES = 300;
 const TOKYO_TIME_ZONE = "Asia/Tokyo";
+
+const getBuildId = () => {
+  const configured = process.env.VITE_APP_BUILD_ID?.trim();
+  if (configured) return configured;
+
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: __dirname,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString("utf8").trim() || "unknown";
+  } catch {
+    return "unknown";
+  }
+};
 
 const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
   response.statusCode = statusCode;
@@ -767,10 +782,14 @@ const createDemoRecordMiddleware =
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
+  const buildId = getBuildId();
   const isDev = mode === "development";
   const demoRecordsDir = env.DEMO_RECORDS_DIR ? path.resolve(env.DEMO_RECORDS_DIR) : DEFAULT_DEMO_RECORDS_DIR;
 
   return {
+    define: {
+      __APP_BUILD_ID__: JSON.stringify(buildId),
+    },
     server: {
       port: 3000,
       host: "0.0.0.0",

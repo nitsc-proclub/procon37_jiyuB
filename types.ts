@@ -126,3 +126,48 @@ export interface GenerationTimingEstimate {
   estimatedTotalMs: number;
   phaseDurationsMs: GenerationTimingDurations;
 }
+
+export type DebugBundleOutcomeStatus = "success" | "partial" | "error";
+
+export interface DebugBundleManifest {
+  format: "cho-ekaki-uta-debug-bundle";
+  schemaVersion: 1;
+  recordId: string;
+  createdAt: string;
+  outcome: {
+    status: DebugBundleOutcomeStatus;
+    failedStage: GenerationTimingPhase | null;
+    error: string | null;
+  };
+  app: {
+    buildId: string;
+    mode: "full" | "deployment-preview";
+    origin: string;
+  };
+  generation: {
+    geminiModel: string | null;
+    startedAt: string;
+    completedAt: string;
+    durationsMs: GenerationTimingDurations;
+    playbackKind: "voice" | "animation-only";
+    voicevox: "voice" | "unavailable" | "failed" | "not-attempted";
+    voicevoxIssue: string | null;
+  };
+  drawing: {
+    image: {
+      path: "input.png";
+      mimeType: "image/png";
+    };
+    strokes: Stroke[];
+    strokeGroups: StrokeGroup[];
+    canvasSize: DrawingCanvasSize | null;
+    lineWidth: number | null;
+  };
+  lyrics: LyricsResponse | null;
+  singingScore: SingingScore | null;
+  audio: {
+    path: "voice.wav";
+    mimeType: "audio/wav";
+  } | null;
+  reporterNote: string | null;
+}
