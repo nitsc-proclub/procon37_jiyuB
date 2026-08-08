@@ -242,9 +242,36 @@ const createStoredZip = (entries: ZipEntry[], now: Date) => {
 
 const buildReadme = (hasVoice: boolean) => `絵描き歌メーカー デバッグ共有ファイル\n\nこのZIPには、再現・調査に必要な描画、ストローク、歌詞、楽譜${hasVoice ? "、VOICEVOXで生成した歌声" : ""}を含みます。\n\nファイル\n- manifest.json: 生成結果、エラー、描画ストローク、歌詞、楽譜、任意メモ\n- input.png: 入力画像\n${hasVoice ? "- voice.wav: VOICEVOXで実際に生成した歌声\n" : ""}\n含めない情報\n- Gemini APIキー、Cloudflare Accessの認証情報、メールアドレス\n- 年齢などの参加者情報\n- VOICEVOX接続URL\n- 音声なしアニメーション再生用の無音WAV\n\n共有前に、意図しない個人情報が描画やメモに含まれていないか確認してください。\n`;
 
-const makeFileName = (createdAt: Date, recordId: string) => {
+const MAX_DOWNLOAD_BASENAME_LENGTH = 80;
+
+/**
+ * Keeps Japanese titles readable while making the download portable across
+ * Windows, macOS, and Linux. In particular, Windows rejects trailing dots /
+ * spaces and device names; invisible bidi characters are removed so a report
+ * filename cannot disguise its extension.
+ */
+const sanitizeDownloadBaseName = (value: string | null | undefined) => {
+  const withoutUnsafeCharacters = (value ?? "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, "")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^[._\s]+|[._\s]+$/g, "");
+  const truncated = Array.from(withoutUnsafeCharacters).slice(0, MAX_DOWNLOAD_BASENAME_LENGTH).join("");
+  const withoutTrailingWindowsCharacters = truncated.replace(/[.\s]+$/g, "");
+
+  if (!withoutTrailingWindowsCharacters || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(withoutTrailingWindowsCharacters)) {
+    return "cho-ekaki-uta-debug";
+  }
+
+  return withoutTrailingWindowsCharacters;
+};
+
+const makeFileName = (createdAt: Date, recordId: string, title: string | null | undefined) => {
   const timestamp = createdAt.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-  return `cho-ekaki-uta-debug-${timestamp}-${recordId.slice(0, 8)}.zip`;
+  return `${sanitizeDownloadBaseName(title)}-${timestamp}-${recordId.slice(0, 8)}.zip`;
 };
 
 export const buildDebugBundleArtifacts = async ({ source, buildId, mode, origin }: Omit<CreateDebugBundleOptions, "reporterNote">): Promise<DebugBundleArtifacts> => {
@@ -343,7 +370,7 @@ export const createDebugBundleFromArtifacts = async ({
 
   return {
     blob: createStoredZip(entries, createdAtDate),
-    fileName: makeFileName(createdAtDate, manifest.recordId),
+    fileName: makeFileName(createdAtDate, manifest.recordId, manifest.lyrics?.title ?? manifest.lyrics?.identifiedObject),
     manifest,
   };
 };

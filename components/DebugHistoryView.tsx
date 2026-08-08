@@ -22,6 +22,8 @@ interface DebugHistoryViewProps {
   autoSaveEnabled: boolean;
   onEnableAutoSave: () => void;
   onDisableAutoSave: () => void;
+  /** Opens a replayable, saved record in the maker. Imported ZIP previews stay here. */
+  onOpenRecord: (record: DebugHistoryRecord) => void;
   onBack: () => void;
   onToast: (message: string, tone: "success" | "error") => void;
 }
@@ -39,7 +41,7 @@ const outcomeLabel = (status: DebugHistoryRecordSummary["manifest"]["outcome"]["
 const outcomeClass = (status: DebugHistoryRecordSummary["manifest"]["outcome"]["status"]) =>
   status === "success" ? "bg-emerald-100 text-emerald-700" : status === "partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
 
-const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ autoSaveEnabled, onEnableAutoSave, onDisableAutoSave, onBack, onToast }) => {
+const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ autoSaveEnabled, onEnableAutoSave, onDisableAutoSave, onOpenRecord, onBack, onToast }) => {
   const [records, setRecords] = useState<DebugHistoryRecordSummary[]>([]);
   const [stats, setStats] = useState<DebugHistoryStats | null>(null);
   const [selected, setSelected] = useState<DebugHistoryRecord | null>(null);
@@ -137,8 +139,10 @@ const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ autoSaveEnabled, on
         await refresh();
         return;
       }
-      setSelected(record);
+
+      setSelected(null);
       setImportedPreviewRecordId(null);
+      onOpenRecord(record);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "履歴の詳細を読み込めませんでした。");
     } finally {

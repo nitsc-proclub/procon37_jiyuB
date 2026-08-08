@@ -10,8 +10,8 @@ import { appConfig, appFeatures } from "./config/appConfig";
 import { appBuildId } from "./config/buildInfo";
 import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, getUsageStats, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
-import { buildDebugBundleArtifacts, createDebugBundle, createDebugRecordId, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
-import { isDebugHistoryError, saveDebugHistoryRecord } from "./services/debugHistoryDb";
+import { buildDebugBundleArtifacts, createDebugBundle, createDebugBundleFromArtifacts, createDebugRecordId, DebugBundleArtifacts, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
+import { DebugHistoryRecord, isDebugHistoryError, saveDebugHistoryRecord } from "./services/debugHistoryDb";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { createSilentPlaybackAudio } from "./services/silentPlaybackService";
 import { groupStrokes } from "./services/strokeGroupingService";
@@ -317,10 +317,12 @@ const App: React.FC = () => {
   const [deletingDemoRecordId, setDeletingDemoRecordId] = useState<string | null>(null);
   const [selectedDemoDrawing, setSelectedDemoDrawing] = useState<DrawingData | null>(null);
   const [selectedDemoRecordId, setSelectedDemoRecordId] = useState<string | null>(null);
+  const [selectedDebugHistoryDrawing, setSelectedDebugHistoryDrawing] = useState<DrawingData | null>(null);
   const [generatedDrawing, setGeneratedDrawing] = useState<DrawingData | null>(null);
   const [playbackScore, setPlaybackScore] = useState<SingingScore | null>(null);
   const [drawingDisplayMode, setDrawingDisplayMode] = useState<DrawingDisplayMode>("animated");
   const [debugExportSource, setDebugExportSource] = useState<DebugExportSource | null>(null);
+  const [debugExportArtifacts, setDebugExportArtifacts] = useState<DebugBundleArtifacts | null>(null);
   const [isDebugExportOpen, setIsDebugExportOpen] = useState(false);
   const [debugReporterNote, setDebugReporterNote] = useState("");
   const [isDebugBundleDownloading, setIsDebugBundleDownloading] = useState(false);
@@ -355,6 +357,7 @@ const App: React.FC = () => {
   const generationCompletionWaiterRef = useRef<GenerationCompletionWaiter | null>(null);
   const isMountedRef = useRef(true);
   const audioUrlRef = useRef<string | null>(null);
+  const debugHistoryImageUrlRef = useRef<string | null>(null);
   const experimentAudioRef = useRef<HTMLAudioElement>(null);
   const experimentAudioUrlRef = useRef<string | null>(null);
 
@@ -377,6 +380,10 @@ const App: React.FC = () => {
 
       if (isBlobUrl(audioUrlRef.current)) {
         URL.revokeObjectURL(audioUrlRef.current);
+      }
+
+      if (isBlobUrl(debugHistoryImageUrlRef.current)) {
+        URL.revokeObjectURL(debugHistoryImageUrlRef.current);
       }
 
       if (isBlobUrl(experimentAudioUrlRef.current)) {
@@ -595,6 +602,21 @@ const App: React.FC = () => {
     setAudioUrl(nextUrl);
   };
 
+  const clearDebugHistoryDrawing = () => {
+    if (isBlobUrl(debugHistoryImageUrlRef.current)) {
+      URL.revokeObjectURL(debugHistoryImageUrlRef.current);
+    }
+    debugHistoryImageUrlRef.current = null;
+    setSelectedDebugHistoryDrawing(null);
+  };
+
+  const replaceDebugHistoryDrawing = (drawing: DrawingData, imageBlob: Blob) => {
+    clearDebugHistoryDrawing();
+    const imageUri = URL.createObjectURL(imageBlob);
+    debugHistoryImageUrlRef.current = imageUri;
+    setSelectedDebugHistoryDrawing({ ...drawing, imageUri });
+  };
+
   const replaceExperimentAudioUrl = (nextUrl: string | null) => {
     if (isBlobUrl(experimentAudioUrlRef.current)) {
       URL.revokeObjectURL(experimentAudioUrlRef.current);
@@ -655,11 +677,13 @@ const App: React.FC = () => {
       setVoicevoxWarning(null);
       setProgressLabel("準備中...");
       setParticipantAge(demoRecord.participantAge);
+      clearDebugHistoryDrawing();
       setSelectedDemoDrawing(demoRecord.drawingData);
       setSelectedDemoRecordId(demoRecord.recordId);
       setGeneratedDrawing(null);
       setPlaybackScore(demoRecord.singingScore);
       setDebugExportSource(null);
+      setDebugExportArtifacts(null);
       setDrawingDisplayMode("animated");
       setAppView("maker");
       setSaveToast({ message: "デモ記録を読み込みました", tone: "success" });
@@ -759,6 +783,41 @@ const App: React.FC = () => {
       );
       return false;
     }
+  };
+
+  const handleOpenDebugHistoryRecord = (record: DebugHistoryRecord) => {
+    const { manifest, artifacts } = record;
+    const drawingData: DrawingData = {
+      imageUri: "",
+      strokes: manifest.drawing.strokes,
+      strokeGroups: manifest.drawing.strokeGroups,
+      canvasSize: manifest.drawing.canvasSize ?? undefined,
+      lineWidth: manifest.drawing.lineWidth ?? undefined,
+    };
+    const playbackAudioBlob = artifacts.voiceAudioBlob ?? (manifest.singingScore ? createSilentPlaybackAudio(manifest.singingScore) : null);
+
+    stopAudioPlayback();
+    replaceAudioUrl(playbackAudioBlob ? URL.createObjectURL(playbackAudioBlob) : null);
+    setPlaybackKind(artifacts.voiceAudioBlob ? "voice" : "animation-only");
+    setLyrics(manifest.lyrics);
+    setError(manifest.outcome.error);
+    setVoicevoxWarning(manifest.generation.voicevoxIssue);
+    setProgressLabel("再生できます");
+    setParticipantAge(null);
+    setSelectedDemoDrawing(null);
+    setSelectedDemoRecordId(null);
+    replaceDebugHistoryDrawing(drawingData, artifacts.imageBlob);
+    setGeneratedDrawing(null);
+    setPlaybackScore(manifest.singingScore);
+    setDebugExportSource(null);
+    setDebugExportArtifacts(artifacts);
+    setIsDebugExportOpen(false);
+    setDebugReporterNote("");
+    setDebugBundleError(null);
+    setDrawingDisplayMode("animated");
+    setHasPlayedGeneratedAudio(false);
+    setAppView("maker");
+    setSaveToast({ message: "デバッグ履歴をメーカーに読み込みました", tone: "success" });
   };
 
   const checkVoicevoxConnection = async (forceRefresh = false) => {
@@ -967,9 +1026,11 @@ const App: React.FC = () => {
     setSaveToast(null);
     setSelectedDemoRecordId(null);
     setSelectedDemoDrawing(null);
+    clearDebugHistoryDrawing();
     setGeneratedDrawing(groupedDrawingData);
     setPlaybackScore(null);
     setDebugExportSource(null);
+    setDebugExportArtifacts(null);
     setIsDebugExportOpen(false);
     setDebugReporterNote("");
     setDebugBundleError(null);
@@ -1248,9 +1309,11 @@ const App: React.FC = () => {
     setProgressLabel("準備中...");
     setSelectedDemoDrawing(null);
     setSelectedDemoRecordId(null);
+    clearDebugHistoryDrawing();
     setGeneratedDrawing(null);
     setPlaybackScore(null);
     setDebugExportSource(null);
+    setDebugExportArtifacts(null);
     setIsDebugExportOpen(false);
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
@@ -1262,8 +1325,10 @@ const App: React.FC = () => {
     setError(null);
     setVoicevoxWarning(null);
     setSelectedDemoRecordId(null);
+    clearDebugHistoryDrawing();
     setPlaybackScore(null);
     setDebugExportSource(null);
+    setDebugExportArtifacts(null);
     setIsDebugExportOpen(false);
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
@@ -1272,7 +1337,7 @@ const App: React.FC = () => {
   const experimentPitchedNotes = experimentScore?.notes.filter((note) => note.key !== null) ?? [];
   const experimentLastKey = experimentPitchedNotes.at(-1)?.key ?? null;
   const experimentTotalFrames = experimentScore?.notes.reduce((sum, note) => sum + note.frame_length, 0) ?? 0;
-  const playbackDrawing = selectedDemoDrawing ?? generatedDrawing;
+  const playbackDrawing = selectedDemoDrawing ?? selectedDebugHistoryDrawing ?? generatedDrawing;
   const playbackLyricLineCount = getSingingLineCount(lyrics);
   const playbackAnimationEndProgress = getDrawingAnimationEndProgress(lyrics, playbackScore);
   const visibleDemoRecords = showFavoriteOnly ? demoRecords.filter((record) => record.isFavorite) : demoRecords;
@@ -1331,7 +1396,7 @@ const App: React.FC = () => {
   };
 
   const openDebugExport = () => {
-    if (!debugExportSource || isGenerating) return;
+    if ((!debugExportSource && !debugExportArtifacts) || isGenerating) return;
     setDebugBundleError(null);
     setIsDebugExportOpen(true);
   };
@@ -1342,18 +1407,20 @@ const App: React.FC = () => {
   };
 
   const handleDownloadDebugBundle = async () => {
-    if (!debugExportSource) return;
+    if (!debugExportSource && !debugExportArtifacts) return;
 
     setIsDebugBundleDownloading(true);
     setDebugBundleError(null);
     try {
-      const bundle = await createDebugBundle({
-        source: debugExportSource,
-        reporterNote: debugReporterNote,
-        buildId: appBuildId,
-        mode: appConfig.mode,
-        origin: window.location.origin,
-      });
+      const bundle = debugExportArtifacts
+        ? await createDebugBundleFromArtifacts({ artifacts: debugExportArtifacts, reporterNote: debugReporterNote })
+        : await createDebugBundle({
+          source: debugExportSource!,
+          reporterNote: debugReporterNote,
+          buildId: appBuildId,
+          mode: appConfig.mode,
+          origin: window.location.origin,
+        });
       downloadDebugBundle(bundle);
       setIsDebugExportOpen(false);
       setSaveToast({ message: "デバッグ用ZIPをダウンロードしました", tone: "success" });
@@ -1365,7 +1432,7 @@ const App: React.FC = () => {
   };
 
   const renderDebugExportButton = () => {
-    if (!debugExportSource || isGenerating || selectedDemoRecordId) return null;
+    if ((!debugExportSource && !debugExportArtifacts) || isGenerating) return null;
     return (
       <button
         type="button"
@@ -1511,12 +1578,12 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {isDebugExportOpen && debugExportSource && (
+      {isDebugExportOpen && (debugExportSource || debugExportArtifacts) && (
         <DebugExportDialog
-          hasLyrics={!!debugExportSource.lyrics}
-          hasScore={!!debugExportSource.singingScore}
-          hasVoice={debugExportSource.playbackKind === "voice" && !!debugExportSource.voiceAudioBlob}
-          hasError={!!debugExportSource.error || !!debugExportSource.voicevoxIssue}
+          hasLyrics={debugExportArtifacts ? !!debugExportArtifacts.manifest.lyrics : !!debugExportSource?.lyrics}
+          hasScore={debugExportArtifacts ? !!debugExportArtifacts.manifest.singingScore : !!debugExportSource?.singingScore}
+          hasVoice={debugExportArtifacts ? !!debugExportArtifacts.voiceAudioBlob : debugExportSource?.playbackKind === "voice" && !!debugExportSource.voiceAudioBlob}
+          hasError={debugExportArtifacts ? !!debugExportArtifacts.manifest.outcome.error || !!debugExportArtifacts.manifest.generation.voicevoxIssue : !!debugExportSource?.error || !!debugExportSource?.voicevoxIssue}
           reporterNote={debugReporterNote}
           isDownloading={isDebugBundleDownloading}
           downloadError={debugBundleError}
@@ -1760,6 +1827,7 @@ const App: React.FC = () => {
           autoSaveEnabled={debugHistoryConsent === "enabled"}
           onEnableAutoSave={() => setDebugHistoryAutoSave("enabled")}
           onDisableAutoSave={() => setDebugHistoryAutoSave("disabled")}
+          onOpenRecord={handleOpenDebugHistoryRecord}
           onBack={() => setAppView("maker")}
           onToast={setSaveToast}
         />
