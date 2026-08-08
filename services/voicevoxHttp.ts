@@ -12,6 +12,7 @@ const PROBE_TIMEOUT_MS = 4_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 
 let resolvedDirectBaseUrl: string | null = null;
+let configuredDirectBaseUrl: string | null = null;
 let developmentProxyVerified = false;
 let probeInFlight: Promise<string> | null = null;
 
@@ -29,6 +30,51 @@ type VoicevoxFetchOptions = {
 };
 
 const isDevelopmentProxy = () => import.meta.env.DEV;
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * Normalizes a visitor-selected VOICEVOX Engine URL without widening the
+ * public app's local-network access. A public page may only call loopback
+ * HTTP origins; paths, credentials, queries, and fragments are not accepted.
+ */
+export const normalizeDirectVoicevoxBaseUrl = (value: string): string => {
+  let url: URL;
+
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new VoicevoxConnectionError("VOICEVOXのURLを入力してください。例: http://127.0.0.1:50021");
+  }
+
+  if (
+    url.protocol !== "http:"
+    || !LOOPBACK_HOSTS.has(url.hostname)
+    || url.username
+    || url.password
+    || url.pathname !== "/"
+    || url.search
+    || url.hash
+  ) {
+    throw new VoicevoxConnectionError("VOICEVOXの接続先には、このパソコンの localhost・127.0.0.1・[::1] のHTTP URLだけを指定できます。");
+  }
+
+  return url.origin;
+};
+
+export const getDirectVoicevoxBaseUrl = () => configuredDirectBaseUrl ?? DIRECT_VOICEVOX_BASE_URLS[0];
+
+export const setDirectVoicevoxBaseUrl = (value: string) => {
+  const normalizedBaseUrl = normalizeDirectVoicevoxBaseUrl(value);
+  // Keep the original 127.0.0.1 -> localhost fallback when the default is
+  // selected. A user-selected alternative endpoint is probed by itself.
+  configuredDirectBaseUrl = normalizedBaseUrl === DIRECT_VOICEVOX_BASE_URLS[0]
+    ? null
+    : normalizedBaseUrl;
+  resolvedDirectBaseUrl = null;
+  probeInFlight = null;
+  return normalizedBaseUrl;
+};
 
 const describeDirectConnectionProblem = () =>
   "VOICEVOX Engine に接続できませんでした。Engineを起動し、VOICEVOXの設定で https://cho-ekaki-uta.nitsc-proclub.workers.dev をCORS許可Originへ追加して、ブラウザのローカルネットワークアクセスを許可してください。";
@@ -89,7 +135,11 @@ export const probeVoicevox = async (): Promise<string> => {
       return DEV_VOICEVOX_BASE_URL;
     }
 
-    for (const baseUrl of DIRECT_VOICEVOX_BASE_URLS) {
+    const baseUrls = configuredDirectBaseUrl
+      ? [configuredDirectBaseUrl]
+      : DIRECT_VOICEVOX_BASE_URLS;
+
+    for (const baseUrl of baseUrls) {
       try {
         const response = await fetchWithTimeout(`${baseUrl}/version`, { cache: "no-store" }, {
           timeoutMs: PROBE_TIMEOUT_MS,

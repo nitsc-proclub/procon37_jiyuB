@@ -11,7 +11,12 @@ import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { createSilentPlaybackAudio } from "./services/silentPlaybackService";
 import { groupStrokes } from "./services/strokeGroupingService";
 import { analyzeAccentLines } from "./services/voicevoxAccentService";
-import { probeVoicevox, resetVoicevoxConnection } from "./services/voicevoxHttp";
+import {
+  getDirectVoicevoxBaseUrl,
+  probeVoicevox,
+  resetVoicevoxConnection,
+  setDirectVoicevoxBaseUrl,
+} from "./services/voicevoxHttp";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
 import { DemoRecordSummary, DrawingData, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsResponse, SingingScore, UsageStats } from "./types";
 
@@ -54,6 +59,17 @@ const getUsageStatsCoverage = (date: string) => {
   }
 
   return { label: "両方を集計", className: "bg-emerald-100 text-emerald-700" };
+};
+
+const VOICEVOX_BASE_URL_STORAGE_KEY = "ekaki-uta:voicevox-base-url";
+
+const loadVoicevoxBaseUrl = () => {
+  try {
+    const savedBaseUrl = window.localStorage.getItem(VOICEVOX_BASE_URL_STORAGE_KEY);
+    return savedBaseUrl ? setDirectVoicevoxBaseUrl(savedBaseUrl) : getDirectVoicevoxBaseUrl();
+  } catch {
+    return getDirectVoicevoxBaseUrl();
+  }
 };
 type GenerationCompletionWaiter = {
   runKey: number;
@@ -260,6 +276,7 @@ const App: React.FC = () => {
   const [playbackKind, setPlaybackKind] = useState<PlaybackKind>("animation-only");
   const [voicevoxConnectionStatus, setVoicevoxConnectionStatus] = useState<VoicevoxConnectionStatus>("idle");
   const [voicevoxConnectionMessage, setVoicevoxConnectionMessage] = useState("歌をつくる時に自動で確認します。");
+  const [voicevoxBaseUrl, setVoicevoxBaseUrl] = useState(loadVoicevoxBaseUrl);
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
   const [generationTimingEstimate, setGenerationTimingEstimate] = useState<GenerationTimingEstimate | null>(null);
@@ -697,7 +714,32 @@ const App: React.FC = () => {
     updateProgress("歌声に魔法をかけているよ");
   };
 
+  const applyVoicevoxBaseUrl = () => {
+    try {
+      const normalizedBaseUrl = setDirectVoicevoxBaseUrl(voicevoxBaseUrl);
+      setVoicevoxBaseUrl(normalizedBaseUrl);
+      try {
+        window.localStorage.setItem(VOICEVOX_BASE_URL_STORAGE_KEY, normalizedBaseUrl);
+      } catch {
+        // Storage is optional; the selected URL still works for this session.
+      }
+      setVoicevoxConnectionStatus("idle");
+      setVoicevoxConnectionMessage("URLを適用しました。再確認してください。");
+      return true;
+    } catch (error) {
+      setVoicevoxConnectionStatus("unavailable");
+      setVoicevoxConnectionMessage(
+        error instanceof Error ? error.message : "VOICEVOXのURLを確認してください。",
+      );
+      return false;
+    }
+  };
+
   const checkVoicevoxConnection = async (forceRefresh = false) => {
+    if (!applyVoicevoxBaseUrl()) {
+      return false;
+    }
+
     if (forceRefresh) {
       resetVoicevoxConnection();
     }
@@ -1406,6 +1448,83 @@ const App: React.FC = () => {
       )}
 
       <header className="magic-header mb-6 text-center">
+        {appConfig.isDeploymentPreview && appFeatures.localVoicevox && (
+          <aside className="fixed right-4 top-4 z-[80] w-[min(18rem,calc(100vw-2rem))] text-left">
+            <details className="max-h-[calc(100svh-2rem)] overflow-y-auto rounded-2xl border border-orange-200 bg-white/95 shadow-lg backdrop-blur-md">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-black text-gray-700 [&::-webkit-details-marker]:hidden">
+                <span
+                  className={`h-2.5 w-2.5 shrink-0 rounded-full ${voicevoxConnectionStatus === "connected"
+                    ? "bg-emerald-500"
+                    : voicevoxConnectionStatus === "checking"
+                      ? "animate-pulse bg-orange-400"
+                      : voicevoxConnectionStatus === "unavailable"
+                        ? "bg-amber-500"
+                        : "bg-gray-300"
+                    }`}
+                  aria-hidden="true"
+                />
+                <span>公開版・VOICEVOX</span>
+                <span className="ml-auto text-[11px] text-gray-500">
+                  {voicevoxConnectionStatus === "connected"
+                    ? "接続済み"
+                    : voicevoxConnectionStatus === "checking"
+                      ? "確認中"
+                      : voicevoxConnectionStatus === "unavailable"
+                        ? "未接続"
+                        : "未確認"}
+                </span>
+                <span className="text-gray-400" aria-hidden="true">⌄</span>
+              </summary>
+
+              <div className="space-y-3 border-t border-orange-100 px-3 py-3 text-xs text-gray-600">
+                <p className={`font-bold ${voicevoxConnectionStatus === "connected" ? "text-emerald-700" : voicevoxConnectionStatus === "unavailable" ? "text-amber-700" : "text-gray-600"}`} aria-live="polite">
+                  {voicevoxConnectionMessage}
+                </p>
+
+                <label className="block font-bold text-gray-700">
+                  VOICEVOX URL
+                  <input
+                    type="url"
+                    value={voicevoxBaseUrl}
+                    onChange={(event) => setVoicevoxBaseUrl(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void checkVoicevoxConnection(true);
+                      }
+                    }}
+                    disabled={isGenerating || voicevoxConnectionStatus === "checking"}
+                    spellCheck={false}
+                    className="mt-1 block w-full rounded-lg border border-orange-200 bg-white px-2.5 py-2 font-mono text-[11px] text-gray-700 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:cursor-wait disabled:opacity-60"
+                    aria-describedby="voicevox-url-help"
+                  />
+                </label>
+                <p id="voicevox-url-help" className="leading-relaxed text-gray-500">
+                  このパソコンの <code className="font-mono">localhost</code>・<code className="font-mono">127.0.0.1</code>・<code className="font-mono">[::1]</code> のHTTP URLだけ指定できます。
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => void checkVoicevoxConnection(true)}
+                  disabled={isGenerating || voicevoxConnectionStatus === "checking"}
+                  className="w-full rounded-full bg-orange-500 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {voicevoxConnectionStatus === "checking" ? "確認中..." : "VOICEVOXを再確認"}
+                </button>
+
+                <div className="rounded-xl bg-orange-50 p-2.5 leading-relaxed text-orange-900">
+                  <p className="font-black">接続できないとき</p>
+                  <ol className="mt-1 list-inside list-decimal space-y-1">
+                    <li>VOICEVOX Engineを起動する</li>
+                    <li>CORS許可Originに <code className="break-all font-mono">https://cho-ekaki-uta.nitsc-proclub.workers.dev</code> を追加する</li>
+                    <li>ブラウザのローカルネットワークアクセスを許可する</li>
+                  </ol>
+                  <p className="mt-2">接続できなくても、歌声なしでアニメーションを再生できます。</p>
+                </div>
+              </div>
+            </details>
+          </aside>
+        )}
         <p className="mb-2 text-xs font-black uppercase tracking-[0.24em] text-orange-600">絵が、魔法で歌になる！</p>
         <h1 className="mx-auto mb-1 w-fit">
           <img
@@ -1414,39 +1533,7 @@ const App: React.FC = () => {
             className="h-14 w-auto drop-shadow-sm md:h-16"
           />
         </h1>
-        <p className="text-sm text-gray-600 font-medium">
-          {appFeatures.localVoicevox
-            ? "AIが絵描き歌を作り、このパソコンのVOICEVOXがつながれば歌ってくれます！"
-            : "絵を描くと、AI が絵描き歌の歌詞を作ってくれます！"}
-        </p>
-        {appConfig.isDeploymentPreview && (
-          <div className="mx-auto mt-4 max-w-2xl rounded-2xl border-2 border-orange-200 bg-orange-50 px-5 py-3 text-left shadow-sm" role="status">
-            <p className="font-black text-orange-700">公開確認版</p>
-            <p className="mt-1 text-sm font-semibold leading-relaxed text-orange-700">
-              AIが絵描き歌を作ります。ローカルVOICEVOXがつながれば歌声も作れます。つながらない場合も、音声なしでアニメーションを再生できます。
-            </p>
-            {appFeatures.localVoicevox && (
-              <div className="mt-3 rounded-xl border border-orange-200 bg-white/70 p-3">
-                <p className="text-xs font-semibold leading-relaxed text-orange-800">
-                  VOICEVOXの設定では、CORS許可Originに <code className="break-all font-mono">https://cho-ekaki-uta.nitsc-proclub.workers.dev</code> を追加してください。
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => void checkVoicevoxConnection(true)}
-                    disabled={isGenerating || voicevoxConnectionStatus === "checking"}
-                    className="rounded-full bg-orange-500 px-4 py-2 text-xs font-black text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    {voicevoxConnectionStatus === "checking" ? "確認中..." : "VOICEVOXを再確認"}
-                  </button>
-                  <p className={`text-xs font-bold ${voicevoxConnectionStatus === "connected" ? "text-emerald-700" : voicevoxConnectionStatus === "unavailable" ? "text-amber-700" : "text-gray-600"}`} aria-live="polite">
-                    {voicevoxConnectionMessage}
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        <p className="text-sm text-gray-600 font-medium">絵を描くと、AI が歌詞を作り、ずんだもん（VOICEVOX）が歌ってくれます！</p>
         <div className="mt-4 inline-flex rounded-full border border-white/70 bg-white/80 p-1 shadow-md backdrop-blur-md">
           <button
             type="button"
@@ -2175,9 +2262,7 @@ const App: React.FC = () => {
                 <p className="text-xl font-bold">
                   キャンバスに好きな絵を描いてください。
                   <br />
-                  {appFeatures.localVoicevox
-                    ? "AIが絵描き歌を作り、VOICEVOXがつながれば歌声も生成します。"
-                    : "AIが絵描き歌の歌詞を作ります。"}
+                  歌詞づくりから歌声生成までまとめて進みます。
                 </p>
               </div>
             )}
