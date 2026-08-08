@@ -4,12 +4,14 @@ import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
 import DebugExportDialog from "./components/DebugExportDialog";
+import DebugHistoryView from "./components/DebugHistoryView";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
 import { appBuildId } from "./config/buildInfo";
 import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, getUsageStats, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
-import { createDebugBundle, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
+import { buildDebugBundleArtifacts, createDebugBundle, createDebugRecordId, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
+import { isDebugHistoryError, saveDebugHistoryRecord } from "./services/debugHistoryDb";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { createSilentPlaybackAudio } from "./services/silentPlaybackService";
 import { groupStrokes } from "./services/strokeGroupingService";
@@ -39,7 +41,7 @@ const fetchSeekableAudioUrl = async (audioUrl: string) => {
   return URL.createObjectURL(audioBlob);
 };
 
-type AppView = "maker" | "demoRecords" | "melodyExperiment" | "print";
+type AppView = "maker" | "demoRecords" | "debugHistory" | "melodyExperiment" | "print";
 type DemoBrowseMode = "drawings" | "songs";
 type PlaybackKind = "voice" | "animation-only";
 type VoicevoxConnectionStatus = "idle" | "checking" | "connected" | "unavailable";
@@ -66,6 +68,8 @@ const getUsageStatsCoverage = (date: string) => {
 };
 
 const VOICEVOX_BASE_URL_STORAGE_KEY = "ekaki-uta:voicevox-base-url";
+const DEBUG_HISTORY_CONSENT_STORAGE_KEY = "ekaki-uta:debug-history-autosave-v1";
+type DebugHistoryConsent = "unknown" | "enabled" | "disabled";
 
 const loadVoicevoxBaseUrl = () => {
   try {
@@ -73,6 +77,15 @@ const loadVoicevoxBaseUrl = () => {
     return savedBaseUrl ? setDirectVoicevoxBaseUrl(savedBaseUrl) : getDirectVoicevoxBaseUrl();
   } catch {
     return getDirectVoicevoxBaseUrl();
+  }
+};
+
+const loadDebugHistoryConsent = (): DebugHistoryConsent => {
+  try {
+    const saved = window.localStorage.getItem(DEBUG_HISTORY_CONSENT_STORAGE_KEY);
+    return saved === "enabled" || saved === "disabled" ? saved : "unknown";
+  } catch {
+    return "unknown";
   }
 };
 type GenerationCompletionWaiter = {
@@ -312,6 +325,9 @@ const App: React.FC = () => {
   const [debugReporterNote, setDebugReporterNote] = useState("");
   const [isDebugBundleDownloading, setIsDebugBundleDownloading] = useState(false);
   const [debugBundleError, setDebugBundleError] = useState<string | null>(null);
+  const [debugHistoryConsent, setDebugHistoryConsent] = useState<DebugHistoryConsent>(loadDebugHistoryConsent);
+  const [isDebugHistoryConsentOpen, setIsDebugHistoryConsentOpen] = useState(false);
+  const [pendingDebugHistoryGeneration, setPendingDebugHistoryGeneration] = useState<DrawingData | null>(null);
   const [experimentVariant, setExperimentVariant] = useState(0);
   const [experimentLyricsSource, setExperimentLyricsSource] = useState("fixed");
   const [experimentLyrics, setExperimentLyrics] = useState<LyricsResponse>(EXPERIMENT_LYRICS);
@@ -876,7 +892,7 @@ const App: React.FC = () => {
     }
   };
 
-  const runGeneration = async (data: DrawingData, recordOptions: GenerationRecordOptions) => {
+  const runGeneration = async (data: DrawingData, recordOptions: GenerationRecordOptions, shouldSaveDebugHistory = false) => {
     if (generationRunRef.current) {
       return;
     }
@@ -891,6 +907,7 @@ const App: React.FC = () => {
       strokeGroups: groupStrokes(data.strokes),
     };
     const startedAt = new Date().toISOString();
+    const debugRecordId = createDebugRecordId();
     let generatedLyrics: LyricsResponse | null = null;
     let generatedScore: SingingScore | null = null;
     let generatedAudioBlob: Blob | null = null;
@@ -1084,14 +1101,15 @@ const App: React.FC = () => {
           }
           setSaveToast({ message: "記録に失敗しました", tone: "error" });
         }
-      } else {
+      } else if (!shouldSaveDebugHistory) {
         setSaveToast({ message: "絵や歌を記録せずに作成しました", tone: "success" });
       }
 
       completeTimingPhase("finalize");
       const scoreNotes = generatedScore?.notes ?? [];
       const totalMs = Math.round(performance.now() - timingStartedAt);
-      setDebugExportSource({
+      const completedDebugSource: DebugExportSource = {
+        recordId: debugRecordId,
         drawingData: groupedDrawingData,
         lyrics: generatedLyrics,
         singingScore: generatedScore,
@@ -1104,7 +1122,29 @@ const App: React.FC = () => {
         failedStage: failedStage ?? voicevoxFailedStage,
         error: generationErrorMessage,
         durationsMs: { ...durationsMs },
-      });
+      };
+      setDebugExportSource(completedDebugSource);
+      if (shouldSaveDebugHistory && appFeatures.debugHistory) {
+        void buildDebugBundleArtifacts({
+          source: completedDebugSource,
+          buildId: appBuildId,
+          mode: appConfig.mode,
+          origin: window.location.origin,
+        })
+          .then(saveDebugHistoryRecord)
+          .then(() => {
+            if (isMountedRef.current) {
+              setSaveToast({ message: "デバッグ履歴に保存しました", tone: "success" });
+            }
+          })
+          .catch((historyError) => {
+            if (!isMountedRef.current) return;
+            const message = isDebugHistoryError(historyError, "record-limit") || isDebugHistoryError(historyError, "size-limit") || isDebugHistoryError(historyError, "quota") || isDebugHistoryError(historyError, "origin-quota")
+              ? "デバッグ履歴の容量がいっぱいです。今回の結果は残っています。ZIPを保存できます。"
+              : "デバッグ履歴を保存できませんでした。今回の結果は残っています。ZIPを保存できます。";
+            setSaveToast({ message, tone: "error" });
+          });
+      }
       if (appFeatures.generationTelemetry) {
         void saveGenerationTiming({
           success: generationErrorMessage === null,
@@ -1141,8 +1181,14 @@ const App: React.FC = () => {
       return;
     }
 
+    if (appFeatures.debugHistory && debugHistoryConsent === "unknown") {
+      setPendingDebugHistoryGeneration(data);
+      setIsDebugHistoryConsentOpen(true);
+      return;
+    }
+
     if (!appFeatures.dataSaving) {
-      await runGeneration(data, { shouldRecord: false, participantAge: null });
+      await runGeneration(data, { shouldRecord: false, participantAge: null }, debugHistoryConsent === "enabled");
       return;
     }
 
@@ -1166,6 +1212,24 @@ const App: React.FC = () => {
     setPendingGenerationData(null);
     setRecordConsentError(null);
     await runGeneration(pendingGenerationData, recordOptions);
+  };
+
+  const setDebugHistoryAutoSave = (consent: Exclude<DebugHistoryConsent, "unknown">) => {
+    setDebugHistoryConsent(consent);
+    try {
+      window.localStorage.setItem(DEBUG_HISTORY_CONSENT_STORAGE_KEY, consent);
+    } catch {
+      // The choice remains active for this tab even when preference storage is unavailable.
+    }
+  };
+
+  const startPendingDebugHistoryGeneration = async (consent: Exclude<DebugHistoryConsent, "unknown">) => {
+    const pendingData = pendingDebugHistoryGeneration;
+    setDebugHistoryAutoSave(consent);
+    setIsDebugHistoryConsentOpen(false);
+    setPendingDebugHistoryGeneration(null);
+    if (!pendingData) return;
+    await runGeneration(pendingData, { shouldRecord: false, participantAge: null }, consent === "enabled");
   };
 
   const handleRecordAndGenerate = async () => {
@@ -1464,6 +1528,21 @@ const App: React.FC = () => {
         />
       )}
 
+      {isDebugHistoryConsentOpen && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-900/40 px-4 py-6 backdrop-blur-sm" role="presentation">
+          <section className="w-full max-w-lg rounded-3xl border-4 border-violet-100 bg-white p-5 text-left shadow-2xl sm:p-6" role="dialog" aria-modal="true" aria-labelledby="debug-history-consent-title">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-500">Browser-only debug history</p>
+            <h2 id="debug-history-consent-title" className="mt-1 text-2xl font-black text-gray-800">このブラウザにデバッグ履歴を保存しますか？</h2>
+            <p className="mt-3 text-sm font-semibold leading-relaxed text-gray-600">生成した絵、ストローク、歌詞、楽譜、エラー情報と、作成できた場合だけ歌声をこのブラウザ内に保存します。ほかの人に送るときは、あとからZIPとして取り出せます。</p>
+            <div className="mt-4 rounded-2xl bg-violet-50 p-4 text-xs font-bold leading-relaxed text-violet-900">APIキー、Cloudflareの認証情報、メールアドレス、年齢、VOICEVOX URL、無音の再生用WAVは保存しません。保存先はこのブラウザだけで、サーバーには送信しません。</div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <button type="button" onClick={() => void startPendingDebugHistoryGeneration("enabled")} className="flex min-h-12 items-center justify-center rounded-2xl bg-violet-600 px-4 py-3 text-sm font-black text-white shadow-md transition hover:bg-violet-700 active:scale-95">保存して生成する</button>
+              <button type="button" onClick={() => void startPendingDebugHistoryGeneration("disabled")} className="flex min-h-12 items-center justify-center rounded-2xl bg-gray-200 px-4 py-3 text-sm font-black text-gray-700 shadow-sm transition hover:bg-gray-300 active:scale-95">保存せず生成する</button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {isRecordConsentOpen && (
         <div
           className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/30 px-4 py-6 backdrop-blur-sm"
@@ -1666,10 +1745,27 @@ const App: React.FC = () => {
           >
             デモ記録
           </button>}
+          {appFeatures.debugHistory && <button
+            type="button"
+            onClick={() => setAppView("debugHistory")}
+            title="デバッグ履歴"
+            className={`rounded-full px-5 py-2 text-sm font-black transition-all ${appView === "debugHistory" ? "bg-violet-500 text-white shadow-sm" : "text-gray-600 hover:bg-violet-50"
+              }`}
+          >
+            デバッグ履歴
+          </button>}
         </div>
       </header>
 
-      {appView === "demoRecords" ? (
+      {appView === "debugHistory" && appFeatures.debugHistory ? (
+        <DebugHistoryView
+          autoSaveEnabled={debugHistoryConsent === "enabled"}
+          onEnableAutoSave={() => setDebugHistoryAutoSave("enabled")}
+          onDisableAutoSave={() => setDebugHistoryAutoSave("disabled")}
+          onBack={() => setAppView("maker")}
+          onToast={setSaveToast}
+        />
+      ) : appView === "demoRecords" ? (
         <main className="mb-16 w-full max-w-6xl">
           <section className="rounded-3xl border-8 border-orange-100 bg-white p-5 shadow-xl md:p-7">
             <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">

@@ -15,4 +15,6 @@ export const appFeatures = {
   demoRecords: !isDeploymentPreview,
   dataSaving: !isDeploymentPreview,
   generationTelemetry: !isDeploymentPreview,
+  // Public debug records stay entirely in the visitor's IndexedDB.
+  debugHistory: isDeploymentPreview,
 } as const;

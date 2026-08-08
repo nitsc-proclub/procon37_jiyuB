@@ -11,6 +11,7 @@ const WAV_HEADER_LENGTH = 12;
 export type DebugBundleVoicevoxStatus = "voice" | "unavailable" | "failed" | "not-attempted";
 
 export interface DebugBundleSource {
+  recordId: string;
   drawingData: DrawingData;
   lyrics: LyricsResponse | null;
   singingScore: SingingScore | null;
@@ -39,6 +40,13 @@ export interface CreatedDebugBundle {
   manifest: DebugBundleManifest;
 }
 
+/** Sanitized, reusable bundle data. Safe to persist in browser-only history. */
+export interface DebugBundleArtifacts {
+  manifest: DebugBundleManifest;
+  imageBlob: Blob;
+  voiceAudioBlob: Blob | null;
+}
+
 const textEncoder = new TextEncoder();
 
 const safeOrigin = (value: string) => {
@@ -65,12 +73,23 @@ const redactSensitiveText = (value: string | null, maxLength = MAX_ERROR_LENGTH)
 
 const normalizeReporterNote = (value: string) => redactSensitiveText(value.trim(), MAX_REPORTER_NOTE_LENGTH);
 
-const makeRecordId = () => {
+export const createDebugRecordId = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
 
   return `debug-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const validatePngBlob = async (image: Blob) => {
+  if (image.size === 0 || image.size > MAX_IMAGE_BYTES) {
+    throw new Error("入力画像のサイズが大きすぎます。");
+  }
+
+  const bytes = new Uint8Array(await image.slice(0, PNG_SIGNATURE.length).arrayBuffer());
+  if (!PNG_SIGNATURE.every((byte, index) => bytes[index] === byte)) {
+    throw new Error("入力画像が正しいPNG形式ではありません。");
+  }
 };
 
 const dataUriToPngBlob = async (value: string) => {
@@ -87,16 +106,10 @@ const dataUriToPngBlob = async (value: string) => {
     throw new Error("入力画像の読み取りに失敗しました。");
   }
 
-  if (binary.length === 0 || binary.length > MAX_IMAGE_BYTES) {
-    throw new Error("入力画像のサイズが大きすぎます。");
-  }
-
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  if (!PNG_SIGNATURE.every((byte, index) => bytes[index] === byte)) {
-    throw new Error("入力画像が正しいPNG形式ではありません。");
-  }
-
-  return new Blob([bytes], { type: "image/png" });
+  const image = new Blob([bytes], { type: "image/png" });
+  await validatePngBlob(image);
+  return image;
 };
 
 const validateVoiceWav = async (audio: Blob) => {
@@ -223,24 +236,21 @@ const makeFileName = (createdAt: Date, recordId: string) => {
   return `cho-ekaki-uta-debug-${timestamp}-${recordId.slice(0, 8)}.zip`;
 };
 
-export const createDebugBundle = async ({ source, reporterNote, buildId, mode, origin }: CreateDebugBundleOptions): Promise<CreatedDebugBundle> => {
-  const createdAtDate = new Date();
+export const buildDebugBundleArtifacts = async ({ source, buildId, mode, origin }: Omit<CreateDebugBundleOptions, "reporterNote">): Promise<DebugBundleArtifacts> => {
   const imageBlob = await dataUriToPngBlob(source.drawingData.imageUri);
   const includeVoice = source.playbackKind === "voice" && source.voiceAudioBlob !== null;
   if (includeVoice) {
     await validateVoiceWav(source.voiceAudioBlob);
   }
 
-  const recordId = makeRecordId();
   const error = redactSensitiveText(source.error);
   const voicevoxIssue = redactSensitiveText(source.voicevoxIssue);
-  const reporterNoteValue = normalizeReporterNote(reporterNote);
   const outcomeStatus = error ? "error" : source.voicevoxStatus === "failed" ? "partial" : "success";
   const manifest: DebugBundleManifest = {
     format: "cho-ekaki-uta-debug-bundle",
     schemaVersion: 1,
-    recordId,
-    createdAt: createdAtDate.toISOString(),
+    recordId: source.recordId,
+    createdAt: source.completedAt,
     outcome: {
       status: outcomeStatus,
       failedStage: source.failedStage,
@@ -270,18 +280,47 @@ export const createDebugBundle = async ({ source, reporterNote, buildId, mode, o
     lyrics: source.lyrics,
     singingScore: source.singingScore,
     audio: includeVoice ? { path: "voice.wav", mimeType: "audio/wav" } : null,
-    reporterNote: reporterNoteValue,
+    reporterNote: null,
+  };
+
+  return {
+    manifest,
+    imageBlob,
+    voiceAudioBlob: includeVoice ? source.voiceAudioBlob : null,
+  };
+};
+
+export const createDebugBundleFromArtifacts = async ({
+  artifacts,
+  reporterNote,
+}: {
+  artifacts: DebugBundleArtifacts;
+  reporterNote: string;
+}): Promise<CreatedDebugBundle> => {
+  const createdAtDate = Number.isNaN(Date.parse(artifacts.manifest.createdAt))
+    ? new Date()
+    : new Date(artifacts.manifest.createdAt);
+  const includeVoice = artifacts.manifest.audio !== null && artifacts.voiceAudioBlob !== null;
+  await validatePngBlob(artifacts.imageBlob);
+  if (includeVoice) {
+    await validateVoiceWav(artifacts.voiceAudioBlob);
+  }
+
+  const manifest: DebugBundleManifest = {
+    ...artifacts.manifest,
+    audio: includeVoice ? artifacts.manifest.audio : null,
+    reporterNote: normalizeReporterNote(reporterNote),
   };
 
   const manifestBytes = textEncoder.encode(`${JSON.stringify(manifest, null, 2)}\n`);
-  const imageBytes = new Uint8Array(await imageBlob.arrayBuffer());
+  const imageBytes = new Uint8Array(await artifacts.imageBlob.arrayBuffer());
   const entries: ZipEntry[] = [
     { name: "manifest.json", bytes: manifestBytes },
     { name: "input.png", bytes: imageBytes },
   ];
 
   if (includeVoice) {
-    entries.push({ name: "voice.wav", bytes: new Uint8Array(await source.voiceAudioBlob.arrayBuffer()) });
+    entries.push({ name: "voice.wav", bytes: new Uint8Array(await artifacts.voiceAudioBlob.arrayBuffer()) });
   }
   entries.push({ name: "README.txt", bytes: textEncoder.encode(buildReadme(includeVoice)) });
 
@@ -292,9 +331,14 @@ export const createDebugBundle = async ({ source, reporterNote, buildId, mode, o
 
   return {
     blob: createStoredZip(entries, createdAtDate),
-    fileName: makeFileName(createdAtDate, recordId),
+    fileName: makeFileName(createdAtDate, manifest.recordId),
     manifest,
   };
+};
+
+export const createDebugBundle = async ({ source, reporterNote, buildId, mode, origin }: CreateDebugBundleOptions): Promise<CreatedDebugBundle> => {
+  const artifacts = await buildDebugBundleArtifacts({ source, buildId, mode, origin });
+  return createDebugBundleFromArtifacts({ artifacts, reporterNote });
 };
 
 export const downloadDebugBundle = (bundle: CreatedDebugBundle) => {
