@@ -1,5 +1,7 @@
 # Cloudflare Workers: Gemini lyrics generation (Goal 1)
 
+> Historical Goal 1 handoff. The current deployment also supports optional local VOICEVOX and animation-only playback; see `docs/cloudflare-deployment.md` for the active procedure.
+
 The public site is a Cloudflare **Worker Static Assets** deployment, not Cloudflare Pages. The Worker keeps the existing `https://cho-ekaki-uta.nitsc-proclub.workers.dev/` URL, serves the Vite `dist` assets, and handles only `POST /api/gemini/generate-ekaki-uta` before delegating the rest to static assets.
 
 ## One-time Cloudflare settings

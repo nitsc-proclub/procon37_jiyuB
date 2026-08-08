@@ -8,8 +8,10 @@ import { appConfig, appFeatures } from "./config/appConfig";
 import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, getUsageStats, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
 import { generateEkakiUta } from "./services/geminiService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
+import { createSilentPlaybackAudio } from "./services/silentPlaybackService";
 import { groupStrokes } from "./services/strokeGroupingService";
 import { analyzeAccentLines } from "./services/voicevoxAccentService";
+import { probeVoicevox, resetVoicevoxConnection } from "./services/voicevoxHttp";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
 import { DemoRecordSummary, DrawingData, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsResponse, SingingScore, UsageStats } from "./types";
 
@@ -31,6 +33,8 @@ const fetchSeekableAudioUrl = async (audioUrl: string) => {
 
 type AppView = "maker" | "demoRecords" | "melodyExperiment" | "print";
 type DemoBrowseMode = "drawings" | "songs";
+type PlaybackKind = "voice" | "animation-only";
+type VoicevoxConnectionStatus = "idle" | "checking" | "connected" | "unavailable";
 type GenerationRecordOptions = {
   shouldRecord: boolean;
   participantAge: number | null;
@@ -250,8 +254,12 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
 const App: React.FC = () => {
   const [lyrics, setLyrics] = useState<LyricsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [voicevoxWarning, setVoicevoxWarning] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [playbackKind, setPlaybackKind] = useState<PlaybackKind>("animation-only");
+  const [voicevoxConnectionStatus, setVoicevoxConnectionStatus] = useState<VoicevoxConnectionStatus>("idle");
+  const [voicevoxConnectionMessage, setVoicevoxConnectionMessage] = useState("歌をつくる時に自動で確認します。");
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
   const [generationTimingEstimate, setGenerationTimingEstimate] = useState<GenerationTimingEstimate | null>(null);
@@ -576,6 +584,7 @@ const App: React.FC = () => {
   const resetAudioState = () => {
     stopAudioPlayback();
     replaceAudioUrl(null);
+    setPlaybackKind("animation-only");
   };
 
   const handleSelectDemoRecord = async (recordId: string) => {
@@ -598,8 +607,10 @@ const App: React.FC = () => {
 
       stopAudioPlayback();
       replaceAudioUrl(nextAudioUrl);
+      setPlaybackKind(nextAudioUrl ? "voice" : "animation-only");
       setLyrics(demoRecord.lyrics);
       setError(null);
+      setVoicevoxWarning(null);
       setProgressLabel("準備中...");
       setParticipantAge(demoRecord.participantAge);
       setSelectedDemoDrawing(demoRecord.drawingData);
@@ -684,6 +695,26 @@ const App: React.FC = () => {
     }
 
     updateProgress("歌声に魔法をかけているよ");
+  };
+
+  const checkVoicevoxConnection = async (forceRefresh = false) => {
+    if (forceRefresh) {
+      resetVoicevoxConnection();
+    }
+
+    setVoicevoxConnectionStatus("checking");
+    setVoicevoxConnectionMessage("このパソコンのVOICEVOXを確認しています...");
+
+    try {
+      const baseUrl = await probeVoicevox();
+      setVoicevoxConnectionStatus("connected");
+      setVoicevoxConnectionMessage(`接続できました（${baseUrl}）`);
+      return true;
+    } catch {
+      setVoicevoxConnectionStatus("unavailable");
+      setVoicevoxConnectionMessage("接続できませんでした。歌声なしのアニメーションで続けられます。");
+      return false;
+    }
   };
 
   const handleExperimentVoicevoxProgress = (stage: VoicevoxProgressStage) => {
@@ -859,6 +890,7 @@ const App: React.FC = () => {
     setIsGenerating(true);
     setLyrics(null);
     setError(null);
+    setVoicevoxWarning(null);
     setSaveToast(null);
     setSelectedDemoRecordId(null);
     setSelectedDemoDrawing(null);
@@ -880,45 +912,78 @@ const App: React.FC = () => {
 
     try {
       updateProgress("絵をじっくり見ているよ");
+      // Start the loopback request directly from the user's generate action so
+      // Chromium can show its Local Network Access prompt while Gemini runs.
+      const localVoicevoxProbe = appFeatures.localVoicevox
+        ? checkVoicevoxConnection(true)
+        : Promise.resolve(false);
       generatedLyrics = await generateEkakiUta(groupedDrawingData);
       completeTimingPhase("gemini");
 
-      if (!appFeatures.voicevox) {
-        beginTimingPhase("finalize");
-        updateProgress("絵描き歌ができたよ");
-        await finishProgress("絵描き歌ができたよ");
-        setLyrics(generatedLyrics);
-        return;
+      const canUseLocalVoicevox = await localVoicevoxProbe;
+      if (appFeatures.localVoicevox && !canUseLocalVoicevox) {
+        setVoicevoxWarning(
+          "VOICEVOX Engineを起動し、本番OriginのCORS許可とブラウザのローカルネットワークアクセス許可を確認してください。",
+        );
       }
 
-      beginTimingPhase("accent");
+      let accentLineHints;
+      if (canUseLocalVoicevox) {
+        beginTimingPhase("accent");
+        accentLineHints = await analyzeLyricsAccents(generatedLyrics);
+        completeTimingPhase("accent");
+      }
 
-      const accentLineHints = await analyzeLyricsAccents(generatedLyrics);
-
-      completeTimingPhase("accent");
       beginTimingPhase("score");
       const seed = createSingingSeed(generatedLyrics, 0);
       generatedScore = buildSingingScore(generatedLyrics, seed, accentLineHints);
       completeTimingPhase("score");
       setPlaybackScore(generatedScore);
 
-      updateProgress("歌声に魔法をかけているよ");
-      beginTimingPhase("voicevoxQuery");
-      generatedAudioBlob = await synthesizeSingingVoice(generatedScore, (stage) => {
-        if (stage === "synthesis_requested") {
-          completeTimingPhase("voicevoxQuery");
-          beginTimingPhase("voicevoxSynthesis");
-        }
-        handleVoicevoxProgress(stage);
-      });
-      completeTimingPhase("voicevoxSynthesis");
-      beginTimingPhase("finalize");
-      updateProgress("歌声に魔法をかけているよ");
-
-      const nextAudioUrl = URL.createObjectURL(generatedAudioBlob);
+      // Use a silent, score-length WAV as a seekable clock when no singing
+      // voice is available. Existing audio-driven drawing and karaoke views
+      // can then keep their usual pause, seek, and end behavior.
+      generatedAudioBlob = createSilentPlaybackAudio(generatedScore);
       stopAudioPlayback();
-      replaceAudioUrl(nextAudioUrl);
-      await finishProgress("歌声に魔法をかけているよ");
+      replaceAudioUrl(URL.createObjectURL(generatedAudioBlob));
+      setPlaybackKind("animation-only");
+
+      if (!canUseLocalVoicevox) {
+        beginTimingPhase("finalize");
+        updateProgress("絵描き歌のアニメーションができたよ");
+        await finishProgress("絵描き歌のアニメーションができたよ");
+        setLyrics(generatedLyrics);
+        return;
+      }
+
+      try {
+        updateProgress("歌声に魔法をかけているよ");
+        beginTimingPhase("voicevoxQuery");
+        generatedAudioBlob = await synthesizeSingingVoice(generatedScore, (stage) => {
+          if (stage === "synthesis_requested") {
+            completeTimingPhase("voicevoxQuery");
+            beginTimingPhase("voicevoxSynthesis");
+          }
+          handleVoicevoxProgress(stage);
+        });
+        completeTimingPhase("voicevoxSynthesis");
+
+        const nextAudioUrl = URL.createObjectURL(generatedAudioBlob);
+        stopAudioPlayback();
+        replaceAudioUrl(nextAudioUrl);
+        setPlaybackKind("voice");
+      } catch (voicevoxError) {
+        completeTimingPhase();
+        setVoicevoxConnectionStatus("unavailable");
+        setVoicevoxConnectionMessage("接続は確認できましたが、歌声合成を完了できませんでした。");
+        setVoicevoxWarning(
+          voicevoxError instanceof Error ? voicevoxError.message : "VOICEVOXで歌声を作れませんでした。",
+        );
+      }
+
+      beginTimingPhase("finalize");
+      updateProgress("絵描き歌の準備ができたよ");
+      await finishProgress("絵描き歌の準備ができたよ");
       setLyrics(generatedLyrics);
     } catch (generationError) {
       failedStage = activeTimingPhase;
@@ -1036,6 +1101,7 @@ const App: React.FC = () => {
   const handleClear = () => {
     setLyrics(null);
     setError(null);
+    setVoicevoxWarning(null);
     setSaveToast(null);
     setProgressLabel("準備中...");
     setSelectedDemoDrawing(null);
@@ -1050,6 +1116,7 @@ const App: React.FC = () => {
     if (!lyrics) return;
     setLyrics(null);
     setError(null);
+    setVoicevoxWarning(null);
     setSelectedDemoRecordId(null);
     setPlaybackScore(null);
     resetAudioState();
@@ -1348,16 +1415,36 @@ const App: React.FC = () => {
           />
         </h1>
         <p className="text-sm text-gray-600 font-medium">
-          {appFeatures.voicevox
-            ? "絵を描くと、AI が歌詞を作り、ずんだもん（VOICEVOX）が歌ってくれます！"
+          {appFeatures.localVoicevox
+            ? "AIが絵描き歌を作り、このパソコンのVOICEVOXがつながれば歌ってくれます！"
             : "絵を描くと、AI が絵描き歌の歌詞を作ってくれます！"}
         </p>
         {appConfig.isDeploymentPreview && (
           <div className="mx-auto mt-4 max-w-2xl rounded-2xl border-2 border-orange-200 bg-orange-50 px-5 py-3 text-left shadow-sm" role="status">
             <p className="font-black text-orange-700">公開確認版</p>
             <p className="mt-1 text-sm font-semibold leading-relaxed text-orange-700">
-              AIが絵描き歌の歌詞を作れます。歌声生成とデータ保存は現在準備中です。
+              AIが絵描き歌を作ります。ローカルVOICEVOXがつながれば歌声も作れます。つながらない場合も、音声なしでアニメーションを再生できます。
             </p>
+            {appFeatures.localVoicevox && (
+              <div className="mt-3 rounded-xl border border-orange-200 bg-white/70 p-3">
+                <p className="text-xs font-semibold leading-relaxed text-orange-800">
+                  VOICEVOXの設定では、CORS許可Originに <code className="break-all font-mono">https://cho-ekaki-uta.nitsc-proclub.workers.dev</code> を追加してください。
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void checkVoicevoxConnection(true)}
+                    disabled={isGenerating || voicevoxConnectionStatus === "checking"}
+                    className="rounded-full bg-orange-500 px-4 py-2 text-xs font-black text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {voicevoxConnectionStatus === "checking" ? "確認中..." : "VOICEVOXを再確認"}
+                  </button>
+                  <p className={`text-xs font-bold ${voicevoxConnectionStatus === "connected" ? "text-emerald-700" : voicevoxConnectionStatus === "unavailable" ? "text-amber-700" : "text-gray-600"}`} aria-live="polite">
+                    {voicevoxConnectionMessage}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         )}
         <div className="mt-4 inline-flex rounded-full border border-white/70 bg-white/80 p-1 shadow-md backdrop-blur-md">
@@ -2023,6 +2110,12 @@ const App: React.FC = () => {
                       showKanaLines={false}
                     />
 
+                    {voicevoxWarning && (
+                      <p className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800" role="alert">
+                        歌声は作れませんでしたが、絵描き歌のアニメーションは再生できます。{voicevoxWarning}
+                      </p>
+                    )}
+
                     <div className="mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5">
                       <div className="mb-4 flex justify-end">
                         <div className="flex rounded-full bg-white p-1 shadow-sm">
@@ -2049,6 +2142,7 @@ const App: React.FC = () => {
                         src={audioUrl ?? undefined}
                         controls
                         className="w-full"
+                        aria-label={playbackKind === "voice" ? "歌声の再生" : "絵描き歌アニメーションの再生"}
                         onPlay={() => {
                           setHasPlayedGeneratedAudio(true);
                           setIsAudioPlaying(true);
@@ -2057,9 +2151,12 @@ const App: React.FC = () => {
                         onEnded={() => setIsAudioPlaying(false)}
                         onEmptied={() => setIsAudioPlaying(false)}
                       />
+                      <p className="mt-3 text-center text-sm font-bold text-gray-600">
+                        {playbackKind === "voice" ? "歌声に合わせて、絵を描く順番を見てみよう" : "音声なしで、絵を描く順番と歌詞を見てみよう"}
+                      </p>
                       {shouldGuidePlayback && (
                         <p className="mt-3 text-center font-black text-violet-800" role="status" aria-live="polite">
-                          <span aria-hidden="true">↑</span> 歌ができたよ！ ここから聞いてみよう
+                          <span aria-hidden="true">↑</span> {playbackKind === "voice" ? "歌ができたよ！ ここから聞いてみよう" : "アニメーションができたよ！ ここから見てみよう"}
                         </p>
                       )}
                     </div>
@@ -2078,9 +2175,9 @@ const App: React.FC = () => {
                 <p className="text-xl font-bold">
                   キャンバスに好きな絵を描いてください。
                   <br />
-                  {appFeatures.voicevox
-                    ? "歌詞づくりから歌声生成までまとめて進みます。"
-                    : "AIが絵描き歌の歌詞を作ります。歌声生成は現在準備中です。"}
+                  {appFeatures.localVoicevox
+                    ? "AIが絵描き歌を作り、VOICEVOXがつながれば歌声も生成します。"
+                    : "AIが絵描き歌の歌詞を作ります。"}
                 </p>
               </div>
             )}

@@ -1,5 +1,5 @@
 import type { MelodyAccentLineHint, MelodyAccentLevel } from "./melodyService";
-import { ensureVoicevoxOk, getVoicevoxBaseUrl } from "./voicevoxHttp";
+import { ensureVoicevoxOk, fetchVoicevox } from "./voicevoxHttp";
 
 const TALK_ACCENT_SPEAKER = 3;
 
@@ -60,12 +60,11 @@ const buildLineHint = (phrases: VoicevoxAccentPhrase[]): MelodyAccentLineHint =>
 };
 
 const analyzeAccentLine = async (line: string) => {
-  const baseUrl = getVoicevoxBaseUrl();
   const query = new URLSearchParams({
     speaker: String(TALK_ACCENT_SPEAKER),
     text: line,
   });
-  const response = await fetch(`${baseUrl}/accent_phrases?${query.toString()}`, {
+  const response = await fetchVoicevox(`/accent_phrases?${query.toString()}`, {
     method: "POST",
   });
 

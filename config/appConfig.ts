@@ -6,9 +6,11 @@ export const appConfig = {
 } as const;
 
 export const appFeatures = {
-  // The Worker route holds the Gemini key as a Cloudflare Secret. VOICEVOX
-  // remains intentionally unavailable in the public deployment for Goal 1.
+  // The Worker route holds the Gemini key as a Cloudflare Secret.
   gemini: true,
+  // Public builds may talk only to a VOICEVOX Engine on the visitor's own
+  // loopback interface. This is separate from the local-only experiment UI.
+  localVoicevox: true,
   voicevox: !isDeploymentPreview,
   demoRecords: !isDeploymentPreview,
   dataSaving: !isDeploymentPreview,
