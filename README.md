@@ -27,10 +27,10 @@ npm install
 
 ```env
 GEMINI_API_KEY=your_api_key_here
-GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_MODEL=gemini-3.6-flash
 GEMINI_MODEL_SUB=gemini-2.5-flash-lite
 # Optional: explicit fallback order
-# GEMINI_MODEL_CANDIDATES=gemini-3-flash-preview,gemini-3.5-flash,gemini-3.1-flash-lite,gemini-2.5-flash-lite
+# GEMINI_MODEL_CANDIDATES=gemini-3.6-flash,gemini-3.5-flash,gemini-3.1-flash-lite,gemini-2.5-flash-lite
 ```
 
 `GEMINI_MODEL_CANDIDATES` を省略した場合は、`GEMINI_MODEL` を第一候補にしたうえで Gemini API のモデル一覧を取得し、利用可能な Flash 系モデルを優先順でフォールバック候補に加えます。
