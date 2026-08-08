@@ -1367,15 +1367,13 @@ const App: React.FC = () => {
   const renderDebugExportButton = () => {
     if (!debugExportSource || isGenerating || selectedDemoRecordId) return null;
     return (
-      <div className="mt-6 flex justify-center">
-        <button
-          type="button"
-          onClick={openDebugExport}
-          className="rounded-full border-2 border-violet-200 bg-violet-50 px-5 py-3 text-sm font-black text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 active:scale-95"
-        >
-          デバッグ用ZIPを保存
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={openDebugExport}
+        className="absolute left-4 top-4 z-10 rounded-full border-2 border-violet-200 bg-violet-50 px-3 py-2 text-xs font-black text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 active:scale-95 sm:px-4 sm:text-sm"
+      >
+        デバッグ用ZIPを保存
+      </button>
     );
   };
 
@@ -2324,7 +2322,7 @@ const App: React.FC = () => {
                         <path d="M7 14h10v6H7z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     </button>
-                    <div className="mb-6 text-center border-b-2 border-orange-50 pb-4">
+                    <div className="mb-6 border-b-2 border-orange-50 pb-4 pt-14 text-center">
                       <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">{lyrics.identifiedObject}</span>
                       <h2 ref={completionHeadingRef} tabIndex={-1} className="text-3xl font-bold text-gray-800 focus:outline-none">{lyrics.title}</h2>
                     </div>
@@ -2382,7 +2380,7 @@ const App: React.FC = () => {
                       </svg>
                     </button>
 
-                    <div className="mb-6 text-center border-b-2 border-orange-50 pb-4">
+                    <div className="mb-6 border-b-2 border-orange-50 pb-4 pt-14 text-center">
                       <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">
                         {lyrics.identifiedObject}
                       </span>

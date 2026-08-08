@@ -57,7 +57,7 @@ const safeOrigin = (value: string) => {
   }
 };
 
-const redactSensitiveText = (value: string | null, maxLength = MAX_ERROR_LENGTH) => {
+export const redactDebugBundleText = (value: string | null, maxLength = MAX_ERROR_LENGTH) => {
   if (!value) return null;
 
   const redacted = value
@@ -71,7 +71,18 @@ const redactSensitiveText = (value: string | null, maxLength = MAX_ERROR_LENGTH)
   return redacted.slice(0, maxLength);
 };
 
-const normalizeReporterNote = (value: string) => redactSensitiveText(value.trim(), MAX_REPORTER_NOTE_LENGTH);
+const normalizeReporterNote = (value: string) => redactDebugBundleText(value.trim(), MAX_REPORTER_NOTE_LENGTH);
+
+/** Applies the same redaction before imported data can be previewed or persisted. */
+export const sanitizeDebugBundleArtifacts = (artifacts: DebugBundleArtifacts): DebugBundleArtifacts => ({
+  ...artifacts,
+  manifest: {
+    ...artifacts.manifest,
+    outcome: { ...artifacts.manifest.outcome, error: redactDebugBundleText(artifacts.manifest.outcome.error) },
+    generation: { ...artifacts.manifest.generation, voicevoxIssue: redactDebugBundleText(artifacts.manifest.generation.voicevoxIssue) },
+    reporterNote: artifacts.manifest.reporterNote === null ? null : normalizeReporterNote(artifacts.manifest.reporterNote),
+  },
+});
 
 export const createDebugRecordId = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -243,8 +254,8 @@ export const buildDebugBundleArtifacts = async ({ source, buildId, mode, origin 
     await validateVoiceWav(source.voiceAudioBlob);
   }
 
-  const error = redactSensitiveText(source.error);
-  const voicevoxIssue = redactSensitiveText(source.voicevoxIssue);
+  const error = redactDebugBundleText(source.error);
+  const voicevoxIssue = redactDebugBundleText(source.voicevoxIssue);
   const outcomeStatus = error ? "error" : source.voicevoxStatus === "failed" ? "partial" : "success";
   const manifest: DebugBundleManifest = {
     format: "cho-ekaki-uta-debug-bundle",
@@ -306,9 +317,10 @@ export const createDebugBundleFromArtifacts = async ({
     await validateVoiceWav(artifacts.voiceAudioBlob);
   }
 
+  const sanitizedArtifacts = sanitizeDebugBundleArtifacts(artifacts);
   const manifest: DebugBundleManifest = {
-    ...artifacts.manifest,
-    audio: includeVoice ? artifacts.manifest.audio : null,
+    ...sanitizedArtifacts.manifest,
+    audio: includeVoice ? sanitizedArtifacts.manifest.audio : null,
     reporterNote: normalizeReporterNote(reporterNote),
   };
 

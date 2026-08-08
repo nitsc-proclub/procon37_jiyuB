@@ -99,6 +99,25 @@ const getSummary = (record: StoredDebugHistoryRecord): DebugHistoryRecordSummary
 const getArtifactByteSize = (artifacts: DebugBundleArtifacts) =>
   textEncoder.encode(JSON.stringify(artifacts.manifest)).byteLength + artifacts.imageBlob.size + (artifacts.voiceAudioBlob?.size ?? 0);
 
+/**
+ * Creates the same read model used by IndexedDB without writing anything.
+ * ZIP imports use this to offer a fully offline preview before the user
+ * explicitly decides to retain it in this browser.
+ */
+export const createDebugHistoryRecord = (artifacts: DebugBundleArtifacts): DebugHistoryRecord => {
+  const storedRecord: StoredDebugHistoryRecord = {
+    recordId: artifacts.manifest.recordId,
+    createdAt: artifacts.manifest.createdAt,
+    manifest: artifacts.manifest,
+    byteSize: getArtifactByteSize(artifacts),
+  };
+
+  return {
+    ...getSummary(storedRecord),
+    artifacts,
+  };
+};
+
 const getStorageEstimate = async () => {
   if (typeof navigator === "undefined" || typeof navigator.storage?.estimate !== "function") {
     return { usage: null, quota: null };
