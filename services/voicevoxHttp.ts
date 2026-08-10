@@ -1,8 +1,7 @@
 const DEV_VOICEVOX_BASE_URL = "/voicevox";
 
-// These are deliberately fixed loopback origins. Do not accept a URL from the
-// page, query string, or generated content: a public deployment must never be
-// able to turn the visitor's browser into a general local-network client.
+// Keep automatic probing on loopback. A visitor may explicitly select a
+// VOICEVOX Engine on the same private IPv4 network via the settings UI.
 export const DIRECT_VOICEVOX_BASE_URLS = [
   "http://127.0.0.1:50021",
   "http://localhost:50021",
@@ -33,10 +32,22 @@ const isDevelopmentProxy = () => import.meta.env.DEV;
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
+const isPrivateIpv4Host = (hostname: string) => {
+  const octets = hostname.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return false;
+  }
+
+  return octets[0] === 10
+    || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+    || (octets[0] === 192 && octets[1] === 168);
+};
+
 /**
  * Normalizes a visitor-selected VOICEVOX Engine URL without widening the
- * public app's local-network access. A public page may only call loopback
- * HTTP origins; paths, credentials, queries, and fragments are not accepted.
+ * public app's local-network access. A public page may call loopback HTTP
+ * origins or an explicitly selected RFC 1918 IPv4 host on VOICEVOX's port.
+ * Paths, credentials, queries, and fragments are not accepted.
  */
 export const normalizeDirectVoicevoxBaseUrl = (value: string): string => {
   let url: URL;
@@ -49,14 +60,14 @@ export const normalizeDirectVoicevoxBaseUrl = (value: string): string => {
 
   if (
     url.protocol !== "http:"
-    || !LOOPBACK_HOSTS.has(url.hostname)
+    || (!LOOPBACK_HOSTS.has(url.hostname) && !(isPrivateIpv4Host(url.hostname) && url.port === "50021"))
     || url.username
     || url.password
     || url.pathname !== "/"
     || url.search
     || url.hash
   ) {
-    throw new VoicevoxConnectionError("VOICEVOXの接続先には、このパソコンの localhost・127.0.0.1・[::1] のHTTP URLだけを指定できます。");
+    throw new VoicevoxConnectionError("VOICEVOXの接続先には、localhost・127.0.0.1・[::1]、または同じネットワーク内のプライベートIPv4アドレス（ポート50021）を指定できます。");
   }
 
   return url.origin;

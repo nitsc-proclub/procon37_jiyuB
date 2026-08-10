@@ -65,7 +65,7 @@ export const redactDebugBundleText = (value: string | null, maxLength = MAX_ERRO
     .replace(/\bBearer\s+[\w.~+\/-]+=*/gi, "Bearer [REDACTED]")
     .replace(/([?&](?:key|api[_-]?key|token|authorization|password|secret)=)[^&#\s]+/gi, "$1[REDACTED]")
     .replace(/https?:\/\/[^\s]+:[^\s@/]+@/gi, "https://[REDACTED]@")
-    .replace(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/[^\s]*)?/gi, "[REDACTED_VOICEVOX_URL]")
+    .replace(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})(?::\d+)?(?:\/[^\s]*)?/gi, "[REDACTED_VOICEVOX_URL]")
     .replace(/data:[^\s,]+,[^\s]+/gi, "[REDACTED_DATA_URI]");
 
   return redacted.slice(0, maxLength);

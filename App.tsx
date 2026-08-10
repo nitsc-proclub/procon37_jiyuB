@@ -1748,7 +1748,7 @@ const App: React.FC = () => {
                   />
                 </label>
                 <p id="voicevox-url-help" className="leading-relaxed text-gray-500">
-                  このパソコンの <code className="font-mono">localhost</code>・<code className="font-mono">127.0.0.1</code>・<code className="font-mono">[::1]</code> のHTTP URLだけ指定できます。
+                  この端末の <code className="font-mono">localhost</code>、または同じネットワーク内のPCの <code className="font-mono">http://192.168.x.x:50021</code> を指定できます。
                 </p>
 
                 <button
