@@ -16,6 +16,7 @@ type TurnstileOptions = {
   "error-callback"?: (errorCode: string) => void;
   "timeout-callback"?: () => void;
   theme?: "light" | "dark" | "auto";
+  size?: "normal" | "compact" | "flexible";
   language?: string;
   action?: string;
 };
@@ -115,6 +116,7 @@ const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(({ siteKey, action
           sitekey: siteKey,
           action,
           theme: "light",
+          size: "compact",
           language: "ja",
           callback: (token) => {
             if (!isCurrent) return;

@@ -574,7 +574,6 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
                 絵ができたね！ つぎは「歌をつくる！」を押してみよう <span aria-hidden="true">↓</span>
               </div>
             )}
-            {generationSecurityCheck}
             <div className="paint-toolbar flex w-full max-w-full flex-wrap gap-2 sm:gap-3">
               <button ref={clearTriggerButtonRef} type="button" onClick={handleClear} disabled={isGenerating || isInteractionBlocked} className="flex h-14 min-w-[7.25rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-slate-200 px-3 text-base font-bold text-slate-700 shadow-md transition-all hover:bg-slate-300 disabled:opacity-50 active:scale-95">ぜんぶ消す</button>
               {undoButton}{redoButton}
@@ -582,6 +581,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
                 {generationDisabled ? "生成は準備中" : "歌をつくる！"}
               </button>
             </div>
+            {generationSecurityCheck}
             {generationDisabled && (
               <div className="w-full text-center" role="status" aria-live="polite">
                 <p className="text-sm font-bold text-orange-700">{generationDisabledMessage}</p>

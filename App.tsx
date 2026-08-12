@@ -1002,13 +1002,8 @@ const App: React.FC = () => {
       return;
     }
 
-    // Tokens are one-time use. Start preparing the next one immediately, while
-    // this request is in flight, but retain this copy for the current request.
-    if (isTurnstileRequired) {
-      handleTurnstileToken(null);
-      setTurnstileStatus("verifying");
-      turnstileWidgetRef.current?.reset();
-    }
+    // Keep this token intact until Siteverify has received it. Resetting the
+    // widget before fetch can invalidate it and reject every generation.
 
     const groupedDrawingData = {
       ...data,
@@ -1191,6 +1186,14 @@ const App: React.FC = () => {
       setError(generationErrorMessage);
       await finishProgress("エラーで終了しました");
     } finally {
+      // Tokens are single-use, so prepare the next one only after this request
+      // has completed (whether it succeeded or failed).
+      if (isTurnstileRequired) {
+        handleTurnstileToken(null);
+        setTurnstileStatus("verifying");
+        turnstileWidgetRef.current?.reset();
+      }
+
       if (recordOptions.shouldRecord) {
         try {
           await saveDemoRecord({
@@ -1404,7 +1407,7 @@ const App: React.FC = () => {
           ? "安全確認をやり直しています…"
           : "安全確認中… 終わると歌をつくれます。";
   const turnstileSecurityCheck = isTurnstileRequired && TURNSTILE_SITE_KEY ? (
-    <div className="w-full rounded-2xl border-2 border-sky-100 bg-sky-50/70 px-3 py-2 text-center">
+    <div className="flex w-full justify-center py-1">
       <Turnstile
         key={turnstileRetryKey}
         ref={turnstileWidgetRef}
@@ -1413,9 +1416,6 @@ const App: React.FC = () => {
         onToken={handleTurnstileToken}
         onStatusChange={handleTurnstileStatusChange}
       />
-      <p className="text-xs font-bold text-slate-600" role="status" aria-live="polite">
-        {turnstileStatus === "verified" ? "安全確認できました。歌をつくれます！" : "歌をつくる前に、安全確認をしています。"}
-      </p>
     </div>
   ) : null;
   const hasEnoughDrawing =
