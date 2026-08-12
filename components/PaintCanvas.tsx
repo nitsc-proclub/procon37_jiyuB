@@ -574,6 +574,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           <div className="compact-generation-progress w-full rounded-2xl border-2 border-orange-100 bg-white/95 px-4 py-3 text-center shadow-sm" role="status" aria-live="polite">
             <p className="font-black text-orange-800">{generationStageLabel}</p>
             <GenerationProgressBar
+              fullWidth
               timingEstimate={generationTimingEstimate}
               progressPhase={generationProgressPhase}
               runKey={generationRunKey}

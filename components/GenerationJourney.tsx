@@ -124,7 +124,11 @@ const COMPLETION_ANIMATION_MS = 500;
 const COMPLETION_HOLD_MS = 600;
 const COMPLETION_FALLBACK_MS = COMPLETION_ANIMATION_MS + COMPLETION_HOLD_MS + 1_000;
 
-export const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstimate" | "progressPhase" | "runKey" | "isComplete" | "onCompletionDisplayComplete">> = ({ timingEstimate, progressPhase = "gemini", runKey = 0, isComplete = false, onCompletionDisplayComplete }) => {
+type GenerationProgressBarProps = Pick<GenerationJourneyProps, "timingEstimate" | "progressPhase" | "runKey" | "isComplete" | "onCompletionDisplayComplete"> & {
+  fullWidth?: boolean;
+};
+
+export const GenerationProgressBar: React.FC<GenerationProgressBarProps> = ({ timingEstimate, progressPhase = "gemini", runKey = 0, isComplete = false, onCompletionDisplayComplete, fullWidth = false }) => {
   const [value, setValue] = useState(0);
   const valueRef = useRef(0);
   const timingEstimateRef = useRef(timingEstimate);
@@ -232,7 +236,7 @@ export const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timin
     return () => window.cancelAnimationFrame(frameId);
   }, [runKey]);
 
-  return <div className="mt-3 w-full max-w-md" role="progressbar" aria-label="歌を作っています" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value)}>
+  return <div className={`mt-3 w-full ${fullWidth ? "max-w-none" : "max-w-md"}`} role="progressbar" aria-label="歌を作っています" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value)}>
     <div className="h-1.5 overflow-hidden rounded-full bg-orange-100" aria-hidden="true">
       <div className={`h-full rounded-full bg-orange-400 ${isComplete ? "" : "transition-[width] duration-200"}`} style={{ width: `${value}%` }} />
     </div>
