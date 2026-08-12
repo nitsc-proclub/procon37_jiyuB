@@ -38,6 +38,7 @@ interface PaintCanvasProps {
   playbackLyricLineCount?: number;
   isPlaybackActive?: boolean;
   mobileScene?: "draw" | "generate" | "playback";
+  resetRequestKey?: number;
 }
 
 const LOGICAL_CANVAS_SIZE = 1024;
@@ -98,6 +99,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   playbackLyricLineCount,
   isPlaybackActive = false,
   mobileScene,
+  resetRequestKey = 0,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -118,6 +120,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const imageLoadIdRef = useRef(0);
   const baseImageRef = useRef<HTMLImageElement | null>(null);
   const shouldUseBaseImageRef = useRef(false);
+  const resetRequestKeyRef = useRef(resetRequestKey);
 
   const [isDrawing, setIsDrawing] = useState(false);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
@@ -355,6 +358,14 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const handleClear = () => {
     if (!isGenerating && !isInteractionBlocked) setIsClearConfirmOpen(true);
   };
+
+  // Start a fresh drawing without reloading the whole application. This also
+  // clears canvas-local strokes and base-image state, which App cannot reset.
+  useEffect(() => {
+    if (resetRequestKey === resetRequestKeyRef.current) return;
+    resetRequestKeyRef.current = resetRequestKey;
+    clearCanvas();
+  }, [resetRequestKey]);
 
   const handleUndo = () => {
     if (isCanvasLocked || strokesRef.current.length === 0) return;

@@ -145,7 +145,7 @@ body { margin: 0; min-width: 320px; overflow-x: hidden; }
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
   }
-  .compact-maker-scene-playback .mobile-playback-lyrics button { min-height: 2.5rem; padding: .4rem .65rem; }
+  .compact-maker-scene-playback .mobile-playback-lyrics button { min-height: 2.75rem; padding: .4rem .65rem; }
   .compact-maker-scene-playback .mobile-playback-lyrics button span { font-size: 1rem; line-height: 1.35; }
 }
 

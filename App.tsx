@@ -440,6 +440,7 @@ const App: React.FC = () => {
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [makerScene, setMakerScene] = useState<MakerScene>("draw");
   const [isSceneTurnAnimating, setIsSceneTurnAnimating] = useState(false);
+  const [newSongResetKey, setNewSongResetKey] = useState(0);
   const isCompactMakerLayout = useMediaQueryAny(COMPACT_MAKER_LAYOUT_QUERIES);
 
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -1487,6 +1488,7 @@ const App: React.FC = () => {
   const handleClear = () => {
     setLyrics(null);
     setError(null);
+    setGenerationFailureDisplay(null);
     setVoicevoxWarning(null);
     setSaveToast(null);
     setProgressLabel("準備中...");
@@ -1498,12 +1500,16 @@ const App: React.FC = () => {
     setDebugExportSource(null);
     setDebugExportArtifacts(null);
     setIsDebugExportOpen(false);
+    setPendingGenerationData(null);
+    setIsRecordConsentOpen(false);
     resetAudioState();
     setHasPlayedGeneratedAudio(false);
+    setDrawingDisplayMode("animated");
   };
 
   const handleStartNewSong = () => {
-    window.location.reload();
+    handleClear();
+    setNewSongResetKey((current) => current + 1);
   };
 
   const handleDrawingEditStart = () => {
@@ -2592,12 +2598,14 @@ const App: React.FC = () => {
               playbackLyricLineCount={playbackLyricLineCount}
               isPlaybackActive={!!lyrics && !!playbackDrawing && !isGenerating && isAudioPlaying}
               mobileScene={isCompactMakerLayout ? makerScene : undefined}
+              resetRequestKey={newSongResetKey}
             />
 
           </section>
 
           <section className="result-stage flex min-w-0 flex-col gap-6">
             {lyrics || isGenerating || error ? (
+              <>
               <div className="magic-card bg-white p-5 sm:p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
                 {isGenerating ? (
                   <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} timingEstimate={generationTimingEstimate} progressPhase={generationProgressPhase} runKey={generationTimingRunKey} isComplete={isGenerationProgressComplete} onCompletionDisplayComplete={handleGenerationProgressDisplayComplete} />
@@ -2779,14 +2787,6 @@ const App: React.FC = () => {
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={handleStartNewSong}
-                      className="mt-5 min-h-11 w-full rounded-2xl border-2 border-orange-200 bg-orange-50 px-4 py-3 text-sm font-black text-orange-700 shadow-sm transition hover:border-orange-300 hover:bg-orange-100 active:scale-[.98]"
-                    >
-                      新しい歌を作る
-                    </button>
-
                     {lyrics.modelName && (
                       <p className="mt-3 text-right text-xs font-bold text-gray-400">
                         model: {lyrics.modelName}
@@ -2795,6 +2795,16 @@ const App: React.FC = () => {
                   </>
                 ) : null}
               </div>
+              {lyrics && (
+                <button
+                  type="button"
+                  onClick={handleStartNewSong}
+                  className="new-song-action min-h-12 w-full rounded-2xl border-2 border-orange-200 bg-orange-50 px-4 py-3 text-base font-black text-orange-700 shadow-sm transition hover:border-orange-300 hover:bg-orange-100 active:scale-[.98]"
+                >
+                  新しい歌を作る
+                </button>
+              )}
+              </>
             ) : (
               <div className="magic-card h-full flex flex-col items-center justify-center p-8 sm:p-12 bg-white/80 border-4 border-dashed border-violet-200 rounded-3xl text-slate-500 text-center">
                 <div className="text-6xl mb-4 animate-bounce">♪</div>
