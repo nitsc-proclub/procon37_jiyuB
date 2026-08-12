@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import DrawingPlaybackCanvas, { DrawingDisplayMode } from "./DrawingPlaybackCanvas";
-import GenerationJourney from "./GenerationJourney";
-import { DrawingData, LyricStrokeMapping, Point, SingingScore, Stroke } from "../types";
+import GenerationJourney, { GenerationProgressBar } from "./GenerationJourney";
+import { DrawingData, GenerationTimingEstimate, GenerationTimingPhase, LyricStrokeMapping, Point, SingingScore, Stroke } from "../types";
 
 export type DrawingMetrics = {
   strokeCount: number;
@@ -18,6 +18,11 @@ interface PaintCanvasProps {
   isGenerating: boolean;
   isInteractionBlocked?: boolean;
   generationStageLabel?: string;
+  generationTimingEstimate?: GenerationTimingEstimate | null;
+  generationProgressPhase?: GenerationTimingPhase;
+  generationRunKey?: number;
+  isGenerationProgressComplete?: boolean;
+  onGenerationProgressDisplayComplete?: (runKey: number) => void;
   generationDisabled?: boolean;
   generationDisabledMessage?: string;
   generationDisabledRetry?: (() => void) | null;
@@ -73,6 +78,11 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   isGenerating,
   isInteractionBlocked = false,
   generationStageLabel = "絵をじっくり見ているよ",
+  generationTimingEstimate,
+  generationProgressPhase,
+  generationRunKey,
+  isGenerationProgressComplete,
+  onGenerationProgressDisplayComplete,
   generationDisabled = false,
   generationDisabledMessage = "現在、この機能は利用できません",
   generationDisabledRetry = null,
@@ -504,7 +514,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           </div>
         )}
 
-        {!isFocusMode && guideState === "draw" && (
+        {!isFocusMode && guideState === "draw" && mobileScene !== "draw" && (
           <div className="pointer-events-none absolute inset-x-0 top-4 z-30 mx-auto w-fit max-w-[calc(100%_-_2rem)] rounded-2xl bg-white/90 px-5 py-3 text-center text-xl font-black text-violet-800 shadow-lg backdrop-blur-sm sm:text-2xl" role="status" aria-live="polite">
             <span aria-hidden="true">✨</span> ここに好きな絵をかいてみよう！
             <div className="mt-1 text-xl leading-none text-violet-500" aria-hidden="true">↓</div>
@@ -531,7 +541,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           {isPlaybackActive && playbackDrawing && playbackAudioRef && (
             <div className="absolute inset-0 z-10 bg-white"><DrawingPlaybackCanvas drawingData={playbackDrawing} audioRef={playbackAudioRef} mode={playbackDisplayMode} animationEndProgress={playbackAnimationEndProgress} lineStrokeMappings={playbackLineStrokeMappings} singingScore={playbackScore} lyricLineCount={playbackLyricLineCount}/></div>
           )}
-          {isGenerating && (
+          {isGenerating && mobileScene !== "generate" && (
             <div className="absolute inset-0 z-20 bg-white">
               <GenerationJourney stageLabel={generationStageLabel} drawingData={playbackDrawing ?? initialDrawing} compact />
             </div>
@@ -560,6 +570,19 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           ) : null}
         </div>
 
+        {isGenerating && mobileScene === "generate" && (
+          <div className="compact-generation-progress w-full rounded-2xl border-2 border-orange-100 bg-white/95 px-4 py-3 text-center shadow-sm" role="status" aria-live="polite">
+            <p className="font-black text-orange-800">{generationStageLabel}</p>
+            <GenerationProgressBar
+              timingEstimate={generationTimingEstimate}
+              progressPhase={generationProgressPhase}
+              runKey={generationRunKey}
+              isComplete={isGenerationProgressComplete}
+              onCompletionDisplayComplete={onGenerationProgressDisplayComplete}
+            />
+          </div>
+        )}
+
         {isFocusMode ? (
           <div className="focus-controls mt-3 grid w-full max-w-xl grid-cols-3 gap-2">
             <button ref={clearTriggerButtonRef} type="button" onClick={handleClear} disabled={isGenerating || isInteractionBlocked} className="flex h-14 min-w-0 items-center justify-center rounded-2xl bg-slate-200 px-1 text-sm font-black text-slate-800 shadow-md disabled:opacity-50 sm:px-3 sm:text-base">ぜんぶ消す</button>
@@ -572,6 +595,11 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
           </div>
         ) : shouldShowCompactControls ? (
           <>
+            {guideState === "draw" && mobileScene === "draw" && strokes.length === 0 && (
+              <div className="compact-drawing-guide w-full px-4 py-1 text-center font-black text-violet-800" role="status" aria-live="polite">
+                <span aria-hidden="true">↑ </span>ここに好きな絵をかいてみよう！
+              </div>
+            )}
             {guideState === "generate" && (
               <div className="w-full px-4 py-1 text-center font-black text-amber-800" role="status" aria-live="polite">
                 絵ができたね！ つぎは「歌をつくる！」を押してみよう <span aria-hidden="true">↓</span>

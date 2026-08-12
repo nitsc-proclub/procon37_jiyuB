@@ -80,8 +80,10 @@ const useMediaQueryAny = (queries: string[]) => {
 
 const COMPACT_MAKER_LAYOUT_QUERIES = [
   "(max-width: 1023px) and (orientation: portrait)",
-  "(pointer: coarse) and (max-height: 600px)",
+  "(max-width: 1023px) and (max-height: 600px)",
 ];
+const isCompactMakerLayoutNow = () =>
+  typeof window !== "undefined" && COMPACT_MAKER_LAYOUT_QUERIES.some((query) => window.matchMedia(query).matches);
 const getGenerationFailureDisplay = (error: unknown): GenerationFailureDisplay => {
   if (error instanceof GenerateEkakiUtaError) {
     const isTurnstileStage = error.stage === "turnstile" || error.code?.startsWith("turnstile-");
@@ -163,6 +165,13 @@ const loadDebugHistoryConsent = (): DebugHistoryConsent => {
   } catch {
     return "unknown";
   }
+};
+
+// A compact-first visit should not interrupt drawing with a debug-history
+// decision. This is deliberately an in-memory default: resizing this tab from
+// desktop keeps its existing choice, while a later desktop visit can still ask.
+const loadInitialDebugHistoryConsent = (): DebugHistoryConsent => {
+  return isCompactMakerLayoutNow() ? "disabled" : loadDebugHistoryConsent();
 };
 type GenerationCompletionWaiter = {
   runKey: number;
@@ -409,7 +418,7 @@ const App: React.FC = () => {
   const [debugReporterNote, setDebugReporterNote] = useState("");
   const [isDebugBundleDownloading, setIsDebugBundleDownloading] = useState(false);
   const [debugBundleError, setDebugBundleError] = useState<string | null>(null);
-  const [debugHistoryConsent, setDebugHistoryConsent] = useState<DebugHistoryConsent>(loadDebugHistoryConsent);
+  const [debugHistoryConsent, setDebugHistoryConsent] = useState<DebugHistoryConsent>(loadInitialDebugHistoryConsent);
   const [isDebugHistoryConsentOpen, setIsDebugHistoryConsentOpen] = useState(false);
   const [pendingDebugHistoryGeneration, setPendingDebugHistoryGeneration] = useState<DrawingData | null>(null);
   const [experimentVariant, setExperimentVariant] = useState(0);
@@ -2033,7 +2042,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {appView === "debugHistory" && appFeatures.debugHistory ? (
+      {appView === "debugHistory" && appFeatures.debugHistory && !isCompactMakerLayout ? (
         <DebugHistoryView
           autoSaveEnabled={debugHistoryConsent === "enabled"}
           onEnableAutoSave={() => setDebugHistoryAutoSave("enabled")}
@@ -2560,6 +2569,11 @@ const App: React.FC = () => {
               isGenerating={isGenerating}
               isInteractionBlocked={isRecordConsentOpen}
               generationStageLabel={progressLabel}
+              generationTimingEstimate={generationTimingEstimate}
+              generationProgressPhase={generationProgressPhase}
+              generationRunKey={generationTimingRunKey}
+              isGenerationProgressComplete={isGenerationProgressComplete}
+              onGenerationProgressDisplayComplete={handleGenerationProgressDisplayComplete}
               generationDisabled={generationDisabled}
               generationDisabledMessage={generationDisabledMessage}
               generationDisabledRetry={
@@ -2618,7 +2632,6 @@ const App: React.FC = () => {
                       singingScore={playbackScore}
                       className="mt-2"
                       showKanaLines
-                      onStartNewSong={handleStartNewSong}
                     />
                     <div className="mt-6 rounded-2xl border-2 border-orange-100 bg-orange-50/60 p-4">
                       <p className="mb-2 text-sm font-black text-gray-700">描く順番</p>
@@ -2708,14 +2721,16 @@ const App: React.FC = () => {
                       audioRef={audioRef}
                       singingScore={playbackScore}
                       className={isCompactMakerLayout ? "mobile-playback-lyrics" : "mt-2"}
+                      title={isCompactMakerLayout ? lyrics.title : undefined}
                       showKanaLines={false}
                       compact={isCompactMakerLayout}
-                      onStartNewSong={handleStartNewSong}
                     />
 
                     {voicevoxWarning && (
                       <p className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800" role="alert">
-                        歌声は作れませんでしたが、絵描き歌のアニメーションは再生できます。{voicevoxWarning}
+                        {isCompactMakerLayout
+                          ? "現在、歌声生成機能は準備中です。"
+                          : `歌声は作れませんでしたが、絵描き歌のアニメーションは再生できます。${voicevoxWarning}`}
                       </p>
                     )}
 
@@ -2763,6 +2778,14 @@ const App: React.FC = () => {
                         </p>
                       )}
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={handleStartNewSong}
+                      className="mt-5 min-h-11 w-full rounded-2xl border-2 border-orange-200 bg-orange-50 px-4 py-3 text-sm font-black text-orange-700 shadow-sm transition hover:border-orange-300 hover:bg-orange-100 active:scale-[.98]"
+                    >
+                      新しい歌を作る
+                    </button>
 
                     {lyrics.modelName && (
                       <p className="mt-3 text-right text-xs font-bold text-gray-400">

@@ -6,6 +6,7 @@ type GenerationJourneyProps = {
   stageLabel: string;
   drawingData?: DrawingData | null;
   compact?: boolean;
+  inline?: boolean;
   timingEstimate?: GenerationTimingEstimate | null;
   progressPhase?: GenerationTimingPhase;
   runKey?: number;
@@ -123,7 +124,7 @@ const COMPLETION_ANIMATION_MS = 500;
 const COMPLETION_HOLD_MS = 600;
 const COMPLETION_FALLBACK_MS = COMPLETION_ANIMATION_MS + COMPLETION_HOLD_MS + 1_000;
 
-const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstimate" | "progressPhase" | "runKey" | "isComplete" | "onCompletionDisplayComplete">> = ({ timingEstimate, progressPhase = "gemini", runKey = 0, isComplete = false, onCompletionDisplayComplete }) => {
+export const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstimate" | "progressPhase" | "runKey" | "isComplete" | "onCompletionDisplayComplete">> = ({ timingEstimate, progressPhase = "gemini", runKey = 0, isComplete = false, onCompletionDisplayComplete }) => {
   const [value, setValue] = useState(0);
   const valueRef = useRef(0);
   const timingEstimateRef = useRef(timingEstimate);
@@ -238,8 +239,8 @@ const GenerationProgressBar: React.FC<Pick<GenerationJourneyProps, "timingEstima
   </div>;
 };
 
-const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, compact = false, timingEstimate, progressPhase, runKey, isComplete, onCompletionDisplayComplete }) => (
-  <div className={`generation-journey flex h-full flex-col items-center justify-center text-center ${compact ? "min-h-0" : "min-h-[340px]"}`}>
+const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, compact = false, inline = false, timingEstimate, progressPhase, runKey, isComplete, onCompletionDisplayComplete }) => (
+  <div className={`generation-journey flex h-full flex-col items-center justify-center text-center ${compact || inline ? "min-h-0" : "min-h-[340px]"}`}>
     {compact && <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{stageLabel}</p>}
     {drawingData && compact ? (
       <div className={`relative w-full overflow-hidden bg-[#fffdf7] ${compact ? "h-full" : "aspect-square max-w-[21rem] rounded-3xl border-4 border-yellow-200 shadow-lg"}`}>
@@ -262,15 +263,15 @@ const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawi
 
     {!compact && (
       <>
-        <p className="mt-5 text-sm font-bold text-slate-500">AIとずんだもんが、順番に歌をつくっています</p>
+        {!inline && <p className="mt-5 text-sm font-bold text-slate-500">AIとずんだもんが、順番に歌をつくっています</p>}
         <GenerationProgressBar timingEstimate={timingEstimate} progressPhase={progressPhase} runKey={runKey} isComplete={isComplete} onCompletionDisplayComplete={onCompletionDisplayComplete} />
-        <div className="mt-4 grid w-full max-w-xl gap-2 sm:grid-cols-2">
+        {!inline && <div className="mt-4 grid w-full max-w-xl gap-2 sm:grid-cols-2">
           {JOURNEY_STEPS.map((step) => (
             <div key={step} className={`rounded-2xl border px-3 py-2 text-sm font-bold ${step === stageLabel ? "border-orange-400 bg-orange-50 text-orange-900 shadow-sm" : "border-orange-100 bg-white/70 text-slate-500"}`}>
               {step === stageLabel ? "✦ " : "○ "}{step}
             </div>
           ))}
-        </div>
+        </div>}
       </>
     )}
   </div>

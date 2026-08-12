@@ -10,7 +10,6 @@ interface KaraokeLyricsPanelProps {
     title?: string;
     showKanaLines?: boolean;
     compact?: boolean;
-    onStartNewSong?: () => void;
 }
 
 const splitTextSegments = (value: string) => {
@@ -30,7 +29,6 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
     title,
     showKanaLines = false,
     compact = false,
-    onStartNewSong,
 }) => {
     const lineCount = lyrics.lines.length;
     const lineTimings = useMemo(() => buildLineTimings(singingScore, lineCount), [lineCount, singingScore]);
@@ -214,15 +212,6 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
                     );
                 })}
                 </div>
-                {onStartNewSong && (
-                    <button
-                        type="button"
-                        onClick={onStartNewSong}
-                        className="mt-5 min-h-11 w-full rounded-2xl border-2 border-orange-200 bg-orange-50 px-4 py-3 text-sm font-black text-orange-700 shadow-sm transition hover:border-orange-300 hover:bg-orange-100 active:scale-[.98]"
-                    >
-                        新しい歌を作る
-                    </button>
-                )}
             </div>
 
             {showKanaLines && lyrics.singingKanaLines && lyrics.singingKanaLines.length > 0 && (
