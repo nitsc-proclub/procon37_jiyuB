@@ -38,6 +38,7 @@ interface PaintCanvasProps {
   playbackLyricLineCount?: number;
   isPlaybackActive?: boolean;
   mobileScene?: "draw" | "generate" | "playback";
+  hideFocusControl?: boolean;
   resetRequestKey?: number;
 }
 
@@ -99,6 +100,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   playbackLyricLineCount,
   isPlaybackActive = false,
   mobileScene,
+  hideFocusControl = false,
   resetRequestKey = 0,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -566,7 +568,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
             >
               できた！
             </button>
-          ) : shouldShowCompactControls ? (
+          ) : shouldShowCompactControls && !hideFocusControl ? (
             <button
               ref={focusTriggerRef}
               type="button"
@@ -583,6 +585,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
         {isGenerating && mobileScene === "generate" && (
           <div className="compact-generation-progress w-full rounded-2xl border-2 border-orange-100 bg-white/95 px-4 py-3 text-center shadow-sm" role="status" aria-live="polite">
+            <div className="mb-1 text-3xl" aria-hidden="true">🎨</div>
             <p className="font-black text-orange-800">{generationStageLabel}</p>
             <GenerationProgressBar
               fullWidth

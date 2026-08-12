@@ -192,7 +192,7 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
                             data-mobile-current={isMobileCurrent}
                             className={`min-h-11 w-full rounded-2xl border-2 px-4 py-3 transition-all duration-300 focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-300 ${lineStyle}`}
                         >
-                            <span className={`block text-xl font-bold leading-relaxed md:text-2xl ${isActive ? "tracking-wide" : ""}`}>
+                            <span className={`block font-bold ${compact ? "text-[1.0625rem] leading-snug sm:text-lg" : "text-xl leading-relaxed md:text-2xl"} ${isActive ? "tracking-wide" : ""}`}>
                                 {lineSegments.map((segment, segmentIndex) => {
                                     const isHighlighted = segmentIndex < activeSegmentCount;
                                     const isTail = segmentIndex === activeSegmentCount && isActive && activeLineProgress > 0 && activeLineProgress < 1;

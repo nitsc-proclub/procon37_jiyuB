@@ -82,6 +82,7 @@ const COMPACT_MAKER_LAYOUT_QUERIES = [
   "(max-width: 1023px) and (orientation: portrait)",
   "(max-width: 1023px) and (max-height: 600px)",
 ];
+const COMPACT_PORTRAIT_LAYOUT_QUERIES = ["(max-width: 1023px) and (orientation: portrait)"];
 const isCompactMakerLayoutNow = () =>
   typeof window !== "undefined" && COMPACT_MAKER_LAYOUT_QUERIES.some((query) => window.matchMedia(query).matches);
 const getGenerationFailureDisplay = (error: unknown): GenerationFailureDisplay => {
@@ -442,6 +443,7 @@ const App: React.FC = () => {
   const [isSceneTurnAnimating, setIsSceneTurnAnimating] = useState(false);
   const [newSongResetKey, setNewSongResetKey] = useState(0);
   const isCompactMakerLayout = useMediaQueryAny(COMPACT_MAKER_LAYOUT_QUERIES);
+  const isCompactPortraitLayout = useMediaQueryAny(COMPACT_PORTRAIT_LAYOUT_QUERIES);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const completionHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -2598,6 +2600,7 @@ const App: React.FC = () => {
               playbackLyricLineCount={playbackLyricLineCount}
               isPlaybackActive={!!lyrics && !!playbackDrawing && !isGenerating && isAudioPlaying}
               mobileScene={isCompactMakerLayout ? makerScene : undefined}
+              hideFocusControl={isCompactPortraitLayout && makerScene === "draw"}
               resetRequestKey={newSongResetKey}
             />
 
@@ -2734,14 +2737,6 @@ const App: React.FC = () => {
                       compact={isCompactMakerLayout}
                     />
 
-                    {voicevoxWarning && (
-                      <p className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800" role="alert">
-                        {isCompactMakerLayout
-                          ? "現在、歌声生成機能は準備中です。"
-                          : `歌声は作れませんでしたが、絵描き歌のアニメーションは再生できます。${voicevoxWarning}`}
-                      </p>
-                    )}
-
                     <div className={`mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5 ${isCompactMakerLayout ? "mobile-playback-player" : ""}`}>
                       <div className="mb-4 flex justify-end">
                         <div className="flex rounded-full bg-white p-1 shadow-sm">
@@ -2786,6 +2781,14 @@ const App: React.FC = () => {
                         </p>
                       )}
                     </div>
+
+                    {voicevoxWarning && (
+                      <p className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800" role="alert">
+                        {isCompactMakerLayout
+                          ? "現在、歌声生成機能は準備中です。"
+                          : `歌声は作れませんでしたが、絵描き歌のアニメーションは再生できます。${voicevoxWarning}`}
+                      </p>
+                    )}
 
                     {lyrics.modelName && (
                       <p className="mt-3 text-right text-xs font-bold text-gray-400">

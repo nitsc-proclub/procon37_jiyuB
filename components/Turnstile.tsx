@@ -88,16 +88,16 @@ type TurnstileProps = {
 const COMPACT_VIEWPORT_QUERY = "(max-width: 480px)";
 
 const getTurnstileSize = () =>
-  typeof window !== "undefined" && window.matchMedia(COMPACT_VIEWPORT_QUERY).matches ? "compact" : "normal";
+  typeof window !== "undefined" && window.matchMedia(COMPACT_VIEWPORT_QUERY).matches ? "flexible" : "normal";
 
 const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(({ siteKey, action, onToken, onStatusChange }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
-  const [size, setSize] = useState<"normal" | "compact">(getTurnstileSize);
+  const [size, setSize] = useState<"normal" | "flexible">(getTurnstileSize);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(COMPACT_VIEWPORT_QUERY);
-    const updateSize = () => setSize(mediaQuery.matches ? "compact" : "normal");
+    const updateSize = () => setSize(mediaQuery.matches ? "flexible" : "normal");
 
     updateSize();
     mediaQuery.addEventListener("change", updateSize);
@@ -174,7 +174,7 @@ const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(({ siteKey, action
   return (
     <div
       ref={containerRef}
-      className={`flex w-full justify-center ${size === "normal" ? "min-h-[65px]" : "min-h-[120px]"}`}
+      className="flex min-h-[65px] w-full max-w-full justify-center"
       aria-label="安全確認"
     />
   );
