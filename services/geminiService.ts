@@ -14,13 +14,13 @@ const parseErrorResponse = async (response: Response) => {
   }
 };
 
-export const generateEkakiUta = async (drawingData: DrawingData): Promise<LyricsResponse> => {
+export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?: string): Promise<LyricsResponse> => {
   const response = await fetch("/api/gemini/generate-ekaki-uta", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ drawingData }),
+    body: JSON.stringify({ drawingData, ...(turnstileToken ? { turnstileToken } : {}) }),
   });
 
   if (!response.ok) {

@@ -6,11 +6,17 @@ type Env = {
   GEMINI_MODEL?: string;
   GEMINI_MODEL_CANDIDATES?: string;
   GEMINI_MODEL_SUB?: string;
+  TURNSTILE_SECRET?: string;
+  TURNSTILE_EXPECTED_HOSTNAME?: string;
 };
 
 type HttpError = Error & { status: number };
 
 const MAX_REQUEST_BYTES = 15 * 1024 * 1024;
+const MAX_TURNSTILE_TOKEN_LENGTH = 2048;
+const TURNSTILE_ACTION = "generate-ekaki-uta";
+const TURNSTILE_SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+const TURNSTILE_SITEVERIFY_TIMEOUT_MS = 8_000;
 const MODEL_LIST_CACHE_MS = 10 * 60 * 1000;
 const DEFAULT_MODEL = "gemini-2.5-flash-lite";
 let modelListCache: { expiresAt: number; names: string[] } | null = null;
@@ -81,6 +87,73 @@ const assertDrawingData = (value: unknown): DrawingData => {
   }
   if (!Array.isArray(drawingData.strokes)) throw httpError("ストロークデータが正しくありません。", 400);
   return drawingData as DrawingData;
+};
+
+const assertTurnstileToken = (value: unknown) => {
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value.length > MAX_TURNSTILE_TOKEN_LENGTH
+  ) {
+    throw httpError("安全確認の情報が正しくありません。もう一度お試しください。", 400);
+  }
+  return value;
+};
+
+type TurnstileVerification = {
+  success?: boolean;
+  action?: string;
+  hostname?: string;
+};
+
+const verifyTurnstile = async (request: Request, token: string, env: Env) => {
+  const expectedHostname = env.TURNSTILE_EXPECTED_HOSTNAME?.trim().toLowerCase();
+  if (!env.TURNSTILE_SECRET || !expectedHostname) {
+    // Do not fall back to the request Host header: it is client-controlled and would weaken hostname validation.
+    throw httpError("安全確認の設定がまだ完了していません。しばらくしてからもう一度お試しください。", 503);
+  }
+
+  const formData = new FormData();
+  formData.set("secret", env.TURNSTILE_SECRET);
+  formData.set("response", token);
+  const remoteIp = request.headers.get("CF-Connecting-IP");
+  if (remoteIp) formData.set("remoteip", remoteIp);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TURNSTILE_SITEVERIFY_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(TURNSTILE_SITEVERIFY_URL, { method: "POST", body: formData, signal: controller.signal });
+  } catch {
+    throw httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503);
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) {
+    throw httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503);
+  }
+
+  let verification: TurnstileVerification;
+  try {
+    verification = (await response.json()) as TurnstileVerification;
+  } catch {
+    throw httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503);
+  }
+  if (
+    !verification ||
+    typeof verification.success !== "boolean" ||
+    (verification.action !== undefined && typeof verification.action !== "string") ||
+    (verification.hostname !== undefined && typeof verification.hostname !== "string")
+  ) {
+    throw httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503);
+  }
+  if (
+    !verification.success ||
+    verification.action !== TURNSTILE_ACTION ||
+    verification.hostname?.toLowerCase() !== expectedHostname
+  ) {
+    throw httpError("安全確認に失敗しました。もう一度お試しください。", 403);
+  }
 };
 
 const getStrokeGroups = (drawingData: DrawingData): StrokeGroup[] => {
@@ -237,8 +310,15 @@ const handleGemini = async (request: Request, env: Env) => {
   try {
     const body = await request.arrayBuffer();
     if (body.byteLength > MAX_REQUEST_BYTES) return json({ error: "描画データが大きすぎます。" }, 413);
-    const payload = JSON.parse(new TextDecoder().decode(body)) as { drawingData?: unknown };
-    return json(await generateLyrics(assertDrawingData(payload.drawingData), env));
+    let payload: { drawingData?: unknown; turnstileToken?: unknown };
+    try {
+      payload = JSON.parse(new TextDecoder().decode(body)) as { drawingData?: unknown; turnstileToken?: unknown };
+    } catch {
+      throw httpError("リクエストの形式が正しくありません。", 400);
+    }
+    const drawingData = assertDrawingData(payload.drawingData);
+    await verifyTurnstile(request, assertTurnstileToken(payload.turnstileToken), env);
+    return json(await generateLyrics(drawingData, env));
   } catch (error) {
     const status = typeof error === "object" && error !== null && "status" in error && typeof error.status === "number" ? error.status : 500;
     const message = error instanceof Error && status < 500 ? error.message : "絵描き歌の生成に失敗しました。もう一度試してください。";

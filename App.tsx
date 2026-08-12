@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import PaintCanvas, { DrawingMetrics } from "./components/PaintCanvas";
 import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
+import Turnstile, { TurnstileHandle, TurnstileStatus } from "./components/Turnstile";
 import DebugExportDialog from "./components/DebugExportDialog";
 import DebugHistoryView from "./components/DebugHistoryView";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
@@ -69,6 +70,8 @@ const getUsageStatsCoverage = (date: string) => {
 
 const VOICEVOX_BASE_URL_STORAGE_KEY = "ekaki-uta:voicevox-base-url";
 const DEBUG_HISTORY_CONSENT_STORAGE_KEY = "ekaki-uta:debug-history-autosave-v1";
+const TURNSTILE_ACTION = "generate-ekaki-uta";
+const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY?.trim() ?? "";
 type DebugHistoryConsent = "unknown" | "enabled" | "disabled";
 
 const loadVoicevoxBaseUrl = () => {
@@ -289,6 +292,11 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [voicevoxWarning, setVoicevoxWarning] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileRetryKey, setTurnstileRetryKey] = useState(0);
+  const [turnstileStatus, setTurnstileStatus] = useState<TurnstileStatus>(
+    !import.meta.env.DEV && TURNSTILE_SITE_KEY ? "loading" : !import.meta.env.DEV ? "error" : "verified",
+  );
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [playbackKind, setPlaybackKind] = useState<PlaybackKind>("animation-only");
   const [voicevoxConnectionStatus, setVoicevoxConnectionStatus] = useState<VoicevoxConnectionStatus>("idle");
@@ -355,11 +363,37 @@ const App: React.FC = () => {
   const generationRunRef = useRef(false);
   const generationTimingRunKeyRef = useRef(0);
   const generationCompletionWaiterRef = useRef<GenerationCompletionWaiter | null>(null);
+  const turnstileWidgetRef = useRef<TurnstileHandle>(null);
+  const turnstileTokenRef = useRef<string | null>(null);
   const isMountedRef = useRef(true);
   const audioUrlRef = useRef<string | null>(null);
   const debugHistoryImageUrlRef = useRef<string | null>(null);
   const experimentAudioRef = useRef<HTMLAudioElement>(null);
   const experimentAudioUrlRef = useRef<string | null>(null);
+  // Vite's development middleware is the only intentionally local API path.
+  // Every built app can be served by the Worker, whose Gemini route validates
+  // Turnstile regardless of VITE_APP_MODE, so it must provide a token.
+  const isTurnstileRequired = !import.meta.env.DEV;
+
+  const handleTurnstileToken = useCallback((token: string | null) => {
+    turnstileTokenRef.current = token;
+    setTurnstileToken(token);
+  }, []);
+
+  const handleTurnstileStatusChange = useCallback((status: TurnstileStatus) => {
+    setTurnstileStatus(status);
+    if (status === "expired") {
+      window.setTimeout(() => turnstileWidgetRef.current?.reset(), 0);
+    }
+  }, []);
+
+  const retryTurnstile = useCallback(() => {
+    if (!TURNSTILE_SITE_KEY) return;
+    handleTurnstileToken(null);
+    setTurnstileStatus("loading");
+    setTurnstileRetryKey((current) => current + 1);
+    turnstileWidgetRef.current?.reset();
+  }, [handleTurnstileToken]);
 
   const handleGenerationProgressDisplayComplete = (runKey: number) => {
     const waiter = generationCompletionWaiterRef.current;
@@ -961,6 +995,21 @@ const App: React.FC = () => {
       return;
     }
 
+    const turnstileTokenForRequest = turnstileTokenRef.current;
+    if (isTurnstileRequired && !turnstileTokenForRequest) {
+      setError("安全確認が終わってから、もう一度「歌をつくる！」を押してね。");
+      retryTurnstile();
+      return;
+    }
+
+    // Tokens are one-time use. Start preparing the next one immediately, while
+    // this request is in flight, but retain this copy for the current request.
+    if (isTurnstileRequired) {
+      handleTurnstileToken(null);
+      setTurnstileStatus("verifying");
+      turnstileWidgetRef.current?.reset();
+    }
+
     const groupedDrawingData = {
       ...data,
       strokeGroups: groupStrokes(data.strokes),
@@ -1055,7 +1104,7 @@ const App: React.FC = () => {
       const localVoicevoxProbe = appFeatures.localVoicevox
         ? checkVoicevoxConnection(true)
         : Promise.resolve(false);
-      generatedLyrics = await generateEkakiUta(groupedDrawingData);
+      generatedLyrics = await generateEkakiUta(groupedDrawingData, turnstileTokenForRequest);
       completeTimingPhase("gemini");
 
       const canUseLocalVoicevox = await localVoicevoxProbe;
@@ -1343,6 +1392,32 @@ const App: React.FC = () => {
   const visibleDemoRecords = showFavoriteOnly ? demoRecords.filter((record) => record.isFavorite) : demoRecords;
   const experimentScoreJson = serializeSingingScore(experimentScore);
   const canShowPrintLayout = !!lyrics && !!playbackDrawing && !isGenerating;
+  const isTurnstileReady = !isTurnstileRequired || !!turnstileToken;
+  const generationDisabled = !appFeatures.gemini || !isTurnstileReady;
+  const generationDisabledMessage = !appFeatures.gemini
+    ? "AI生成は現在準備中です。描画機能はそのまま利用できます。"
+    : !TURNSTILE_SITE_KEY
+      ? "安全確認の設定がまだ完了していません。管理者に知らせてね。"
+      : turnstileStatus === "error"
+        ? "安全確認を始められませんでした。通信を確認して、もう一度ためしてね。"
+        : turnstileStatus === "expired"
+          ? "安全確認をやり直しています…"
+          : "安全確認中… 終わると歌をつくれます。";
+  const turnstileSecurityCheck = isTurnstileRequired && TURNSTILE_SITE_KEY ? (
+    <div className="w-full rounded-2xl border-2 border-sky-100 bg-sky-50/70 px-3 py-2 text-center">
+      <Turnstile
+        key={turnstileRetryKey}
+        ref={turnstileWidgetRef}
+        siteKey={TURNSTILE_SITE_KEY}
+        action={TURNSTILE_ACTION}
+        onToken={handleTurnstileToken}
+        onStatusChange={handleTurnstileStatusChange}
+      />
+      <p className="text-xs font-bold text-slate-600" role="status" aria-live="polite">
+        {turnstileStatus === "verified" ? "安全確認できました。歌をつくれます！" : "歌をつくる前に、安全確認をしています。"}
+      </p>
+    </div>
+  ) : null;
   const hasEnoughDrawing =
     drawingMetrics.strokeCount >= 3 ||
     (drawingMetrics.pointCount >= 60 && drawingMetrics.drawingDurationMs >= 500);
@@ -2349,8 +2424,14 @@ const App: React.FC = () => {
               isGenerating={isGenerating}
               isInteractionBlocked={isRecordConsentOpen}
               generationStageLabel={progressLabel}
-              generationDisabled={!appFeatures.gemini}
-              generationDisabledMessage="AI生成は現在準備中です。描画機能はそのまま利用できます。"
+              generationDisabled={generationDisabled}
+              generationDisabledMessage={generationDisabledMessage}
+              generationDisabledRetry={
+                isTurnstileRequired && TURNSTILE_SITE_KEY && (turnstileStatus === "error" || turnstileStatus === "expired")
+                  ? retryTurnstile
+                  : null
+              }
+              generationSecurityCheck={turnstileSecurityCheck}
               initialDrawing={playbackDrawing}
               playbackDrawing={playbackDrawing}
               playbackAudioRef={audioRef}

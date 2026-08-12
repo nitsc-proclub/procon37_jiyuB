@@ -20,6 +20,9 @@ interface PaintCanvasProps {
   generationStageLabel?: string;
   generationDisabled?: boolean;
   generationDisabledMessage?: string;
+  generationDisabledRetry?: (() => void) | null;
+  generationDisabledRetryLabel?: string;
+  generationSecurityCheck?: React.ReactNode;
   initialDrawing?: DrawingData | null;
   playbackDrawing?: DrawingData | null;
   playbackAudioRef?: React.RefObject<HTMLAudioElement | null>;
@@ -71,6 +74,9 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   generationStageLabel = "絵をじっくり見ているよ",
   generationDisabled = false,
   generationDisabledMessage = "現在、この機能は利用できません",
+  generationDisabledRetry = null,
+  generationDisabledRetryLabel = "もう一度確認する",
+  generationSecurityCheck,
   initialDrawing,
   playbackDrawing,
   playbackAudioRef,
@@ -568,6 +574,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
                 絵ができたね！ つぎは「歌をつくる！」を押してみよう <span aria-hidden="true">↓</span>
               </div>
             )}
+            {generationSecurityCheck}
             <div className="paint-toolbar flex w-full max-w-full flex-wrap gap-2 sm:gap-3">
               <button ref={clearTriggerButtonRef} type="button" onClick={handleClear} disabled={isGenerating || isInteractionBlocked} className="flex h-14 min-w-[7.25rem] flex-1 items-center justify-center whitespace-nowrap rounded-2xl bg-slate-200 px-3 text-base font-bold text-slate-700 shadow-md transition-all hover:bg-slate-300 disabled:opacity-50 active:scale-95">ぜんぶ消す</button>
               {undoButton}{redoButton}
@@ -575,7 +582,20 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
                 {generationDisabled ? "生成は準備中" : "歌をつくる！"}
               </button>
             </div>
-            {generationDisabled && <p className="w-full text-center text-sm font-bold text-orange-700" role="status">{generationDisabledMessage}</p>}
+            {generationDisabled && (
+              <div className="w-full text-center" role="status" aria-live="polite">
+                <p className="text-sm font-bold text-orange-700">{generationDisabledMessage}</p>
+                {generationDisabledRetry && (
+                  <button
+                    type="button"
+                    onClick={generationDisabledRetry}
+                    className="mt-2 min-h-10 rounded-xl border-2 border-orange-200 bg-white px-4 py-2 text-sm font-black text-orange-700 transition hover:bg-orange-50 focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-300"
+                  >
+                    {generationDisabledRetryLabel}
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
