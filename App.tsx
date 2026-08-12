@@ -82,10 +82,6 @@ const COMPACT_MAKER_LAYOUT_QUERIES = [
   "(max-width: 1023px) and (orientation: portrait)",
   "(pointer: coarse) and (max-height: 600px)",
 ];
-const COMPACT_MAKER_LYRICS_QUERIES = [
-  "(pointer: coarse) and (max-height: 620px)",
-];
-
 const getGenerationFailureDisplay = (error: unknown): GenerationFailureDisplay => {
   if (error instanceof GenerateEkakiUtaError) {
     const isTurnstileStage = error.stage === "turnstile" || error.code?.startsWith("turnstile-");
@@ -436,7 +432,6 @@ const App: React.FC = () => {
   const [makerScene, setMakerScene] = useState<MakerScene>("draw");
   const [isSceneTurnAnimating, setIsSceneTurnAnimating] = useState(false);
   const isCompactMakerLayout = useMediaQueryAny(COMPACT_MAKER_LAYOUT_QUERIES);
-  const isCompactMakerLyrics = useMediaQueryAny(COMPACT_MAKER_LYRICS_QUERIES);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const completionHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -1498,6 +1493,10 @@ const App: React.FC = () => {
     setHasPlayedGeneratedAudio(false);
   };
 
+  const handleStartNewSong = () => {
+    window.location.reload();
+  };
+
   const handleDrawingEditStart = () => {
     if (!lyrics) return;
     setLyrics(null);
@@ -1681,7 +1680,7 @@ const App: React.FC = () => {
       )}
       <button
         type="button"
-        onClick={() => window.location.reload()}
+        onClick={handleStartNewSong}
         className={`floating-reload fixed left-4 top-4 z-[80] flex h-12 w-12 items-center justify-center rounded-full border border-white/70 bg-white/90 text-orange-500 shadow-lg backdrop-blur-md transition-all hover:bg-orange-50 active:scale-95 ${appView === "maker" && isCompactMakerLayout ? "hidden" : ""}`}
         title="再読み込み"
         aria-label="再読み込み"
@@ -2027,7 +2026,7 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {appView === "maker" && isCompactMakerLayout && makerScene === "draw" && (
+      {appView === "maker" && isCompactMakerLayout && (
         <div className="compact-maker-intro" aria-label="超えかき歌の説明">
           <img src="/logo.png" alt="超えかき歌！" />
           <p>絵を描くと、AI が歌詞を作り、ずんだもん（VOICEVOX）が歌ってくれます！</p>
@@ -2613,7 +2612,14 @@ const App: React.FC = () => {
                       <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">{lyrics.identifiedObject}</span>
                       <h2 ref={completionHeadingRef} tabIndex={-1} className="text-3xl font-bold text-gray-800 focus:outline-none">{lyrics.title}</h2>
                     </div>
-                    <KaraokeLyricsPanel lyrics={lyrics} audioRef={audioRef} singingScore={playbackScore} className="mt-2" showKanaLines />
+                    <KaraokeLyricsPanel
+                      lyrics={lyrics}
+                      audioRef={audioRef}
+                      singingScore={playbackScore}
+                      className="mt-2"
+                      showKanaLines
+                      onStartNewSong={handleStartNewSong}
+                    />
                     <div className="mt-6 rounded-2xl border-2 border-orange-100 bg-orange-50/60 p-4">
                       <p className="mb-2 text-sm font-black text-gray-700">描く順番</p>
                       <div className="space-y-2 text-sm font-semibold text-gray-600">
@@ -2703,7 +2709,8 @@ const App: React.FC = () => {
                       singingScore={playbackScore}
                       className={isCompactMakerLayout ? "mobile-playback-lyrics" : "mt-2"}
                       showKanaLines={false}
-                      compact={isCompactMakerLayout && isCompactMakerLyrics}
+                      compact={isCompactMakerLayout}
+                      onStartNewSong={handleStartNewSong}
                     />
 
                     {voicevoxWarning && (

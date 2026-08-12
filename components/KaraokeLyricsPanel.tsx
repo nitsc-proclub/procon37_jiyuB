@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { LyricsResponse, SingingScore } from "../types";
 import { buildLineTimings, findActiveLineTiming, getLineStartTimeSeconds, getPlaybackTimelinePosition } from "../utils/playbackTiming";
 
@@ -10,6 +10,7 @@ interface KaraokeLyricsPanelProps {
     title?: string;
     showKanaLines?: boolean;
     compact?: boolean;
+    onStartNewSong?: () => void;
 }
 
 const splitTextSegments = (value: string) => {
@@ -29,10 +30,12 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
     title,
     showKanaLines = false,
     compact = false,
+    onStartNewSong,
 }) => {
     const lineCount = lyrics.lines.length;
     const lineTimings = useMemo(() => buildLineTimings(singingScore, lineCount), [lineCount, singingScore]);
     const [renderTick, setRenderTick] = useState(0);
+    const compactLyricsRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         const audio = audioRef?.current;
@@ -141,14 +144,29 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
         });
     };
 
+    useEffect(() => {
+        if (!compact || activeLineIndex < 0) return;
+
+        const container = compactLyricsRef.current;
+        const activeButton = container?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
+        if (!container || !activeButton) return;
+
+        const containerRect = container.getBoundingClientRect();
+        const buttonRect = activeButton.getBoundingClientRect();
+        if (buttonRect.top < containerRect.top) {
+            container.scrollTop += buttonRect.top - containerRect.top;
+        } else if (buttonRect.bottom > containerRect.bottom) {
+            container.scrollTop += buttonRect.bottom - containerRect.bottom;
+        }
+    }, [activeLineIndex, compact]);
+
     return (
         <div className={className}>
             {title && <p className="mb-3 text-sm font-black text-gray-600">{title}</p>}
             <p className="sr-only" aria-live="polite" aria-atomic="true">
                 {activeLineIndex >= 0 ? `再生中：${lyrics.lines[activeLineIndex]}` : ""}
             </p>
-            <details className={compact ? "compact-karaoke-lines" : undefined} open={compact ? undefined : true}>
-                {compact && <summary className="compact-karaoke-summary">歌詞をみる</summary>}
+            <div ref={compact ? compactLyricsRef : undefined} className={compact ? "compact-karaoke-lines" : undefined}>
                 <div className="space-y-3 text-center">
                 {lyrics.lines.map((line, index) => {
                     const isActive = index === activeLineIndex;
@@ -196,7 +214,16 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
                     );
                 })}
                 </div>
-            </details>
+                {onStartNewSong && (
+                    <button
+                        type="button"
+                        onClick={onStartNewSong}
+                        className="mt-5 min-h-11 w-full rounded-2xl border-2 border-orange-200 bg-orange-50 px-4 py-3 text-sm font-black text-orange-700 shadow-sm transition hover:border-orange-300 hover:bg-orange-100 active:scale-[.98]"
+                    >
+                        新しい歌を作る
+                    </button>
+                )}
+            </div>
 
             {showKanaLines && lyrics.singingKanaLines && lyrics.singingKanaLines.length > 0 && (
                 <div className="mt-6 rounded-2xl border-2 border-yellow-100 bg-yellow-50 p-4">
