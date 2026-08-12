@@ -10,7 +10,13 @@ type Env = {
   TURNSTILE_EXPECTED_HOSTNAME?: string;
 };
 
-type HttpError = Error & { status: number };
+type ErrorStage = "request" | "config" | "turnstile" | "gemini";
+type HttpError = Error & {
+  status: number;
+  code?: string;
+  stage?: ErrorStage;
+  turnstileErrorCodes?: string[];
+};
 
 const MAX_REQUEST_BYTES = 15 * 1024 * 1024;
 const MAX_TURNSTILE_TOKEN_LENGTH = 2048;
@@ -27,7 +33,21 @@ const json = (value: unknown, status = 200) =>
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
 
-const httpError = (message: string, status: number): HttpError => Object.assign(new Error(message), { status });
+const httpError = (message: string, status: number, code?: string, stage?: ErrorStage): HttpError =>
+  Object.assign(new Error(message), { status, code, stage });
+
+// Siteverify error codes are only written to Workers logs for the operator.
+// Treat them as untrusted external input anyway, so a malformed response can
+// never turn the log into a carrier for a token or another long value.
+const isSafeTurnstileErrorCode = (value: unknown): value is string =>
+  typeof value === "string" && /^[a-z0-9-]{1,64}$/i.test(value);
+
+const addTurnstileErrorCodes = (error: HttpError, errorCodes: unknown) => {
+  if (Array.isArray(errorCodes)) {
+    error.turnstileErrorCodes = errorCodes.filter(isSafeTurnstileErrorCode).slice(0, 8);
+  }
+  return error;
+};
 
 const parseModelNames = (value?: string) =>
   (value ?? "")
@@ -104,13 +124,14 @@ type TurnstileVerification = {
   success?: boolean;
   action?: string;
   hostname?: string;
+  "error-codes"?: unknown;
 };
 
 const verifyTurnstile = async (request: Request, token: string, env: Env) => {
   const expectedHostname = env.TURNSTILE_EXPECTED_HOSTNAME?.trim().toLowerCase();
   if (!env.TURNSTILE_SECRET || !expectedHostname) {
     // Do not fall back to the request Host header: it is client-controlled and would weaken hostname validation.
-    throw httpError("安全確認の設定がまだ完了していません。しばらくしてからもう一度お試しください。", 503);
+    throw httpError("安全確認の設定がまだ完了していません。しばらくしてからもう一度お試しください。", 503, "turnstile-config", "config");
   }
 
   const formData = new FormData();
@@ -125,19 +146,28 @@ const verifyTurnstile = async (request: Request, token: string, env: Env) => {
   try {
     response = await fetch(TURNSTILE_SITEVERIFY_URL, { method: "POST", body: formData, signal: controller.signal });
   } catch {
-    throw httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503);
+    throw httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503, "turnstile-unavailable", "turnstile");
   } finally {
     clearTimeout(timeout);
   }
   if (!response.ok) {
-    throw httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503);
+    let errorCodes: unknown;
+    try {
+      errorCodes = ((await response.json()) as TurnstileVerification)["error-codes"];
+    } catch {
+      // The external response body is not otherwise used or logged.
+    }
+    throw addTurnstileErrorCodes(
+      httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503, "turnstile-unavailable", "turnstile"),
+      errorCodes,
+    );
   }
 
   let verification: TurnstileVerification;
   try {
     verification = (await response.json()) as TurnstileVerification;
   } catch {
-    throw httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503);
+    throw httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503, "turnstile-unavailable", "turnstile");
   }
   if (
     !verification ||
@@ -145,14 +175,19 @@ const verifyTurnstile = async (request: Request, token: string, env: Env) => {
     (verification.action !== undefined && typeof verification.action !== "string") ||
     (verification.hostname !== undefined && typeof verification.hostname !== "string")
   ) {
-    throw httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503);
+    throw httpError("安全確認サービスを利用できません。しばらくしてからもう一度お試しください。", 503, "turnstile-unavailable", "turnstile");
   }
-  if (
-    !verification.success ||
-    verification.action !== TURNSTILE_ACTION ||
-    verification.hostname?.toLowerCase() !== expectedHostname
-  ) {
-    throw httpError("安全確認に失敗しました。もう一度お試しください。", 403);
+  if (!verification.success) {
+    throw addTurnstileErrorCodes(
+      httpError("安全確認に失敗しました。もう一度お試しください。", 403, "turnstile-rejected", "turnstile"),
+      verification["error-codes"],
+    );
+  }
+  if (verification.action !== TURNSTILE_ACTION) {
+    throw httpError("安全確認に失敗しました。もう一度お試しください。", 403, "turnstile-action-mismatch", "turnstile");
+  }
+  if (verification.hostname?.toLowerCase() !== expectedHostname) {
+    throw httpError("安全確認に失敗しました。もう一度お試しください。", 403, "turnstile-hostname-mismatch", "turnstile");
   }
 };
 
@@ -267,7 +302,7 @@ const normalizeAndValidate = (value: unknown, strokeGroups: StrokeGroup[]): Lyri
 const isRetriableStatus = (status: number) => status === 404 || status === 408 || status === 429 || status >= 500;
 
 const generateLyrics = async (drawingData: DrawingData, env: Env) => {
-  if (!env.GEMINI_API_KEY) throw httpError("Gemini API の設定がまだ完了していません。", 500);
+  if (!env.GEMINI_API_KEY) throw httpError("Gemini API の設定がまだ完了していません。", 503, "gemini-config", "config");
   const imageMatch = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i.exec(drawingData.imageUri);
   if (!imageMatch) throw httpError("画像データが正しくありません。", 400);
   const [, mimeType, base64Image] = imageMatch;
@@ -287,15 +322,16 @@ const generateLyrics = async (drawingData: DrawingData, env: Env) => {
       });
       if (!response.ok) {
         if (index < candidates.length - 1 && isRetriableStatus(response.status)) continue;
-        throw new Error(`Gemini request failed (${response.status})`);
+        throw httpError("歌を作るサービスを利用できません。しばらくしてからもう一度お試しください。", 502, "gemini-request", "gemini");
       }
       const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
       const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
-      if (!text) throw new Error("Gemini の応答が空でした。");
+      if (!text) throw httpError("歌を作るサービスから正しい返事を受け取れませんでした。", 502, "gemini-response", "gemini");
       return { ...normalizeAndValidate(JSON.parse(text), strokeGroups), modelName: model };
     } catch (error) {
       if (index < candidates.length - 1 && !(error instanceof SyntaxError)) continue;
-      throw error;
+      if (error && typeof error === "object" && "status" in error && typeof error.status === "number") throw error;
+      throw httpError("歌を作るサービスから正しい返事を受け取れませんでした。", 502, "gemini-response", "gemini");
     }
   }
   throw new Error("Gemini の歌詞生成に失敗しました。");
@@ -320,11 +356,22 @@ const handleGemini = async (request: Request, env: Env) => {
     await verifyTurnstile(request, assertTurnstileToken(payload.turnstileToken), env);
     return json(await generateLyrics(drawingData, env));
   } catch (error) {
-    const status = typeof error === "object" && error !== null && "status" in error && typeof error.status === "number" ? error.status : 500;
+    const httpFailure =
+      typeof error === "object" && error !== null && "status" in error && typeof error.status === "number"
+        ? (error as HttpError)
+        : null;
+    const status = httpFailure?.status ?? 500;
+    const code = httpFailure?.code ?? "gemini-failed";
+    const stage = httpFailure?.stage ?? "gemini";
     const message = error instanceof Error && status < 500 ? error.message : "絵描き歌の生成に失敗しました。もう一度試してください。";
-    // Do not log the request body, image data, prompt, or API key.
-    if (status >= 500) console.error("Gemini generation failed", error instanceof Error ? error.message : "unknown error");
-    return json({ error: message }, status);
+    // Do not log the request body, image data, prompt, API key, or exception text.
+    console.warn("Generation request failed", {
+      code,
+      stage,
+      status,
+      ...(httpFailure?.turnstileErrorCodes ? { turnstileErrorCodes: httpFailure.turnstileErrorCodes } : {}),
+    });
+    return json({ error: message, code, stage }, status);
   }
 };
 

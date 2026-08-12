@@ -10,7 +10,7 @@ import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
 import { appBuildId } from "./config/buildInfo";
 import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, getUsageStats, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
-import { generateEkakiUta } from "./services/geminiService";
+import { GenerateEkakiUtaError, generateEkakiUta } from "./services/geminiService";
 import { buildDebugBundleArtifacts, createDebugBundle, createDebugBundleFromArtifacts, createDebugRecordId, DebugBundleArtifacts, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
 import { DebugHistoryRecord, isDebugHistoryError, saveDebugHistoryRecord } from "./services/debugHistoryDb";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
@@ -46,6 +46,12 @@ type AppView = "maker" | "demoRecords" | "debugHistory" | "melodyExperiment" | "
 type DemoBrowseMode = "drawings" | "songs";
 type PlaybackKind = "voice" | "animation-only";
 type VoicevoxConnectionStatus = "idle" | "checking" | "connected" | "unavailable";
+type MakerScene = "draw" | "generate" | "playback";
+type GenerationFailureDisplay = {
+  label: "安全確認設定" | "安全確認失敗" | "安全確認を利用できません" | "AI生成失敗";
+  message: string;
+  diagnosticCode: string;
+};
 type DebugExportSource = DebugBundleSource;
 type GenerationRecordOptions = {
   shouldRecord: boolean;
@@ -55,6 +61,77 @@ type GenerationRecordOptions = {
 const PARTICIPANT_AGE_OPTIONS = Array.from({ length: 100 }, (_, index) => index);
 const RECORDING_OPTION_INTRODUCED_DATE = "2026-07-10";
 const COMPLETE_USAGE_STATS_START_DATE = "2026-07-18";
+
+const useMediaQueryAny = (queries: string[]) => {
+  const getMatches = () => typeof window !== "undefined" && queries.some((query) => window.matchMedia(query).matches);
+  const [matches, setMatches] = useState(getMatches);
+
+  useEffect(() => {
+    const mediaQueries = queries.map((query) => window.matchMedia(query));
+    const updateMatches = () => setMatches(mediaQueries.some((mediaQuery) => mediaQuery.matches));
+
+    updateMatches();
+    mediaQueries.forEach((mediaQuery) => mediaQuery.addEventListener("change", updateMatches));
+    return () => mediaQueries.forEach((mediaQuery) => mediaQuery.removeEventListener("change", updateMatches));
+  }, [queries]);
+
+  return matches;
+};
+
+const COMPACT_MAKER_LAYOUT_QUERIES = [
+  "(max-width: 1023px) and (orientation: portrait)",
+  "(pointer: coarse) and (max-height: 600px)",
+];
+const COMPACT_MAKER_LYRICS_QUERIES = [
+  "(pointer: coarse) and (max-height: 620px)",
+];
+
+const getGenerationFailureDisplay = (error: unknown): GenerationFailureDisplay => {
+  if (error instanceof GenerateEkakiUtaError) {
+    const isTurnstileStage = error.stage === "turnstile" || error.code?.startsWith("turnstile-");
+    if (error.code === "turnstile-config") {
+      return {
+        label: "安全確認設定",
+        message: "サイトの安全確認の設定に問題があります。管理する人に、この診断コードを伝えてください。",
+        diagnosticCode: "TS-CONFIG",
+      };
+    }
+    if (error.code === "turnstile-action-mismatch") {
+      return {
+        label: "安全確認設定",
+        message: "サイトの安全確認の設定に問題があります。管理する人に、この診断コードを伝えてください。",
+        diagnosticCode: "TS-ACTION",
+      };
+    }
+    if (error.code === "turnstile-hostname-mismatch") {
+      return {
+        label: "安全確認設定",
+        message: "サイトの安全確認の設定に問題があります。管理する人に、この診断コードを伝えてください。",
+        diagnosticCode: "TS-HOST",
+      };
+    }
+    if (error.code === "turnstile-unavailable") {
+      return {
+        label: "安全確認を利用できません",
+        message: "少し待ってから、もう一度ためしてみてね。",
+        diagnosticCode: "TS-SERVICE",
+      };
+    }
+    if (isTurnstileStage) {
+      return {
+        label: "安全確認失敗",
+        message: "安全確認をやりなおしてから、もう一度ためしてみてね。",
+        diagnosticCode: "TS-VERIFY",
+      };
+    }
+  }
+
+  return {
+    label: "AI生成失敗",
+    message: "少し待ってから、絵にもどってもう一度ためしてみてね。",
+    diagnosticCode: "AI-GENERATE",
+  };
+};
 
 const getUsageStatsCoverage = (date: string) => {
   if (date < RECORDING_OPTION_INTRODUCED_DATE) {
@@ -290,6 +367,7 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
 const App: React.FC = () => {
   const [lyrics, setLyrics] = useState<LyricsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [generationFailureDisplay, setGenerationFailureDisplay] = useState<GenerationFailureDisplay | null>(null);
   const [voicevoxWarning, setVoicevoxWarning] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
@@ -355,6 +433,9 @@ const App: React.FC = () => {
   });
   const [hasPlayedGeneratedAudio, setHasPlayedGeneratedAudio] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [makerScene, setMakerScene] = useState<MakerScene>("draw");
+  const isCompactMakerLayout = useMediaQueryAny(COMPACT_MAKER_LAYOUT_QUERIES);
+  const isCompactMakerLyrics = useMediaQueryAny(COMPACT_MAKER_LYRICS_QUERIES);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const completionHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -448,6 +529,15 @@ const App: React.FC = () => {
       setIsAudioPlaying(false);
     };
   }, [appView, audioUrl]);
+
+  useEffect(() => {
+    if (isGenerating) {
+      setMakerScene("generate");
+      return;
+    }
+
+    setMakerScene(lyrics || error ? "playback" : "draw");
+  }, [error, isGenerating, lyrics]);
 
   useEffect(() => {
     if (!saveToast) {
@@ -998,6 +1088,11 @@ const App: React.FC = () => {
     const turnstileTokenForRequest = turnstileTokenRef.current;
     if (isTurnstileRequired && !turnstileTokenForRequest) {
       setError("安全確認が終わってから、もう一度「歌をつくる！」を押してね。");
+      setGenerationFailureDisplay({
+        label: "安全確認失敗",
+        message: "安全確認をやりなおしてから、もう一度ためしてみてね。",
+        diagnosticCode: "TS-VERIFY",
+      });
       retryTurnstile();
       return;
     }
@@ -1066,6 +1161,7 @@ const App: React.FC = () => {
     setIsGenerating(true);
     setLyrics(null);
     setError(null);
+    setGenerationFailureDisplay(null);
     setVoicevoxWarning(null);
     setSaveToast(null);
     setSelectedDemoRecordId(null);
@@ -1176,6 +1272,7 @@ const App: React.FC = () => {
       completeTimingPhase();
       generationErrorMessage =
         generationError instanceof Error ? generationError.message : "歌の生成に失敗しました。";
+      setGenerationFailureDisplay(getGenerationFailureDisplay(generationError));
       // Gemini succeeded before a later VOICEVOX stage failed. Keep that useful
       // lyric result visible instead of discarding it with the audio error.
       setLyrics(generatedLyrics);
@@ -1548,11 +1645,11 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="app-shell min-h-screen p-4 md:p-8 flex flex-col items-center">
+    <div className={`app-shell min-h-screen p-4 md:p-8 flex flex-col items-center ${appView === "maker" && isCompactMakerLayout ? `compact-maker-shell compact-maker-scene-${makerScene}` : ""}`}>
       <button
         type="button"
         onClick={() => window.location.reload()}
-        className="floating-reload fixed left-4 top-4 z-[80] flex h-12 w-12 items-center justify-center rounded-full border border-white/70 bg-white/90 text-orange-500 shadow-lg backdrop-blur-md transition-all hover:bg-orange-50 active:scale-95"
+        className={`floating-reload fixed left-4 top-4 z-[80] flex h-12 w-12 items-center justify-center rounded-full border border-white/70 bg-white/90 text-orange-500 shadow-lg backdrop-blur-md transition-all hover:bg-orange-50 active:scale-95 ${appView === "maker" && isCompactMakerLayout ? "hidden" : ""}`}
         title="再読み込み"
         aria-label="再読み込み"
       >
@@ -1584,7 +1681,7 @@ const App: React.FC = () => {
       <button
         type="button"
         onClick={() => setIsShortcutHelpOpen((current) => !current)}
-        className="floating-help fixed bottom-4 left-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-white/70 bg-white/85 text-lg font-black text-gray-500 shadow-lg backdrop-blur-md transition-all hover:bg-orange-50 hover:text-orange-500 active:scale-95"
+        className={`floating-help fixed bottom-4 left-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-white/70 bg-white/85 text-lg font-black text-gray-500 shadow-lg backdrop-blur-md transition-all hover:bg-orange-50 hover:text-orange-500 active:scale-95 ${appView === "maker" && isCompactMakerLayout ? "hidden" : ""}`}
         title="ショートカット一覧 (Ctrl+/)"
         aria-label="ショートカット一覧"
         aria-expanded={isShortcutHelpOpen}
@@ -1770,7 +1867,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <header className="magic-header mb-6 text-center">
+      <header className={`magic-header mb-6 text-center ${appView === "maker" && isCompactMakerLayout ? "hidden" : ""}`}>
         {appConfig.isDeploymentPreview && appFeatures.localVoicevox && (
           <aside className="fixed right-4 top-4 z-[80] w-[min(18rem,calc(100vw-2rem))] text-left">
             <details className="max-h-[calc(100svh-2rem)] overflow-y-auto rounded-2xl border border-orange-200 bg-white/95 shadow-lg backdrop-blur-md">
@@ -2441,6 +2538,7 @@ const App: React.FC = () => {
               playbackScore={playbackScore}
               playbackLyricLineCount={playbackLyricLineCount}
               isPlaybackActive={!!lyrics && !!playbackDrawing && !isGenerating && isAudioPlaying}
+              mobileScene={isCompactMakerLayout ? makerScene : undefined}
             />
 
           </section>
@@ -2490,9 +2588,23 @@ const App: React.FC = () => {
                   <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
                     {renderDebugExportButton()}
                     <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>
-                    <h2 className="text-2xl font-black text-red-700">うまく歌にできませんでした</h2>
-                    <p className="mt-3 max-w-md font-bold leading-relaxed text-slate-600">絵はそのまま残っています。絵にもどって、もう一度ためしてみてね。</p>
-                    <button type="button" onClick={() => setError(null)} className="mt-6 min-h-12 rounded-2xl bg-violet-600 px-6 py-3 font-black text-white shadow-lg">絵にもどる</button>
+                    <h2 className="text-2xl font-black text-red-700">{generationFailureDisplay?.label ?? "AI生成失敗"}</h2>
+                    <p className="mt-3 max-w-md font-bold leading-relaxed text-slate-600">
+                      {generationFailureDisplay?.message ?? "絵はそのまま残っています。絵にもどって、もう一度ためしてみてね。"}
+                    </p>
+                    <p className="mt-3 text-xs font-bold text-slate-400">
+                      診断コード: {generationFailureDisplay?.diagnosticCode ?? "AI-GENERATE"}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError(null);
+                        setGenerationFailureDisplay(null);
+                      }}
+                      className="mt-6 min-h-12 rounded-2xl bg-violet-600 px-6 py-3 font-black text-white shadow-lg"
+                    >
+                      絵にもどる
+                    </button>
                   </div>
                 ) : lyrics ? (
                   <>
@@ -2543,8 +2655,9 @@ const App: React.FC = () => {
                       lyrics={lyrics}
                       audioRef={audioRef}
                       singingScore={playbackScore}
-                      className="mt-2"
+                      className={isCompactMakerLayout ? "mobile-playback-lyrics" : "mt-2"}
                       showKanaLines={false}
+                      compact={isCompactMakerLayout && isCompactMakerLyrics}
                     />
 
                     {voicevoxWarning && (
@@ -2553,7 +2666,7 @@ const App: React.FC = () => {
                       </p>
                     )}
 
-                    <div className="mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5">
+                    <div className={`mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5 ${isCompactMakerLayout ? "mobile-playback-player" : ""}`}>
                       <div className="mb-4 flex justify-end">
                         <div className="flex rounded-full bg-white p-1 shadow-sm">
                           <button

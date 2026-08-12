@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 const TURNSTILE_SCRIPT_ID = "cloudflare-turnstile-explicit";
 const TURNSTILE_SCRIPT_URL = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
@@ -85,9 +85,24 @@ type TurnstileProps = {
   onStatusChange: (status: TurnstileStatus) => void;
 };
 
+const COMPACT_VIEWPORT_QUERY = "(max-width: 480px)";
+
+const getTurnstileSize = () =>
+  typeof window !== "undefined" && window.matchMedia(COMPACT_VIEWPORT_QUERY).matches ? "compact" : "normal";
+
 const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(({ siteKey, action, onToken, onStatusChange }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
+  const [size, setSize] = useState<"normal" | "compact">(getTurnstileSize);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(COMPACT_VIEWPORT_QUERY);
+    const updateSize = () => setSize(mediaQuery.matches ? "compact" : "normal");
+
+    updateSize();
+    mediaQuery.addEventListener("change", updateSize);
+    return () => mediaQuery.removeEventListener("change", updateSize);
+  }, []);
 
   useImperativeHandle(ref, () => ({
     reset: () => {
@@ -116,7 +131,7 @@ const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(({ siteKey, action
           sitekey: siteKey,
           action,
           theme: "light",
-          size: "compact",
+          size,
           language: "ja",
           callback: (token) => {
             if (!isCurrent) return;
@@ -154,9 +169,15 @@ const Turnstile = forwardRef<TurnstileHandle, TurnstileProps>(({ siteKey, action
         window.turnstile.remove(widgetId);
       }
     };
-  }, [action, onStatusChange, onToken, siteKey]);
+  }, [action, onStatusChange, onToken, siteKey, size]);
 
-  return <div ref={containerRef} className="flex min-h-[65px] justify-center" aria-label="安全確認" />;
+  return (
+    <div
+      ref={containerRef}
+      className={`flex w-full justify-center ${size === "normal" ? "min-h-[65px]" : "min-h-[120px]"}`}
+      aria-label="安全確認"
+    />
+  );
 });
 
 Turnstile.displayName = "Turnstile";
