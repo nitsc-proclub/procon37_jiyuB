@@ -3,6 +3,9 @@
   "name": "cho-ekaki-uta",
   "main": "src/worker.ts",
   "compatibility_date": "2026-08-08",
+  "vars": {
+    "TURNSTILE_EXPECTED_HOSTNAME": "cho-ekaki-uta.nitsc-proclub.workers.dev"
+  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

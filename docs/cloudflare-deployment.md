@@ -22,14 +22,14 @@
 
 WorkerのSettings → Variables and Secretsで`GEMINI_API_KEY`と`TURNSTILE_SECRET`をSecretとして登録する。`VITE_`を付けたり、値をGitや`wrangler.jsonc`へ書いたりしない。
 
-`TURNSTILE_EXPECTED_HOSTNAME`は同じ画面で通常の（非Secret）変数として、Turnstile Widgetに登録した公開hostnameを小文字で設定する（例: `cho-ekaki-uta.nitsc-proclub.workers.dev`）。未設定時はWorkerが安全側に倒れ、生成を`503`で拒否する。Hostリクエストヘッダーを代替値にしてはならない。
+`TURNSTILE_EXPECTED_HOSTNAME`は通常の（非Secret）変数であり、Turnstile Widgetに登録した公開hostnameを小文字で`wrangler.jsonc`の`vars`へ設定する（例: `cho-ekaki-uta.nitsc-proclub.workers.dev`）。Workers Buildsの`wrangler deploy`はDashboardで手動設定した通常変数を設定ファイルの内容で置き換えるため、Dashboardだけで設定してはならない。未設定時はWorkerが安全側に倒れ、生成を`503`で拒否する。Hostリクエストヘッダーを代替値にしてはならない。
 
 ブラウザへ渡す`VITE_TURNSTILE_SITE_KEY`は公開可能なSite keyであり、Workers Buildsのビルド環境変数として設定する。これはSecretではない。一方、`TURNSTILE_SECRET`を`VITE_`変数、Git、`wrangler.jsonc`、ブラウザbundleへ入れてはならない。
 
 ## Turnstileの作成と検証
 
 1. Cloudflare DashboardのTurnstileでWidgetを作り、公開hostnameを登録する。フロントエンドはactionを`generate-ekaki-uta`として描画中に確認を先行実行し、生成時に取得済みトークンを送る。Viteの`npm run dev`でだけローカルmiddlewareを使うため確認を省略するが、ビルド済みアプリは`VITE_APP_MODE`に関係なくWorkerの検証を通る。
-2. Workers Buildsのビルド変数へ`VITE_TURNSTILE_SITE_KEY`、WorkerのVariables and Secretsへ`TURNSTILE_SECRET`（Secret）と`TURNSTILE_EXPECTED_HOSTNAME`（通常の変数）を登録する。
+2. Workers Buildsのビルド変数へ`VITE_TURNSTILE_SITE_KEY`、WorkerのVariables and Secretsへ`TURNSTILE_SECRET`（Secret）を登録する。`TURNSTILE_EXPECTED_HOSTNAME`は`wrangler.jsonc`の`vars`からデプロイされる。
 3. トークンは5分間・一回限りなので、生成後または失効・失敗後はWidgetをresetして新しいトークンを取得する。
 4. Cloudflareのテスト用キーでは、成功用Site key `1x00000000000000000000AA` と成功用Secret `1x0000000000000000000000000000000AA` を組み合わせて、Siteverify通信とトークン送信を確認する。テストキーの成功レスポンスはactionが`test`なので、このWorkerの本番用action検証では意図どおり拒否される。生成まで通す手動確認には、`generate-ekaki-uta` actionを設定した開発用Widgetを別途作成する。失敗・再利用の画面確認にはCloudflareのテスト用失敗/duplicate Secretを使用する。テストキーは本番Secretと混在させない。
 5. 正常トークン、トークンなし、不正トークン、期限切れ/再利用、Siteverify到達不能の各ケースを確認し、失敗ケースでGemini APIが呼ばれないことをWorkersログとGemini使用量で確認する。
