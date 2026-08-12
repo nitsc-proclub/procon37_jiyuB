@@ -434,6 +434,7 @@ const App: React.FC = () => {
   const [hasPlayedGeneratedAudio, setHasPlayedGeneratedAudio] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [makerScene, setMakerScene] = useState<MakerScene>("draw");
+  const [isSceneTurnAnimating, setIsSceneTurnAnimating] = useState(false);
   const isCompactMakerLayout = useMediaQueryAny(COMPACT_MAKER_LAYOUT_QUERIES);
   const isCompactMakerLyrics = useMediaQueryAny(COMPACT_MAKER_LYRICS_QUERIES);
 
@@ -451,6 +452,7 @@ const App: React.FC = () => {
   const debugHistoryImageUrlRef = useRef<string | null>(null);
   const experimentAudioRef = useRef<HTMLAudioElement>(null);
   const experimentAudioUrlRef = useRef<string | null>(null);
+  const sceneTurnTimerRef = useRef<number | null>(null);
   // Vite's development middleware is the only intentionally local API path.
   // Every built app can be served by the Worker, whose Gemini route validates
   // Turnstile regardless of VITE_APP_MODE, so it must provide a token.
@@ -510,9 +512,22 @@ const App: React.FC = () => {
   useEffect(() => {
     if (isGenerating || !lyrics) return;
 
-    const frameId = window.requestAnimationFrame(() => completionHeadingRef.current?.focus());
+    const frameId = window.requestAnimationFrame(() => {
+      if (isCompactMakerLayout) {
+        // The desktop completion heading is intentionally hidden in compact
+        // playback. Keep the drawing in place and move keyboard focus to the
+        // visible current lyric instead of scrolling to that hidden heading.
+        const currentLyric = document.querySelector<HTMLButtonElement>(
+          ".mobile-playback-lyrics button[data-mobile-current=\"true\"]",
+        );
+        currentLyric?.focus({ preventScroll: true });
+        return;
+      }
+
+      completionHeadingRef.current?.focus();
+    });
     return () => window.cancelAnimationFrame(frameId);
-  }, [isGenerating, lyrics]);
+  }, [isCompactMakerLayout, isGenerating, lyrics]);
 
   useEffect(() => {
     if (!isRecordConsentOpen) return;
@@ -531,13 +546,28 @@ const App: React.FC = () => {
   }, [appView, audioUrl]);
 
   useEffect(() => {
-    if (isGenerating) {
-      setMakerScene("generate");
-      return;
+    const nextScene: MakerScene = isGenerating ? "generate" : lyrics || error ? "playback" : "draw";
+    if (nextScene === makerScene) return;
+
+    if (nextScene === "playback" && makerScene === "generate" && lyrics) {
+      if (sceneTurnTimerRef.current !== null) window.clearTimeout(sceneTurnTimerRef.current);
+      setIsSceneTurnAnimating(true);
+      sceneTurnTimerRef.current = window.setTimeout(() => {
+        sceneTurnTimerRef.current = null;
+        setIsSceneTurnAnimating(false);
+      }, 560);
+    } else if (nextScene === "generate") {
+      if (sceneTurnTimerRef.current !== null) window.clearTimeout(sceneTurnTimerRef.current);
+      sceneTurnTimerRef.current = null;
+      setIsSceneTurnAnimating(false);
     }
 
-    setMakerScene(lyrics || error ? "playback" : "draw");
-  }, [error, isGenerating, lyrics]);
+    setMakerScene(nextScene);
+  }, [error, isGenerating, lyrics, makerScene]);
+
+  useEffect(() => () => {
+    if (sceneTurnTimerRef.current !== null) window.clearTimeout(sceneTurnTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!saveToast) {
@@ -1604,7 +1634,7 @@ const App: React.FC = () => {
   };
 
   const renderDebugExportButton = () => {
-    if ((!debugExportSource && !debugExportArtifacts) || isGenerating) return null;
+    if (isCompactMakerLayout || (!debugExportSource && !debugExportArtifacts) || isGenerating) return null;
     return (
       <button
         type="button"
@@ -1646,6 +1676,9 @@ const App: React.FC = () => {
 
   return (
     <div className={`app-shell min-h-screen p-4 md:p-8 flex flex-col items-center ${appView === "maker" && isCompactMakerLayout ? `compact-maker-shell compact-maker-scene-${makerScene}` : ""}`}>
+      {appView === "maker" && isCompactMakerLayout && isSceneTurnAnimating && (
+        <div className="compact-page-turn" aria-hidden="true" />
+      )}
       <button
         type="button"
         onClick={() => window.location.reload()}
@@ -1993,6 +2026,13 @@ const App: React.FC = () => {
           </button>}
         </div>
       </header>
+
+      {appView === "maker" && isCompactMakerLayout && makerScene === "draw" && (
+        <div className="compact-maker-intro" aria-label="超えかき歌の説明">
+          <img src="/logo.png" alt="超えかき歌！" />
+          <p>絵を描くと、AI が歌詞を作り、ずんだもん（VOICEVOX）が歌ってくれます！</p>
+        </div>
+      )}
 
       {appView === "debugHistory" && appFeatures.debugHistory ? (
         <DebugHistoryView
@@ -2555,7 +2595,7 @@ const App: React.FC = () => {
                         歌詞はできましたが、歌声の生成に失敗しました。{error}
                       </p>
                     )}
-                    <button
+                    {!isCompactMakerLayout && <button
                       type="button"
                       onClick={handleStartPrint}
                       disabled={!canShowPrintLayout}
@@ -2568,7 +2608,7 @@ const App: React.FC = () => {
                         <path d="M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                         <path d="M7 14h10v6H7z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
-                    </button>
+                    </button>}
                     <div className="mb-6 border-b-2 border-orange-50 pb-4 pt-14 text-center">
                       <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">{lyrics.identifiedObject}</span>
                       <h2 ref={completionHeadingRef} tabIndex={-1} className="text-3xl font-bold text-gray-800 focus:outline-none">{lyrics.title}</h2>
@@ -2609,7 +2649,7 @@ const App: React.FC = () => {
                 ) : lyrics ? (
                   <>
                     {renderDebugExportButton()}
-                    <button
+                    {!isCompactMakerLayout && <button
                       type="button"
                       onClick={handleStartPrint}
                       disabled={!canShowPrintLayout}
@@ -2639,7 +2679,7 @@ const App: React.FC = () => {
                           strokeLinejoin="round"
                         />
                       </svg>
-                    </button>
+                    </button>}
 
                     <div className="mb-6 border-b-2 border-orange-50 pb-4 pt-14 text-center">
                       <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">
@@ -2650,6 +2690,12 @@ const App: React.FC = () => {
                         <p className="mt-2 text-xs font-bold text-gray-400">demo-records から読み込み済み</p>
                       )}
                     </div>
+
+                    {isCompactMakerLayout && (
+                      <p className="sr-only" role="status" aria-live="polite">
+                        歌ができたよ。絵と歌詞を確認して、再生できます。
+                      </p>
+                    )}
 
                     <KaraokeLyricsPanel
                       lyrics={lyrics}

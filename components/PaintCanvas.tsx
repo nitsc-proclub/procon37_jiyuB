@@ -32,6 +32,7 @@ interface PaintCanvasProps {
   playbackScore?: SingingScore | null;
   playbackLyricLineCount?: number;
   isPlaybackActive?: boolean;
+  mobileScene?: "draw" | "generate" | "playback";
 }
 
 const LOGICAL_CANVAS_SIZE = 1024;
@@ -86,6 +87,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   playbackScore,
   playbackLyricLineCount,
   isPlaybackActive = false,
+  mobileScene,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -113,6 +115,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
   const isCanvasLocked = isGenerating || isPlaybackActive || isInteractionBlocked;
+  const shouldShowCompactControls = mobileScene === undefined || mobileScene === "draw";
 
   const prepareContext = (context: CanvasRenderingContext2D) => {
     const displayWidth = Math.max(1, canvasRef.current?.getBoundingClientRect().width ?? LOGICAL_CANVAS_SIZE);
@@ -542,7 +545,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
             >
               できた！
             </button>
-          ) : (
+          ) : shouldShowCompactControls ? (
             <button
               ref={focusTriggerRef}
               type="button"
@@ -554,7 +557,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
             >
               <span aria-hidden="true">⛶</span>
             </button>
-          )}
+          ) : null}
         </div>
 
         {isFocusMode ? (
@@ -567,7 +570,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
               <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m15 7 5 5-5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/><path d="M19 12H9.5a4.5 4.5 0 0 0 0 9H12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
           </div>
-        ) : (
+        ) : shouldShowCompactControls ? (
           <>
             {guideState === "generate" && (
               <div className="w-full px-4 py-1 text-center font-black text-amber-800" role="status" aria-live="polite">
@@ -597,7 +600,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
               </div>
             )}
           </>
-        )}
+        ) : null}
       </div>
 
       {isClearConfirmOpen && (

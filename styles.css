@@ -51,6 +51,112 @@ body { margin: 0; min-width: 320px; overflow-x: hidden; }
   overscroll-behavior: contain;
 }
 
+/* The maker stays in the ordinary document scroll context. In particular, the
+   native audio controls are never fixed to the visual viewport: mobile browser
+   chrome can grow or shrink while a song is playing. */
+.compact-maker-shell {
+  min-height: 100svh;
+  min-height: 100dvh;
+  padding: max(.5rem, env(safe-area-inset-top)) max(.75rem, env(safe-area-inset-right)) max(.5rem, env(safe-area-inset-bottom)) max(.75rem, env(safe-area-inset-left));
+}
+
+.compact-maker-shell .maker-grid {
+  width: 100%;
+  max-width: 48rem;
+  gap: .5rem;
+  margin-bottom: 0;
+}
+
+.compact-maker-shell footer { display: none; }
+.compact-maker-intro {
+  display: flex;
+  width: min(100%, 42rem);
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: .45rem;
+  margin: 0 0 .4rem;
+  color: #4b5563;
+  font-size: .75rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+}
+.compact-maker-intro img { width: auto; height: 1.5rem; flex: 0 0 auto; }
+.compact-maker-intro p { margin: 0; }
+.compact-maker-shell .canvas-stage,
+.compact-maker-shell .result-stage { width: 100%; }
+.compact-maker-scene-draw .result-stage,
+.compact-maker-scene-generate .result-stage { display: none; }
+
+.compact-maker-shell .paint-canvas-frame { max-width: min(calc(100vw - 1.5rem), 42rem); }
+.compact-maker-scene-generate .paint-canvas-frame { width: min(calc(100vw - 1.5rem), calc(100dvh - 1rem)); }
+.compact-maker-scene-playback .paint-canvas-frame { width: min(calc(100vw - 1.5rem), 42dvh); }
+
+.compact-maker-scene-playback .result-stage { gap: .5rem; }
+.compact-maker-scene-playback .magic-card {
+  min-height: 0;
+  padding: .6rem;
+  border-width: 4px;
+}
+.compact-maker-scene-playback .magic-card > .mb-6.border-b-2 { display: none; }
+.compact-maker-scene-playback .mobile-playback-lyrics { margin-top: 0; }
+.compact-maker-scene-playback .mobile-playback-player {
+  position: sticky;
+  bottom: max(.4rem, env(safe-area-inset-bottom));
+  z-index: 10;
+  margin-top: .55rem;
+  padding: .65rem;
+  padding-bottom: max(.65rem, env(safe-area-inset-bottom));
+  background: rgba(255, 251, 235, .98);
+  box-shadow: 0 -8px 20px rgba(194, 65, 12, .08);
+}
+.compact-maker-scene-playback .mobile-playback-player > p { display: none; }
+.compact-maker-scene-playback .mobile-playback-player > .mb-4.flex { display: none; }
+.compact-maker-scene-playback .mobile-playback-player audio { display: block; min-height: 3.25rem; }
+.compact-maker-scene-playback .mobile-playback-player audio { max-width: 100%; touch-action: manipulation; }
+.compact-maker-scene-playback .mobile-playback-player { scroll-margin-bottom: max(1rem, env(safe-area-inset-bottom)); }
+
+.compact-page-turn {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  pointer-events: none;
+  transform-origin: left center;
+  background: linear-gradient(105deg, rgba(255, 251, 235, 0) 0 38%, rgba(255, 247, 216, .96) 57%, rgba(255, 255, 255, .98) 100%);
+  box-shadow: -14px 0 24px rgba(146, 64, 14, .18);
+  animation: compact-page-turn 560ms cubic-bezier(.25, .8, .28, 1) both;
+}
+
+@keyframes compact-page-turn {
+  from { opacity: 0; transform: perspective(1000px) rotateY(-88deg); }
+  20% { opacity: 1; }
+  to { opacity: 0; transform: perspective(1000px) rotateY(0deg) translateX(105%); }
+}
+
+.compact-karaoke-summary {
+  display: flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #9a3412;
+  font-size: .875rem;
+  font-weight: 800;
+  list-style: none;
+}
+.compact-karaoke-summary::-webkit-details-marker { display: none; }
+.compact-karaoke-summary::after { content: "⌄"; margin-left: .35rem; }
+.compact-karaoke-lines[open] .compact-karaoke-summary::after { transform: rotate(180deg); }
+.compact-karaoke-lines:not([open]) > div > button:not([data-mobile-current="true"]) { display: none; }
+
+@media (pointer: coarse) and (max-height: 620px) {
+  .compact-maker-scene-playback .paint-canvas-frame { width: min(calc(100vw - 1.5rem), 34dvh); }
+  .compact-maker-scene-playback .mobile-playback-player { margin-top: .35rem; }
+  .compact-maker-scene-playback .mobile-playback-lyrics button { min-height: 2.5rem; padding: .4rem .65rem; }
+  .compact-maker-scene-playback .mobile-playback-lyrics button span { font-size: 1rem; line-height: 1.35; }
+}
+
 .focus-toggle-button,
 .focus-controls button,
 .paint-toolbar button {
@@ -73,4 +179,5 @@ body { margin: 0; min-width: 320px; overflow-x: hidden; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  .compact-page-turn { display: none; }
 }

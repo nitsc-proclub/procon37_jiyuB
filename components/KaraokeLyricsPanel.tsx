@@ -9,6 +9,7 @@ interface KaraokeLyricsPanelProps {
     className?: string;
     title?: string;
     showKanaLines?: boolean;
+    compact?: boolean;
 }
 
 const splitTextSegments = (value: string) => {
@@ -27,6 +28,7 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
     className,
     title,
     showKanaLines = false,
+    compact = false,
 }) => {
     const lineCount = lyrics.lines.length;
     const lineTimings = useMemo(() => buildLineTimings(singingScore, lineCount), [lineCount, singingScore]);
@@ -145,10 +147,13 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
             <p className="sr-only" aria-live="polite" aria-atomic="true">
                 {activeLineIndex >= 0 ? `再生中：${lyrics.lines[activeLineIndex]}` : ""}
             </p>
-            <div className="space-y-3 text-center">
+            <details className={compact ? "compact-karaoke-lines" : undefined} open={compact ? undefined : true}>
+                {compact && <summary className="compact-karaoke-summary">歌詞をみる</summary>}
+                <div className="space-y-3 text-center">
                 {lyrics.lines.map((line, index) => {
                     const isActive = index === activeLineIndex;
                     const isDone = activeLineIndex >= 0 && index < activeLineIndex;
+                    const isMobileCurrent = isActive || (activeLineIndex < 0 && index === 0);
                     const lineStyle = isActive
                         ? "border-orange-300 bg-gradient-to-r from-orange-100 via-yellow-50 to-white shadow-md shadow-orange-100"
                         : isDone
@@ -168,6 +173,7 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
                             onClick={() => playFromLine(index)}
                             aria-pressed={isActive}
                             aria-label={`${line}から聞く`}
+                            data-mobile-current={isMobileCurrent}
                             className={`min-h-11 w-full rounded-2xl border-2 px-4 py-3 transition-all duration-300 focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-300 ${lineStyle}`}
                         >
                             <span className={`block text-xl font-bold leading-relaxed md:text-2xl ${isActive ? "tracking-wide" : ""}`}>
@@ -189,7 +195,8 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
                         </button>
                     );
                 })}
-            </div>
+                </div>
+            </details>
 
             {showKanaLines && lyrics.singingKanaLines && lyrics.singingKanaLines.length > 0 && (
                 <div className="mt-6 rounded-2xl border-2 border-yellow-100 bg-yellow-50 p-4">
