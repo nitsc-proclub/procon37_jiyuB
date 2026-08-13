@@ -21,6 +21,14 @@ const splitTextSegments = (value: string) => {
     return Array.from(value);
 };
 
+type CompactLineFit = {
+    fontSize?: number;
+    wraps: boolean;
+};
+
+const MIN_COMPACT_LYRIC_FONT_SIZE = 14;
+const FITTING_SAFETY_GAP = 2;
+
 const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
     lyrics,
     audioRef,
@@ -34,6 +42,13 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
     const lineTimings = useMemo(() => buildLineTimings(singingScore, lineCount), [lineCount, singingScore]);
     const [renderTick, setRenderTick] = useState(0);
     const compactLyricsRef = useRef<HTMLDivElement>(null);
+    const compactLineButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+    const compactLineProbeRefs = useRef<Array<HTMLSpanElement | null>>([]);
+    const lyricLineKey = useMemo(() => lyrics.lines.join("\u0000"), [lyrics.lines]);
+    const [compactLineFits, setCompactLineFits] = useState<{ key: string; values: CompactLineFit[] }>({
+        key: "",
+        values: [],
+    });
 
     useEffect(() => {
         const audio = audioRef?.current;
@@ -158,6 +173,71 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
         }
     }, [activeLineIndex, compact]);
 
+    useEffect(() => {
+        if (!compact || typeof window === "undefined") return;
+
+        let frameId: number | null = null;
+        const measure = () => {
+            frameId = null;
+            const nextFits = lyrics.lines.map((_, index): CompactLineFit => {
+                const button = compactLineButtonRefs.current[index];
+                const probe = compactLineProbeRefs.current[index];
+                if (!button || !probe) return { wraps: false };
+
+                const buttonStyle = window.getComputedStyle(button);
+                const baseFontSize = Number.parseFloat(window.getComputedStyle(probe).fontSize);
+                const availableWidth = button.clientWidth
+                    - Number.parseFloat(buttonStyle.paddingLeft)
+                    - Number.parseFloat(buttonStyle.paddingRight)
+                    - FITTING_SAFETY_GAP;
+                const naturalWidth = probe.scrollWidth;
+
+                if (!Number.isFinite(baseFontSize) || availableWidth <= 0 || naturalWidth <= 0) {
+                    return { wraps: false };
+                }
+
+                const requestedFontSize = Math.min(baseFontSize, (baseFontSize * availableWidth) / naturalWidth);
+                if (requestedFontSize >= baseFontSize - 0.1) return { wraps: false };
+
+                if (requestedFontSize >= MIN_COMPACT_LYRIC_FONT_SIZE) {
+                    // Round down so a sub-pixel rounding difference cannot bring the wrap back.
+                    return { fontSize: Math.floor(requestedFontSize * 10) / 10, wraps: false };
+                }
+
+                return { fontSize: MIN_COMPACT_LYRIC_FONT_SIZE, wraps: true };
+            });
+
+            setCompactLineFits((current) => {
+                const unchanged = current.key === lyricLineKey
+                    && current.values.length === nextFits.length
+                    && current.values.every((fit, index) => fit.fontSize === nextFits[index].fontSize && fit.wraps === nextFits[index].wraps);
+                return unchanged ? current : { key: lyricLineKey, values: nextFits };
+            });
+        };
+
+        const scheduleMeasurement = () => {
+            if (frameId !== null) return;
+            frameId = window.requestAnimationFrame(measure);
+        };
+
+        const resizeObserver = new ResizeObserver(scheduleMeasurement);
+        if (compactLyricsRef.current) resizeObserver.observe(compactLyricsRef.current);
+        compactLineButtonRefs.current.forEach((button) => {
+            if (button) resizeObserver.observe(button);
+        });
+        window.addEventListener("resize", scheduleMeasurement);
+        scheduleMeasurement();
+
+        // A font swap can change Japanese glyph widths after the first layout.
+        void document.fonts?.ready.then(scheduleMeasurement).catch(() => undefined);
+
+        return () => {
+            if (frameId !== null) window.cancelAnimationFrame(frameId);
+            resizeObserver.disconnect();
+            window.removeEventListener("resize", scheduleMeasurement);
+        };
+    }, [activeLineIndex, compact, lyricLineKey]);
+
     return (
         <div className={className}>
             {title && <p className="mb-3 text-sm font-black text-gray-600">{title}</p>}
@@ -180,19 +260,47 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
                         ? Math.max(0, Math.min(lineSegments.length, Math.floor(lineSegments.length * activeLineProgress)))
                         : isDone
                             ? lineSegments.length
-                            : 0;
+                        : 0;
+                    const fit = compactLineFits.key === lyricLineKey ? compactLineFits.values[index] : undefined;
+                    const lyricTextStyle: React.CSSProperties | undefined = compact
+                        ? {
+                            fontSize: fit?.fontSize ? `${fit.fontSize}px` : undefined,
+                            whiteSpace: fit?.wraps ? "normal" : "nowrap",
+                            overflowWrap: fit?.wraps ? "anywhere" : "normal",
+                        }
+                        : undefined;
+                    const lyricSegmentStyle: React.CSSProperties | undefined = fit?.fontSize
+                        ? { fontSize: `${fit.fontSize}px` }
+                        : undefined;
 
                     return (
                         <button
                             type="button"
                             key={`${line}-${index}`}
+                            ref={(element) => {
+                                compactLineButtonRefs.current[index] = element;
+                            }}
                             onClick={() => playFromLine(index)}
                             aria-pressed={isActive}
                             aria-label={`${line}から聞く`}
                             data-mobile-current={isMobileCurrent}
                             className={`min-h-11 w-full rounded-2xl border-2 px-4 py-3 transition-all duration-300 focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-300 ${lineStyle}`}
                         >
-                            <span className={`block font-bold ${compact ? "text-[1.0625rem] leading-snug sm:text-lg" : "text-xl leading-relaxed md:text-2xl"} ${isActive ? "tracking-wide" : ""}`}>
+                            {compact && (
+                                <span
+                                    ref={(element) => {
+                                        compactLineProbeRefs.current[index] = element;
+                                    }}
+                                    aria-hidden="true"
+                                    className={`pointer-events-none fixed -left-[9999px] top-0 block w-max whitespace-nowrap font-bold text-[1.0625rem] leading-snug sm:text-lg ${isActive ? "tracking-wide" : ""}`}
+                                    style={{ visibility: "hidden" }}
+                                >
+                                    {lineSegments.map((segment, segmentIndex) => (
+                                        <span key={`${segment}-${segmentIndex}`}>{segment}</span>
+                                    ))}
+                                </span>
+                            )}
+                            <span className={`block font-bold ${compact ? "text-[1.0625rem] leading-snug sm:text-lg" : "text-xl leading-relaxed md:text-2xl"} ${isActive ? "tracking-wide" : ""}`} style={lyricTextStyle}>
                                 {lineSegments.map((segment, segmentIndex) => {
                                     const isHighlighted = segmentIndex < activeSegmentCount;
                                     const isTail = segmentIndex === activeSegmentCount && isActive && activeLineProgress > 0 && activeLineProgress < 1;
@@ -201,7 +309,7 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
                                         <span
                                             key={`${segment}-${segmentIndex}`}
                                             className={isHighlighted || isTail ? "text-orange-500" : isDone ? "text-orange-500/70" : "text-gray-700"}
-                                            style={isTail ? { color: "rgb(249 115 22 / 0.95)" } : undefined}
+                                            style={isTail ? { ...lyricSegmentStyle, color: "rgb(249 115 22 / 0.95)" } : lyricSegmentStyle}
                                         >
                                             {segment}
                                         </span>
