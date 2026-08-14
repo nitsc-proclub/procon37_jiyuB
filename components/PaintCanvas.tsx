@@ -37,6 +37,9 @@ interface PaintCanvasProps {
   playbackScore?: SingingScore | null;
   playbackLyricLineCount?: number;
   isPlaybackActive?: boolean;
+  showInitialPlaybackPrompt?: boolean;
+  onInitialPlayback?: () => void;
+  initialPlaybackAriaLabel?: string;
   mobileScene?: "draw" | "generate" | "playback";
   hideFocusControl?: boolean;
   resetRequestKey?: number;
@@ -99,6 +102,9 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   playbackScore,
   playbackLyricLineCount,
   isPlaybackActive = false,
+  showInitialPlaybackPrompt = false,
+  onInitialPlayback,
+  initialPlaybackAriaLabel = "再生する",
   mobileScene,
   hideFocusControl = false,
   resetRequestKey = 0,
@@ -111,6 +117,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const clearDialogRef = useRef<HTMLDivElement>(null);
   const clearConfirmButtonRef = useRef<HTMLButtonElement>(null);
   const clearTriggerButtonRef = useRef<HTMLButtonElement>(null);
+  const initialPlaybackButtonRef = useRef<HTMLButtonElement>(null);
   const wasClearConfirmOpenRef = useRef(false);
   const generationButtonRef = useRef<HTMLButtonElement>(null);
   const wasInteractionBlockedRef = useRef(false);
@@ -129,7 +136,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const [undoneStrokes, setUndoneStrokes] = useState<Stroke[]>([]);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isFocusMode, setIsFocusMode] = useState(false);
-  const isCanvasLocked = isGenerating || isPlaybackActive || isInteractionBlocked;
+  const isCanvasLocked = isGenerating || isPlaybackActive || isInteractionBlocked || showInitialPlaybackPrompt;
   const shouldShowCompactControls = mobileScene === undefined || mobileScene === "draw";
 
   const prepareContext = (context: CanvasRenderingContext2D) => {
@@ -402,6 +409,11 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isEditableKeyboardTarget(event.target)) return;
       const key = event.key.toLowerCase();
+      if (showInitialPlaybackPrompt) {
+        // Let the native button keep its Enter/Space activation behavior while
+        // its overlay is the only available canvas action.
+        return;
+      }
       if (isClearConfirmOpen) {
         if (key === "tab") {
           const focusable = Array.from(
@@ -469,7 +481,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [generationDisabled, isCanvasLocked, isClearConfirmOpen, isFocusMode, isGenerating, onEditStart, undoneStrokes]);
+  }, [generationDisabled, isCanvasLocked, isClearConfirmOpen, isFocusMode, isGenerating, onEditStart, showInitialPlaybackPrompt, undoneStrokes]);
 
   useEffect(() => {
     if (!isPlaybackActive) return;
@@ -479,6 +491,11 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     setIsClearConfirmOpen(false);
     redrawStrokes(strokesRef.current);
   }, [isPlaybackActive]);
+
+  useEffect(() => {
+    if (!showInitialPlaybackPrompt) return;
+    window.requestAnimationFrame(() => initialPlaybackButtonRef.current?.focus({ preventScroll: true }));
+  }, [showInitialPlaybackPrompt]);
 
   useEffect(() => {
     if (!isGenerating || !canvasContainerRef.current || !window.matchMedia("(max-width: 1023px)").matches) {
@@ -558,6 +575,21 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
             <div className="absolute inset-0 z-20 bg-white">
               <GenerationJourney stageLabel={generationStageLabel} drawingData={playbackDrawing ?? initialDrawing} compact />
             </div>
+          )}
+          {showInitialPlaybackPrompt && (
+            <button
+              ref={initialPlaybackButtonRef}
+              type="button"
+              onClick={onInitialPlayback}
+              aria-label={initialPlaybackAriaLabel}
+              className="group absolute inset-0 z-50 flex cursor-pointer items-center justify-center bg-gradient-to-br from-amber-50/80 via-white/55 to-orange-100/75 backdrop-blur-[1px] transition-colors hover:from-amber-50/90 hover:via-white/65 hover:to-orange-100/85 focus-visible:outline focus-visible:outline-4 focus-visible:outline-violet-500 focus-visible:outline-offset-[-8px]"
+            >
+              <span className="flex h-24 w-24 items-center justify-center rounded-full border-4 border-white/90 bg-orange-500 text-white shadow-[0_10px_28px_rgba(234,88,12,0.38)] transition-transform duration-200 group-hover:scale-105 group-active:scale-95 sm:h-28 sm:w-28">
+                <svg className="ml-1 h-11 w-11 sm:h-12 sm:w-12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M8 5.5v13l10-6.5z" />
+                </svg>
+              </span>
+            </button>
           )}
           {isFocusMode ? (
             <button

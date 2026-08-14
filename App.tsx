@@ -437,7 +437,7 @@ const App: React.FC = () => {
     pointCount: 0,
     drawingDurationMs: 0,
   });
-  const [hasPlayedGeneratedAudio, setHasPlayedGeneratedAudio] = useState(false);
+  const [isInitialPlaybackPromptVisible, setIsInitialPlaybackPromptVisible] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [makerScene, setMakerScene] = useState<MakerScene>("draw");
   const [isSceneTurnAnimating, setIsSceneTurnAnimating] = useState(false);
@@ -517,7 +517,7 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (isGenerating || !lyrics) return;
+    if (isGenerating || !lyrics || isInitialPlaybackPromptVisible) return;
 
     const frameId = window.requestAnimationFrame(() => {
       if (isCompactMakerLayout) {
@@ -534,7 +534,7 @@ const App: React.FC = () => {
       completionHeadingRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [isCompactMakerLayout, isGenerating, lyrics]);
+  }, [isCompactMakerLayout, isGenerating, isInitialPlaybackPromptVisible, lyrics]);
 
   useEffect(() => {
     if (!isRecordConsentOpen) return;
@@ -654,6 +654,10 @@ const App: React.FC = () => {
         return;
       }
 
+      if (isInitialPlaybackPromptVisible) {
+        return;
+      }
+
       if (document.body.dataset.drawingFocusMode === "true") {
         return;
       }
@@ -747,6 +751,7 @@ const App: React.FC = () => {
     generatedDrawing,
     isExperimentGenerating,
     isGenerating,
+    isInitialPlaybackPromptVisible,
     isRecordConsentOpen,
     isShortcutHelpOpen,
     loadDemoRecords,
@@ -846,6 +851,7 @@ const App: React.FC = () => {
       setDebugExportSource(null);
       setDebugExportArtifacts(null);
       setDrawingDisplayMode("animated");
+      setIsInitialPlaybackPromptVisible(false);
       setAppView("maker");
       setSaveToast({ message: "デモ記録を読み込みました", tone: "success" });
     } catch (loadError) {
@@ -976,7 +982,7 @@ const App: React.FC = () => {
     setDebugReporterNote("");
     setDebugBundleError(null);
     setDrawingDisplayMode("animated");
-    setHasPlayedGeneratedAudio(false);
+    setIsInitialPlaybackPromptVisible(false);
     setAppView("maker");
     setSaveToast({ message: "デバッグ履歴をメーカーに読み込みました", tone: "success" });
   };
@@ -1213,7 +1219,7 @@ const App: React.FC = () => {
     setDebugBundleError(null);
     setDrawingDisplayMode("animated");
     resetAudioState();
-    setHasPlayedGeneratedAudio(false);
+    setIsInitialPlaybackPromptVisible(false);
     if (appFeatures.dataSaving) {
       void recordGeneration(recordOptions.shouldRecord)
         .then(setUsageStats)
@@ -1418,6 +1424,9 @@ const App: React.FC = () => {
       if (isMountedRef.current && generationTimingRunKeyRef.current === runKey) {
         setIsGenerating(false);
         generationRunRef.current = false;
+        if (generationErrorMessage === null && generatedLyrics && generatedAudioBlob) {
+          setIsInitialPlaybackPromptVisible(true);
+        }
       }
     }
   };
@@ -1505,7 +1514,7 @@ const App: React.FC = () => {
     setPendingGenerationData(null);
     setIsRecordConsentOpen(false);
     resetAudioState();
-    setHasPlayedGeneratedAudio(false);
+    setIsInitialPlaybackPromptVisible(false);
     setDrawingDisplayMode("animated");
   };
 
@@ -1526,7 +1535,20 @@ const App: React.FC = () => {
     setDebugExportArtifacts(null);
     setIsDebugExportOpen(false);
     resetAudioState();
-    setHasPlayedGeneratedAudio(false);
+    setIsInitialPlaybackPromptVisible(false);
+  };
+
+  const handleInitialPlayback = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    try {
+      void audio.play().catch(() => {
+        // Keep the initial overlay available when the browser rejects playback.
+      });
+    } catch {
+      // Some browsers can throw synchronously for an unavailable audio source.
+    }
   };
 
   const experimentPitchedNotes = experimentScore?.notes.filter((note) => note.key !== null) ?? [];
@@ -1573,7 +1595,7 @@ const App: React.FC = () => {
       : drawingMetrics.strokeCount === 0
         ? "draw"
         : null;
-  const shouldGuidePlayback = !!lyrics && !!audioUrl && !error && !isGenerating && !hasPlayedGeneratedAudio;
+  const initialPlaybackAriaLabel = playbackKind === "voice" ? "歌を再生する" : "アニメーションを再生する";
 
   const handleRecordConsentKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
@@ -2599,6 +2621,9 @@ const App: React.FC = () => {
               playbackScore={playbackScore}
               playbackLyricLineCount={playbackLyricLineCount}
               isPlaybackActive={!!lyrics && !!playbackDrawing && !isGenerating && isAudioPlaying}
+              showInitialPlaybackPrompt={isInitialPlaybackPromptVisible}
+              onInitialPlayback={handleInitialPlayback}
+              initialPlaybackAriaLabel={initialPlaybackAriaLabel}
               mobileScene={isCompactMakerLayout ? makerScene : undefined}
               hideFocusControl={isCompactPortraitLayout && makerScene === "draw"}
               resetRequestKey={newSongResetKey}
@@ -2765,7 +2790,7 @@ const App: React.FC = () => {
                         className="w-full"
                         aria-label={playbackKind === "voice" ? "歌声の再生" : "絵描き歌アニメーションの再生"}
                         onPlay={() => {
-                          setHasPlayedGeneratedAudio(true);
+                          setIsInitialPlaybackPromptVisible(false);
                           setIsAudioPlaying(true);
                         }}
                         onPause={() => setIsAudioPlaying(false)}
@@ -2775,11 +2800,6 @@ const App: React.FC = () => {
                       <p className="mt-3 text-center text-sm font-bold text-gray-600">
                         {playbackKind === "voice" ? "歌声に合わせて、絵を描く順番を見てみよう" : "音声なしで、絵を描く順番と歌詞を見てみよう"}
                       </p>
-                      {shouldGuidePlayback && (
-                        <p className="mt-3 text-center font-black text-violet-800" role="status" aria-live="polite">
-                          <span aria-hidden="true">↑</span> {playbackKind === "voice" ? "歌ができたよ！ ここから聞いてみよう" : "アニメーションができたよ！ ここから見てみよう"}
-                        </p>
-                      )}
                     </div>
 
                     {voicevoxWarning && (
