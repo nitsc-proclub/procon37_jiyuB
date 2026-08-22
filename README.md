@@ -103,6 +103,7 @@ npm run dev
 
 - [システム全体の概要](docs/system-overview.md)
 - [絵描き歌生成の流れ](docs/ekaki-uta-generation.md)
+- [適応型・絵描き歌生成 第一段階 設計メモ](docs/adaptive-lyrics-learning-phase1.md)
 - [描画軌跡の同期再生](docs/drawing-playback-sync.md)
 - [運用・トラブルシュート](docs/operations.md)
 - [Cloudflare Pages 公開確認版のデプロイ](docs/cloudflare-deployment.md)
