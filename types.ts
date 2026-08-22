@@ -102,6 +102,24 @@ export interface GeneratedEkakiUtaResult {
   modelInfo: Phase1ModelInfo | null;
 }
 
+/** A browser-only, unsent preference draft for one Phase 1 generation. */
+export type EvaluationSelection = LyricsCandidate["candidateId"] | "neither" | null;
+
+export interface EvaluationDraft {
+  schemaVersion: 1;
+  generationId: string;
+  createdAt: string;
+  updatedAt: string;
+  candidates: LyricsCandidate[];
+  /** Candidate IDs in the participant-facing order; IDs themselves never change. */
+  displayOrder: LyricsCandidate["candidateId"][];
+  selection: EvaluationSelection;
+  drawingAnalysis: DrawingAnalysis;
+  modelInfo: Phase1ModelInfo;
+  drawingAnalysisSchemaVersion: DrawingAnalysis["schemaVersion"];
+  lyricsPromptVersion: string | null;
+}
+
 export interface SingingNote {
   lyric: string;
   key: number | null;

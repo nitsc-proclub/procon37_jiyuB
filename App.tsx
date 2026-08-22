@@ -13,6 +13,7 @@ import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, getUsageS
 import { GenerateEkakiUtaError, generateEkakiUta } from "./services/geminiService";
 import { buildDebugBundleArtifacts, createDebugBundle, createDebugBundleFromArtifacts, createDebugRecordId, DebugBundleArtifacts, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
 import { DebugHistoryRecord, isDebugHistoryError, saveDebugHistoryRecord } from "./services/debugHistoryDb";
+import { createEvaluationDraft, createGenerationId, getInitialPreviewCandidate, isComparableCandidateSet, saveEvaluationDraft, shuffleCandidateIds, updateEvaluationDraftSelection } from "./services/evaluationDraftDb";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { createSilentPlaybackAudio } from "./services/silentPlaybackService";
 import { groupStrokes } from "./services/strokeGroupingService";
@@ -24,7 +25,7 @@ import {
   setDirectVoicevoxBaseUrl,
 } from "./services/voicevoxHttp";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
-import { DemoRecordSummary, DrawingAnalysis, DrawingData, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsCandidate, LyricsResponse, Phase1ModelInfo, SingingScore, UsageStats } from "./types";
+import { DemoRecordSummary, DrawingAnalysis, DrawingData, EvaluationDraft, EvaluationSelection, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsCandidate, LyricsResponse, Phase1ModelInfo, SingingScore, UsageStats } from "./types";
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
 
@@ -76,6 +77,12 @@ const useMediaQueryAny = (queries: string[]) => {
   }, [queries]);
 
   return matches;
+};
+type CandidatePlaybackCache = {
+  score: SingingScore;
+  audioBlob: Blob;
+  playbackKind: PlaybackKind;
+  voicevoxWarning: string | null;
 };
 
 const COMPACT_MAKER_LAYOUT_QUERIES = [
@@ -372,10 +379,14 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
 
 const App: React.FC = () => {
   const [lyrics, setLyrics] = useState<LyricsResponse | null>(null);
-  // Step 1–3 keeps A/B internally; Step 4 will provide the child-facing selection UI.
   const [generatedLyricsCandidates, setGeneratedLyricsCandidates] = useState<LyricsCandidate[] | null>(null);
   const [generatedDrawingAnalysis, setGeneratedDrawingAnalysis] = useState<DrawingAnalysis | null>(null);
   const [generatedPhase1ModelInfo, setGeneratedPhase1ModelInfo] = useState<Phase1ModelInfo | null>(null);
+  const [candidateDisplayOrder, setCandidateDisplayOrder] = useState<LyricsCandidate["candidateId"][]>([]);
+  const [previewCandidateId, setPreviewCandidateId] = useState<LyricsCandidate["candidateId"] | null>(null);
+  const [evaluationSelection, setEvaluationSelection] = useState<EvaluationSelection>(null);
+  const [evaluationGenerationId, setEvaluationGenerationId] = useState<string | null>(null);
+  const [isCandidatePreviewLoading, setIsCandidatePreviewLoading] = useState<LyricsCandidate["candidateId"] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [generationFailureDisplay, setGenerationFailureDisplay] = useState<GenerationFailureDisplay | null>(null);
   const [voicevoxWarning, setVoicevoxWarning] = useState<string | null>(null);
@@ -464,6 +475,9 @@ const App: React.FC = () => {
   const experimentAudioRef = useRef<HTMLAudioElement>(null);
   const experimentAudioUrlRef = useRef<string | null>(null);
   const sceneTurnTimerRef = useRef<number | null>(null);
+  const candidatePlaybackCacheRef = useRef(new Map<LyricsCandidate["candidateId"], CandidatePlaybackCache>());
+  const candidateActivationSequenceRef = useRef(0);
+  const evaluationDraftWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Vite's development middleware is the only intentionally local API path.
   // Every built app can be served by the Worker, whose Gemini route validates
   // Turnstile regardless of VITE_APP_MODE, so it must provide a token.
@@ -502,6 +516,8 @@ const App: React.FC = () => {
     return () => {
       isMountedRef.current = false;
       generationRunRef.current = false;
+      candidateActivationSequenceRef.current += 1;
+      candidatePlaybackCacheRef.current.clear();
       const completionWaiter = generationCompletionWaiterRef.current;
       generationCompletionWaiterRef.current = null;
       completionWaiter?.resolve();
@@ -780,10 +796,24 @@ const App: React.FC = () => {
     setSelectedDebugHistoryDrawing(null);
   };
 
+  const clearCandidatePlaybackCache = () => {
+    // Cancels any in-flight candidate synthesis. Cached Blobs do not need URL
+    // cleanup; object URLs are created only for the active player and revoked
+    // by replaceAudioUrl/resetAudioState.
+    candidateActivationSequenceRef.current += 1;
+    candidatePlaybackCacheRef.current.clear();
+    setCandidateDisplayOrder([]);
+    setPreviewCandidateId(null);
+    setEvaluationSelection(null);
+    setEvaluationGenerationId(null);
+    setIsCandidatePreviewLoading(null);
+  };
+
   const clearPhase1Generation = () => {
     setGeneratedLyricsCandidates(null);
     setGeneratedDrawingAnalysis(null);
     setGeneratedPhase1ModelInfo(null);
+    clearCandidatePlaybackCache();
   };
 
   const renderModelInfo = () => {
@@ -1072,6 +1102,95 @@ const App: React.FC = () => {
     }
   };
 
+  const saveEvaluationDraftBestEffort = (draft: EvaluationDraft) => {
+    const write = () => saveEvaluationDraft(draft);
+    const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
+    evaluationDraftWriteQueueRef.current = queuedWrite.catch(() => undefined);
+    void queuedWrite.catch(() => {
+      if (isMountedRef.current) {
+        setSaveToast({ message: "このブラウザへの評価下書き保存に失敗しました", tone: "error" });
+      }
+    });
+  };
+
+  const handleEvaluationSelection = (selection: EvaluationSelection) => {
+    setEvaluationSelection(selection);
+    if (!evaluationGenerationId) return;
+
+    const write = () => updateEvaluationDraftSelection(evaluationGenerationId, selection, new Date().toISOString());
+    const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
+    evaluationDraftWriteQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
+    void queuedWrite
+      .then((wasUpdated) => {
+        if (!wasUpdated && isMountedRef.current) {
+          setSaveToast({ message: "評価下書きが見つからないため、この変更は保存されませんでした", tone: "error" });
+        }
+      })
+      .catch(() => {
+        if (isMountedRef.current) {
+          setSaveToast({ message: "このブラウザへの評価下書き保存に失敗しました", tone: "error" });
+        }
+      });
+  };
+
+  const activateLyricsCandidate = async (candidateId: LyricsCandidate["candidateId"]) => {
+    if (!isComparableCandidateSet(generatedLyricsCandidates) || isCandidatePreviewLoading) return;
+    const candidate = generatedLyricsCandidates.find((item) => item.candidateId === candidateId);
+    if (!candidate || previewCandidateId === candidateId) return;
+
+    const activationSequence = candidateActivationSequenceRef.current + 1;
+    candidateActivationSequenceRef.current = activationSequence;
+    setIsCandidatePreviewLoading(candidateId);
+    // Stop and reset first, then make one coherent state update once the next
+    // candidate's score and audio are available.
+    resetAudioState();
+
+    try {
+      let playback = candidatePlaybackCacheRef.current.get(candidateId);
+      if (!playback) {
+        const canUseVoicevox = appFeatures.localVoicevox && voicevoxConnectionStatus === "connected";
+        const accentLineHints = canUseVoicevox ? await analyzeLyricsAccents(candidate) : undefined;
+        if (candidateActivationSequenceRef.current !== activationSequence) return;
+
+        const score = buildSingingScore(candidate, createSingingSeed(candidate, 0), accentLineHints);
+        let audioBlob = createSilentPlaybackAudio(score);
+        let playbackKind: PlaybackKind = "animation-only";
+        let nextVoicevoxWarning: string | null = canUseVoicevox ? null : voicevoxWarning;
+
+        if (canUseVoicevox) {
+          try {
+            audioBlob = await synthesizeSingingVoice(score);
+            playbackKind = "voice";
+          } catch (voiceError) {
+            nextVoicevoxWarning = voiceError instanceof Error ? voiceError.message : "VOICEVOXで歌声を作れませんでした。";
+            setVoicevoxConnectionStatus("unavailable");
+            setVoicevoxConnectionMessage("接続は確認できましたが、歌声合成を完了できませんでした。");
+          }
+        }
+        if (candidateActivationSequenceRef.current !== activationSequence) return;
+        playback = { score, audioBlob, playbackKind, voicevoxWarning: nextVoicevoxWarning };
+        candidatePlaybackCacheRef.current.set(candidateId, playback);
+      }
+
+      if (candidateActivationSequenceRef.current !== activationSequence || !isMountedRef.current) return;
+      setLyrics(candidate);
+      setPlaybackScore(playback.score);
+      replaceAudioUrl(URL.createObjectURL(playback.audioBlob));
+      setPlaybackKind(playback.playbackKind);
+      setVoicevoxWarning(playback.voicevoxWarning);
+      setPreviewCandidateId(candidateId);
+      setIsInitialPlaybackPromptVisible(true);
+    } catch (candidateError) {
+      if (candidateActivationSequenceRef.current === activationSequence && isMountedRef.current) {
+        setSaveToast({ message: "この歌の再生準備に失敗しました", tone: "error" });
+      }
+    } finally {
+      if (candidateActivationSequenceRef.current === activationSequence && isMountedRef.current) {
+        setIsCandidatePreviewLoading(null);
+      }
+    }
+  };
+
   const handleGenerateExperimentVoice = async () => {
     const nextVariant = experimentVariant + 1;
 
@@ -1174,6 +1293,9 @@ const App: React.FC = () => {
     const startedAt = new Date().toISOString();
     const debugRecordId = createDebugRecordId();
     let generatedLyrics: LyricsResponse | null = null;
+    let generatedCandidates: LyricsCandidate[] | null = null;
+    let evaluationDraft: EvaluationDraft | null = null;
+    let evaluationDraftUnavailable = false;
     let generatedScore: SingingScore | null = null;
     let generatedAudioBlob: Blob | null = null;
     let generatedVoiceAudioBlob: Blob | null = null;
@@ -1265,9 +1387,42 @@ const App: React.FC = () => {
         : Promise.resolve(false);
       const generationResult = await generateEkakiUta(groupedDrawingData, turnstileTokenForRequest);
       generatedLyrics = generationResult.lyrics;
+      generatedCandidates = generationResult.candidates;
       setGeneratedLyricsCandidates(generationResult.candidates);
       setGeneratedDrawingAnalysis(generationResult.drawingAnalysis);
       setGeneratedPhase1ModelInfo(generationResult.modelInfo);
+      if (isComparableCandidateSet(generationResult.candidates) && generationResult.drawingAnalysis && generationResult.modelInfo) {
+        const generationId = createGenerationId();
+        const displayOrder = shuffleCandidateIds(generationResult.candidates.map((candidate) => candidate.candidateId));
+        const initialPreviewCandidate = getInitialPreviewCandidate(generationResult.candidates, displayOrder);
+        if (!initialPreviewCandidate) {
+          throw new Error("候補の表示順を初期化できませんでした。");
+        }
+        // The shuffled first card is the candidate that is actually prepared
+        // below (score, VOICEVOX, mappings and first playback), not merely a
+        // presentation label.
+        generatedLyrics = initialPreviewCandidate;
+        setCandidateDisplayOrder(displayOrder);
+        setPreviewCandidateId(initialPreviewCandidate.candidateId);
+        setEvaluationSelection(null);
+        setEvaluationGenerationId(generationId);
+        if (generationId) {
+          const createdAt = new Date().toISOString();
+          evaluationDraft = createEvaluationDraft({
+            generationId,
+            createdAt,
+            candidates: generationResult.candidates,
+            displayOrder,
+            drawingAnalysis: generationResult.drawingAnalysis,
+            modelInfo: generationResult.modelInfo,
+            // The browser response currently does not expose a prompt version.
+            // Preserve that absence explicitly rather than guessing from a model name.
+            lyricsPromptVersion: null,
+          });
+        } else {
+          evaluationDraftUnavailable = true;
+        }
+      }
       completeTimingPhase("gemini");
 
       const canUseLocalVoicevox = await localVoicevoxProbe;
@@ -1427,6 +1582,22 @@ const App: React.FC = () => {
             setSaveToast({ message, tone: "error" });
           });
       }
+
+      if (generationErrorMessage === null && isComparableCandidateSet(generatedCandidates) && generatedLyrics && generatedScore && generatedAudioBlob) {
+        const candidateId = (generatedLyrics as LyricsCandidate).candidateId;
+        candidatePlaybackCacheRef.current.set(candidateId, {
+          score: generatedScore,
+          audioBlob: generatedAudioBlob,
+          playbackKind: generatedVoiceAudioBlob ? "voice" : "animation-only",
+          voicevoxWarning: voicevoxIssue ?? (voicevoxStatus === "unavailable" ? "VOICEVOX Engineに接続できなかったため、歌声なしで再生します。" : null),
+        });
+      }
+      if (generationErrorMessage === null && evaluationDraft) {
+        saveEvaluationDraftBestEffort(evaluationDraft);
+      }
+      if (generationErrorMessage === null && evaluationDraftUnavailable) {
+        setSaveToast({ message: "このブラウザでは評価下書きを保存できません", tone: "error" });
+      }
       if (appFeatures.generationTelemetry) {
         void saveGenerationTiming({
           success: generationErrorMessage === null,
@@ -1580,6 +1751,74 @@ const App: React.FC = () => {
     } catch {
       // Some browsers can throw synchronously for an unavailable audio source.
     }
+  };
+
+  const renderCandidateComparison = () => {
+    if (!isComparableCandidateSet(generatedLyricsCandidates) || candidateDisplayOrder.length !== 2) return null;
+    const candidatesById = new Map(generatedLyricsCandidates.map((candidate) => [candidate.candidateId, candidate]));
+    const displayedCandidates = candidateDisplayOrder.map((candidateId) => candidatesById.get(candidateId)).filter((candidate): candidate is LyricsCandidate => !!candidate);
+    if (displayedCandidates.length !== 2) return null;
+
+    return (
+      <fieldset className="mt-6 rounded-3xl border-2 border-violet-100 bg-violet-50/60 p-4 sm:p-5" aria-describedby="candidate-choice-help">
+        <legend className="px-2 text-lg font-black text-violet-800">どちらの歌が好き？</legend>
+        <p id="candidate-choice-help" className="mt-1 text-sm font-semibold leading-relaxed text-violet-900">
+          まず「この歌を試す」で順番に聴けます。試すだけでは、好みは決まりません。
+        </p>
+        <p className="sr-only" role="status" aria-live="polite">
+          {isCandidatePreviewLoading
+            ? "選んだ歌の再生を準備しています"
+            : previewCandidateId
+              ? "いま試している歌を更新しました"
+              : "歌を選んで試せます"}
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {displayedCandidates.map((candidate, index) => {
+            const isPreview = previewCandidateId === candidate.candidateId;
+            const isLoading = isCandidatePreviewLoading === candidate.candidateId;
+            const isPreferred = evaluationSelection === candidate.candidateId;
+            return (
+              <article key={candidate.candidateId} className={`rounded-2xl border-2 bg-white p-4 shadow-sm ${isPreview ? "border-violet-400 ring-2 ring-violet-100" : "border-violet-100"}`}>
+                <p className="text-xs font-black text-violet-500">歌 {index + 1}</p>
+                <h3 className="mt-1 text-lg font-black text-gray-800">{candidate.title}</h3>
+                <p className="mt-2 min-h-12 text-sm font-semibold leading-relaxed text-gray-600">
+                  {candidate.lines.slice(0, 2).join("　")}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void activateLyricsCandidate(candidate.candidateId)}
+                  disabled={!!isCandidatePreviewLoading || isPreview}
+                  aria-pressed={isPreview}
+                  aria-busy={isLoading}
+                  className="mt-4 flex min-h-12 w-full items-center justify-center rounded-2xl border-2 border-violet-200 bg-violet-50 px-4 py-3 text-sm font-black text-violet-800 transition hover:bg-violet-100 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {isLoading ? "再生を準備中..." : isPreview ? "いま試している歌" : "この歌を試す"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleEvaluationSelection(candidate.candidateId)}
+                  disabled={!!isCandidatePreviewLoading}
+                  aria-pressed={isPreferred}
+                  className={`mt-3 flex min-h-14 w-full items-center justify-center rounded-2xl px-4 py-3 text-base font-black shadow-sm transition active:scale-[.98] disabled:cursor-wait disabled:opacity-60 ${isPreferred ? "bg-violet-600 text-white" : "bg-orange-400 text-white hover:bg-orange-500"}`}
+                >
+                  {isPreferred ? "この歌が好き！" : "この歌が好き"}
+                </button>
+              </article>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={() => handleEvaluationSelection("neither")}
+          disabled={!!isCandidatePreviewLoading}
+          aria-pressed={evaluationSelection === "neither"}
+          className={`mt-4 flex min-h-14 w-full items-center justify-center rounded-2xl border-2 px-4 py-3 text-base font-black transition active:scale-[.98] disabled:cursor-wait disabled:opacity-60 ${evaluationSelection === "neither" ? "border-gray-700 bg-gray-700 text-white" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"}`}
+        >
+          どちらも違う
+        </button>
+        <p className="mt-3 text-center text-xs font-bold text-violet-700">評価はこのブラウザ内の下書きだけに保存され、まだ送信されません。</p>
+      </fieldset>
+    );
   };
 
   const experimentPitchedNotes = experimentScore?.notes.filter((note) => note.key !== null) ?? [];
@@ -2700,6 +2939,7 @@ const App: React.FC = () => {
                       className="mt-2"
                       showKanaLines
                     />
+                    {renderCandidateComparison()}
                     <div className="mt-6 rounded-2xl border-2 border-orange-100 bg-orange-50/60 p-4">
                       <p className="mb-2 text-sm font-black text-gray-700">描く順番</p>
                       <div className="space-y-2 text-sm font-semibold text-gray-600">
@@ -2841,6 +3081,7 @@ const App: React.FC = () => {
                       </p>
                     )}
 
+                    {renderCandidateComparison()}
                     {renderModelInfo()}
                   </>
                 ) : null}

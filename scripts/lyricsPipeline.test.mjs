@@ -9,6 +9,7 @@ const vite = await createServer({
   appType: "custom",
 });
 const pipeline = await vite.ssrLoadModule("/services/lyricsPipeline.ts");
+const evaluationDraftDb = await vite.ssrLoadModule("/services/evaluationDraftDb.ts");
 
 const strokeGroups = [
   {
@@ -112,6 +113,74 @@ test("lyrics-stage prompt contains only DrawingAnalysis and no image payload", (
   );
   assert.match(prompt, /DrawingAnalysis JSON/);
   assert.doesNotMatch(prompt, /data:image|raw strokes/i);
+});
+
+test("candidate display shuffle preserves immutable candidate IDs", () => {
+  const shuffled = evaluationDraftDb.shuffleCandidateIds(["candidate-a", "candidate-b"], () => 0);
+  assert.deepEqual(shuffled, ["candidate-b", "candidate-a"]);
+  assert.deepEqual([...shuffled].sort(), ["candidate-a", "candidate-b"]);
+});
+
+test("the shuffled first candidate is the initial preview candidate", () => {
+  const first = { ...validLyrics("candidate-a", "g1"), modelName: "gemini-3.5-flash" };
+  const second = { ...validLyrics("candidate-b", "g2"), modelName: "gemini-3.5-flash" };
+  const displayOrder = evaluationDraftDb.shuffleCandidateIds([first.candidateId, second.candidateId], () => 0);
+  assert.equal(displayOrder[0], "candidate-b");
+  assert.equal(evaluationDraftDb.getInitialPreviewCandidate([first, second], displayOrder)?.candidateId, "candidate-b");
+});
+
+test("only exactly two distinct candidates enable comparison", () => {
+  const first = { ...validLyrics("candidate-a", "g1"), modelName: "gemini-3.5-flash" };
+  const second = { ...validLyrics("candidate-b", "g2"), modelName: "gemini-3.5-flash" };
+  assert.equal(evaluationDraftDb.isComparableCandidateSet([first, second]), true);
+  assert.equal(evaluationDraftDb.isComparableCandidateSet([first]), false);
+  assert.equal(evaluationDraftDb.isComparableCandidateSet([first, { ...second, candidateId: "candidate-a" }]), false);
+});
+
+test("evaluation generation IDs are UUID-shaped without Math.random fallback", () => {
+  const generationId = evaluationDraftDb.createGenerationId();
+  assert.match(generationId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+});
+
+test("evaluation draft builder whitelists fields and selection keeps its generation ID", () => {
+  const first = {
+    ...validLyrics("candidate-a", "g1"),
+    imageUri: "data:image/png;base64,should-not-survive",
+    audioBlob: { secret: "should-not-survive" },
+    rawStrokes: [{ x: 1 }],
+    participantAge: 9,
+  };
+  const second = { ...validLyrics("candidate-b", "g2") };
+  const drawingAnalysis = {
+    schemaVersion: 1,
+    objectCandidates: [{ label: "りんご", confidence: "high", participantName: "should-not-survive" }],
+    parts: [{ id: "body", shape: "丸", position: "中央", strokeGroupIds: ["g1"], imageUri: "should-not-survive" }],
+    drawingOrder: ["body"],
+    rawStrokes: [{ x: 1 }],
+  };
+  const draft = evaluationDraftDb.createEvaluationDraft({
+    generationId: "generation-1",
+    createdAt: "2026-08-22T00:00:00.000Z",
+    candidates: [first, second],
+    displayOrder: ["candidate-b", "candidate-a"],
+    drawingAnalysis,
+    modelInfo: { drawingAnalysis: "gemini-3.7-flash", lyricsGeneration: "gemini-3.5-flash", extra: "should-not-survive" },
+    lyricsPromptVersion: null,
+    participantAge: 9,
+  });
+  assert.equal("imageUri" in draft.candidates[0], false);
+  assert.equal("audioBlob" in draft.candidates[0], false);
+  assert.equal("rawStrokes" in draft.candidates[0], false);
+  assert.equal("participantAge" in draft.candidates[0], false);
+  assert.equal("rawStrokes" in draft.drawingAnalysis, false);
+  assert.equal("participantName" in draft.drawingAnalysis.objectCandidates[0], false);
+  assert.deepEqual(draft.modelInfo, { drawingAnalysis: "gemini-3.7-flash", lyricsGeneration: "gemini-3.5-flash" });
+
+  const selected = evaluationDraftDb.withEvaluationDraftSelection(draft, "neither", "2026-08-22T00:01:00.000Z");
+  assert.equal(selected.generationId, "generation-1");
+  assert.equal(selected.selection, "neither");
+  assert.equal(selected.updatedAt, "2026-08-22T00:01:00.000Z");
+  assert.equal(draft.selection, null);
 });
 
 test.after(async () => {
