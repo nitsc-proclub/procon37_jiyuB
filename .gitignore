@@ -41,6 +41,11 @@ Thumbs.db
 
 # Misc
 *.pem
+.dev-server.pid
+
+# Local Vite build copies of tracked public favicon assets
+/dist/favicon.ico
+/dist/favicon用.png
 
 # Local project resources (Google Drive, not part of this repository)
 .local-resources/
