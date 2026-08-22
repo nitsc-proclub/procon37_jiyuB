@@ -56,6 +56,52 @@ export interface LyricsResponse {
   modelName?: string;
 }
 
+/** A bounded, image-free description produced by the drawing-understanding stage. */
+export interface DrawingAnalysisObjectCandidate {
+  label: string;
+  confidence: "low" | "medium" | "high";
+}
+
+export interface DrawingAnalysisPart {
+  id: string;
+  shape: string;
+  position: string;
+  strokeGroupIds: string[];
+}
+
+export interface DrawingAnalysis {
+  schemaVersion: 1;
+  objectCandidates: DrawingAnalysisObjectCandidate[];
+  parts: DrawingAnalysisPart[];
+  drawingOrder: string[];
+}
+
+/** A future A/B choice. It stays compatible with the existing playback pipeline. */
+export interface LyricsCandidate extends LyricsResponse {
+  candidateId: "candidate-a" | "candidate-b";
+}
+
+/** Models actually used by the two-stage Phase 1 pipeline. */
+export interface Phase1ModelInfo {
+  drawingAnalysis: string;
+  lyricsGeneration: string;
+}
+
+export interface Phase1LyricsResponse {
+  pipelineMode: "phase1";
+  drawingAnalysis: DrawingAnalysis;
+  candidates: LyricsCandidate[];
+  selectedCandidateId: "candidate-a" | "candidate-b";
+  modelInfo: Phase1ModelInfo;
+}
+
+export interface GeneratedEkakiUtaResult {
+  lyrics: LyricsResponse;
+  candidates: LyricsCandidate[] | null;
+  drawingAnalysis: DrawingAnalysis | null;
+  modelInfo: Phase1ModelInfo | null;
+}
+
 export interface SingingNote {
   lyric: string;
   key: number | null;

@@ -4,7 +4,13 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-08-08",
   "vars": {
-    "TURNSTILE_EXPECTED_HOSTNAME": "cho-ekaki-uta.nitsc-proclub.workers.dev"
+    "TURNSTILE_EXPECTED_HOSTNAME": "cho-ekaki-uta.nitsc-proclub.workers.dev",
+    "LYRICS_PIPELINE_MODE": "legacy",
+    "GEMINI_VISION_MODEL": "gemini-3.7-flash",
+    "LYRICS_BASE_MODEL": "gemini-3.5-flash",
+    "LYRICS_CANDIDATE_COUNT": "2",
+    "DRAWING_ANALYSIS_SCHEMA_VERSION": "1",
+    "LYRICS_PROMPT_VERSION": "1"
   },
   "assets": {
     "directory": "./dist",

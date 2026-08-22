@@ -1,4 +1,17 @@
-import type { DrawingData, LyricsResponse, StrokeGroup } from "../types";
+import type { DrawingData, LyricsResponse, Phase1LyricsResponse, StrokeGroup } from "../types";
+import {
+  buildDrawingAnalysisPrompt,
+  buildLegacyLyricsPrompt,
+  buildLyricsCandidatesPrompt,
+  createDrawingAnalysisResponseSchema,
+  createLegacyLyricsResponseSchema,
+  createLyricsCandidatesResponseSchema,
+  normalizeDrawingAnalysis,
+  normalizeLyricsCandidates,
+  normalizeLyricsResponse,
+  parseInlineImage,
+  resolveDrawingAnalysisSchemaVersion,
+} from "../services/lyricsPipeline";
 
 type Env = {
   ASSETS: { fetch(request: Request): Promise<Response> };
@@ -6,6 +19,12 @@ type Env = {
   GEMINI_MODEL?: string;
   GEMINI_MODEL_CANDIDATES?: string;
   GEMINI_MODEL_SUB?: string;
+  LYRICS_PIPELINE_MODE?: string;
+  GEMINI_VISION_MODEL?: string;
+  LYRICS_BASE_MODEL?: string;
+  LYRICS_CANDIDATE_COUNT?: string;
+  DRAWING_ANALYSIS_SCHEMA_VERSION?: string;
+  LYRICS_PROMPT_VERSION?: string;
   TURNSTILE_SECRET?: string;
   TURNSTILE_EXPECTED_HOSTNAME?: string;
 };
@@ -25,6 +44,9 @@ const TURNSTILE_SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0
 const TURNSTILE_SITEVERIFY_TIMEOUT_MS = 8_000;
 const MODEL_LIST_CACHE_MS = 10 * 60 * 1000;
 const DEFAULT_MODEL = "gemini-2.5-flash-lite";
+const DEFAULT_VISION_MODEL = "gemini-3.7-flash";
+const DEFAULT_LYRICS_BASE_MODEL = "gemini-3.5-flash";
+const DEFAULT_SCHEMA_VERSION = "1";
 let modelListCache: { expiresAt: number; names: string[] } | null = null;
 
 const json = (value: unknown, status = 200) =>
@@ -209,107 +231,19 @@ const getStrokeGroups = (drawingData: DrawingData): StrokeGroup[] => {
   });
 };
 
-const formatRawStrokeIndexes = (rawStrokeIndexes: number[]) => rawStrokeIndexes.map((index) => index + 1).join(",");
-
-const buildStrokeGroupDescriptions = (strokeGroups: StrokeGroup[]) =>
-  strokeGroups.map((group) => {
-    const width = group.bounds.maxX - group.bounds.minX;
-    const height = group.bounds.maxY - group.bounds.minY;
-    const centerX = group.bounds.minX + width / 2;
-    const centerY = group.bounds.minY + height / 2;
-
-    return [
-      `Group ${group.id}`,
-      `Raw strokes: ${formatRawStrokeIndexes(group.rawStrokeIndexes)}`,
-      `Bounding Box(${Math.round(group.bounds.minX)},${Math.round(group.bounds.minY)} to ${Math.round(group.bounds.maxX)},${Math.round(group.bounds.maxY)})`,
-      `Center(${Math.round(centerX)},${Math.round(centerY)})`,
-      `Size(${Math.round(width)}x${Math.round(height)})`,
-      `Duration: ${group.endTime - group.startTime}ms`,
-    ].join(", ");
-  });
-
-const buildPrompt = (strokeGroups: StrokeGroup[]) => {
-  const strokeGroupDescriptions = buildStrokeGroupDescriptions(strokeGroups);
-
-  return `
-あなたは日本語の「絵描き歌」を作る作詞家です。
-入力された完成画像と stroke group 情報を見て、子どもにも歌いやすい短い絵描き歌を作ってください。
-
-歌詞ルール:
-1. lines は4行程度にしてください。
-2. singingKanaLines は lines と同じ行数にしてください。
-3. lines は画面表示用なので、自然な日本語の表記にしてください。漢字を使っても構いません。
-4. singingKanaLines は VOICEVOX が歌うための読み上げ形です。lines の意味と文脈に沿って、実際に声に出す読みをひらがな中心で正確に書いてください。
-5. singingKanaLines では、助詞や同形異音語なども文脈で判断し、発音どおりにしてください。例: 「ねこは」→「ねこわ」、「おうちへ」→「おうちえ」、「まるを」→「まるお」、「三つ」→「みっつ」。
-6. singingKanaLines では、漢字、英字、数字、句読点、絵文字、ASCII 記号を避けてください。ただし、スペースと長音記号「ー」は使って構いません。
-7. 各行は短く、リズムに乗せやすい自然な文にしてください。
-8. title と identifiedObject も返してください。
-
-ストローク対応ルール:
-9. lineStrokeMappings を必ず返してください。歌詞1行につき1件です。
-10. 各行に、その行を歌っている間に描かれる stroke group id を割り当ててください。
-11. 1行には1つ、複数、または0個の stroke group を割り当てられます。
-12. 最後の行が「できあがり」「これは○○」のような完成宣言だけなら、strokeGroupIds は空配列で構いません。
-13. 存在する group id だけを使ってください。基本的に描画順を尊重し、同じ group id を複数行に割り当てないでください。
-
-Stroke group count: ${strokeGroups.length}
-Stroke group information:
-${strokeGroupDescriptions.join("\n")}
-`;
-};
-
-const responseSchema = {
-  type: "OBJECT",
-  properties: {
-    title: { type: "STRING" },
-    lines: { type: "ARRAY", items: { type: "STRING" } },
-    singingKanaLines: { type: "ARRAY", items: { type: "STRING" } },
-    identifiedObject: { type: "STRING" },
-    lineStrokeMappings: {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          lineIndex: { type: "INTEGER" },
-          strokeGroupIds: { type: "ARRAY", items: { type: "STRING" } },
-        },
-        required: ["lineIndex", "strokeGroupIds"],
-      },
-    },
-  },
-  required: ["title", "lines", "singingKanaLines", "identifiedObject", "lineStrokeMappings"],
-};
-
-const normalizeAndValidate = (value: unknown, strokeGroups: StrokeGroup[]): LyricsResponse => {
-  if (!value || typeof value !== "object") throw new Error("Gemini の応答形式が正しくありません。");
-  const result = value as LyricsResponse;
-  if (!Array.isArray(result.lines) || result.lines.length === 0 || !Array.isArray(result.singingKanaLines) || result.singingKanaLines.length !== result.lines.length) {
-    throw new Error("Gemini の歌詞形式が正しくありません。");
-  }
-  if (typeof result.title !== "string" || typeof result.identifiedObject !== "string") throw new Error("Gemini の歌詞形式が正しくありません。");
-
-  const validIds = new Set(strokeGroups.map((group) => group.id));
-  const usedIds = new Set<string>();
-  const mappings = Array.isArray(result.lineStrokeMappings) ? result.lineStrokeMappings : [];
-  result.lineStrokeMappings = result.lines.map((_, lineIndex) => {
-    const source = mappings.find((mapping) => mapping?.lineIndex === lineIndex);
-    const ids = Array.isArray(source?.strokeGroupIds) ? source.strokeGroupIds : [];
-    return { lineIndex, strokeGroupIds: ids.filter((id) => typeof id === "string" && validIds.has(id) && !usedIds.has(id) && (usedIds.add(id), true)) };
-  });
-  return result;
-};
-
 const isRetriableStatus = (status: number) => status === 404 || status === 408 || status === 429 || status >= 500;
 
-const generateLyrics = async (drawingData: DrawingData, env: Env) => {
+const generateLegacyLyrics = async (drawingData: DrawingData, env: Env): Promise<LyricsResponse> => {
   if (!env.GEMINI_API_KEY) throw httpError("Gemini API の設定がまだ完了していません。", 503, "gemini-config", "config");
-  const imageMatch = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i.exec(drawingData.imageUri);
-  if (!imageMatch) throw httpError("画像データが正しくありません。", 400);
-  const [, mimeType, base64Image] = imageMatch;
+  const inlineImage = parseInlineImage(drawingData.imageUri);
+  if (!inlineImage) throw httpError("画像データが正しくありません。", 400);
   const strokeGroups = getStrokeGroups(drawingData);
   const requestBody = {
-    contents: [{ parts: [{ text: buildPrompt(strokeGroups) }, { inlineData: { mimeType, data: base64Image } }] }],
-    generationConfig: { responseMimeType: "application/json", responseSchema },
+    contents: [{ parts: [{ text: buildLegacyLyricsPrompt(strokeGroups) }, { inlineData: inlineImage }] }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: createLegacyLyricsResponseSchema({ OBJECT: "OBJECT", ARRAY: "ARRAY", STRING: "STRING", INTEGER: "INTEGER" }),
+    },
   };
   const candidates = await getModelCandidates(env);
 
@@ -327,7 +261,7 @@ const generateLyrics = async (drawingData: DrawingData, env: Env) => {
       const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
       const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
       if (!text) throw httpError("歌を作るサービスから正しい返事を受け取れませんでした。", 502, "gemini-response", "gemini");
-      return { ...normalizeAndValidate(JSON.parse(text), strokeGroups), modelName: model };
+      return { ...normalizeLyricsResponse(JSON.parse(text), strokeGroups), modelName: model };
     } catch (error) {
       if (index < candidates.length - 1 && !(error instanceof SyntaxError)) continue;
       if (error && typeof error === "object" && "status" in error && typeof error.status === "number") throw error;
@@ -335,6 +269,85 @@ const generateLyrics = async (drawingData: DrawingData, env: Env) => {
     }
   }
   throw new Error("Gemini の歌詞生成に失敗しました。");
+};
+
+const getGeneratedText = async (model: string, requestBody: unknown, env: Env) => {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY! },
+    body: JSON.stringify(requestBody),
+  });
+  if (!response.ok) throw new Error(`Gemini request failed (${response.status})`);
+  const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+  const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
+  if (!text) throw new Error("Gemini response did not include text");
+  return text;
+};
+
+const generatePhase1Lyrics = async (drawingData: DrawingData, env: Env): Promise<Phase1LyricsResponse> => {
+  if (!env.GEMINI_API_KEY) throw new Error("Gemini API key is unavailable");
+  const inlineImage = parseInlineImage(drawingData.imageUri);
+  if (!inlineImage) throw new Error("Invalid image data");
+  const strokeGroups = getStrokeGroups(drawingData);
+  const drawingAnalysisSchemaVersion = resolveDrawingAnalysisSchemaVersion(env.DRAWING_ANALYSIS_SCHEMA_VERSION);
+  if (drawingAnalysisSchemaVersion === null) throw new Error("Unsupported drawing analysis schema version");
+  const schemaVersion = String(drawingAnalysisSchemaVersion);
+  const promptVersion = env.LYRICS_PROMPT_VERSION?.trim() || DEFAULT_SCHEMA_VERSION;
+  const visionModel = env.GEMINI_VISION_MODEL?.trim() || DEFAULT_VISION_MODEL;
+  const lyricsModel = env.LYRICS_BASE_MODEL?.trim() || DEFAULT_LYRICS_BASE_MODEL;
+  const schemaTypes = { OBJECT: "OBJECT", ARRAY: "ARRAY", STRING: "STRING", INTEGER: "INTEGER" } as const;
+
+  const drawingAnalysisText = await getGeneratedText(
+    visionModel,
+    {
+      contents: [
+        {
+          parts: [
+            { text: buildDrawingAnalysisPrompt(strokeGroups, schemaVersion) },
+            { inlineData: inlineImage },
+          ],
+        },
+      ],
+      generationConfig: { responseMimeType: "application/json", responseSchema: createDrawingAnalysisResponseSchema(schemaTypes) },
+    },
+    env,
+  );
+  const drawingAnalysis = normalizeDrawingAnalysis(JSON.parse(drawingAnalysisText), strokeGroups);
+  const candidatesText = await getGeneratedText(
+    lyricsModel,
+    {
+      // The lyrics stage receives only the structured analysis: no image URI or raw stroke data.
+      contents: [{ parts: [{ text: buildLyricsCandidatesPrompt(drawingAnalysis, promptVersion) }] }],
+      generationConfig: { responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(schemaTypes) },
+    },
+    env,
+  );
+  const candidates = normalizeLyricsCandidates(JSON.parse(candidatesText), strokeGroups).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
+  const selectedCandidate = candidates.find((candidate) => candidate.candidateId === "candidate-a") ?? candidates[0];
+  if (!selectedCandidate) throw new Error("No valid lyrics candidate");
+  return {
+    pipelineMode: "phase1",
+    drawingAnalysis,
+    candidates,
+    selectedCandidateId: selectedCandidate.candidateId,
+    modelInfo: { drawingAnalysis: visionModel, lyricsGeneration: lyricsModel },
+  };
+};
+
+const shouldUsePhase1 = (env: Env) => {
+  const candidateCount = env.LYRICS_CANDIDATE_COUNT?.trim();
+  return env.LYRICS_PIPELINE_MODE?.trim().toLowerCase() === "phase1" && (candidateCount === undefined || candidateCount === "2");
+};
+
+const generateEkakiUta = async (drawingData: DrawingData, env: Env): Promise<LyricsResponse | Phase1LyricsResponse> => {
+  if (!shouldUsePhase1(env)) return generateLegacyLyrics(drawingData, env);
+
+  try {
+    return await generatePhase1Lyrics(drawingData, env);
+  } catch {
+    // Preserve the established one-stage experience when either phase is unavailable or malformed.
+    return generateLegacyLyrics(drawingData, env);
+  }
 };
 
 const handleGemini = async (request: Request, env: Env) => {
@@ -354,7 +367,7 @@ const handleGemini = async (request: Request, env: Env) => {
     }
     const drawingData = assertDrawingData(payload.drawingData);
     await verifyTurnstile(request, assertTurnstileToken(payload.turnstileToken), env);
-    return json(await generateLyrics(drawingData, env));
+    return json(await generateEkakiUta(drawingData, env));
   } catch (error) {
     const httpFailure =
       typeof error === "object" && error !== null && "status" in error && typeof error.status === "number"

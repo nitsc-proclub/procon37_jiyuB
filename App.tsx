@@ -24,7 +24,7 @@ import {
   setDirectVoicevoxBaseUrl,
 } from "./services/voicevoxHttp";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
-import { DemoRecordSummary, DrawingData, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsResponse, SingingScore, UsageStats } from "./types";
+import { DemoRecordSummary, DrawingAnalysis, DrawingData, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsCandidate, LyricsResponse, Phase1ModelInfo, SingingScore, UsageStats } from "./types";
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
 
@@ -372,6 +372,10 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
 
 const App: React.FC = () => {
   const [lyrics, setLyrics] = useState<LyricsResponse | null>(null);
+  // Step 1–3 keeps A/B internally; Step 4 will provide the child-facing selection UI.
+  const [generatedLyricsCandidates, setGeneratedLyricsCandidates] = useState<LyricsCandidate[] | null>(null);
+  const [generatedDrawingAnalysis, setGeneratedDrawingAnalysis] = useState<DrawingAnalysis | null>(null);
+  const [generatedPhase1ModelInfo, setGeneratedPhase1ModelInfo] = useState<Phase1ModelInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [generationFailureDisplay, setGenerationFailureDisplay] = useState<GenerationFailureDisplay | null>(null);
   const [voicevoxWarning, setVoicevoxWarning] = useState<string | null>(null);
@@ -776,6 +780,24 @@ const App: React.FC = () => {
     setSelectedDebugHistoryDrawing(null);
   };
 
+  const clearPhase1Generation = () => {
+    setGeneratedLyricsCandidates(null);
+    setGeneratedDrawingAnalysis(null);
+    setGeneratedPhase1ModelInfo(null);
+  };
+
+  const renderModelInfo = () => {
+    if (generatedPhase1ModelInfo) {
+      return (
+        <p className="mt-3 text-right text-xs font-bold text-gray-400">
+          画像読み込み: {generatedPhase1ModelInfo.drawingAnalysis}<br />
+          歌詞生成: {generatedPhase1ModelInfo.lyricsGeneration}
+        </p>
+      );
+    }
+    return lyrics?.modelName ? <p className="mt-3 text-right text-xs font-bold text-gray-400">model: {lyrics.modelName}</p> : null;
+  };
+
   const replaceDebugHistoryDrawing = (drawing: DrawingData, imageBlob: Blob) => {
     clearDebugHistoryDrawing();
     const imageUri = URL.createObjectURL(imageBlob);
@@ -839,6 +861,7 @@ const App: React.FC = () => {
       replaceAudioUrl(nextAudioUrl);
       setPlaybackKind(nextAudioUrl ? "voice" : "animation-only");
       setLyrics(demoRecord.lyrics);
+      clearPhase1Generation();
       setError(null);
       setVoicevoxWarning(null);
       setProgressLabel("準備中...");
@@ -967,6 +990,7 @@ const App: React.FC = () => {
     replaceAudioUrl(playbackAudioBlob ? URL.createObjectURL(playbackAudioBlob) : null);
     setPlaybackKind(artifacts.voiceAudioBlob ? "voice" : "animation-only");
     setLyrics(manifest.lyrics);
+    clearPhase1Generation();
     setError(manifest.outcome.error);
     setVoicevoxWarning(manifest.generation.voicevoxIssue);
     setProgressLabel("再生できます");
@@ -1203,6 +1227,7 @@ const App: React.FC = () => {
     }
     setIsGenerating(true);
     setLyrics(null);
+    clearPhase1Generation();
     setError(null);
     setGenerationFailureDisplay(null);
     setVoicevoxWarning(null);
@@ -1238,7 +1263,11 @@ const App: React.FC = () => {
       const localVoicevoxProbe = appFeatures.localVoicevox
         ? checkVoicevoxConnection(true)
         : Promise.resolve(false);
-      generatedLyrics = await generateEkakiUta(groupedDrawingData, turnstileTokenForRequest);
+      const generationResult = await generateEkakiUta(groupedDrawingData, turnstileTokenForRequest);
+      generatedLyrics = generationResult.lyrics;
+      setGeneratedLyricsCandidates(generationResult.candidates);
+      setGeneratedDrawingAnalysis(generationResult.drawingAnalysis);
+      setGeneratedPhase1ModelInfo(generationResult.modelInfo);
       completeTimingPhase("gemini");
 
       const canUseLocalVoicevox = await localVoicevoxProbe;
@@ -1498,6 +1527,7 @@ const App: React.FC = () => {
 
   const handleClear = () => {
     setLyrics(null);
+    clearPhase1Generation();
     setError(null);
     setGenerationFailureDisplay(null);
     setVoicevoxWarning(null);
@@ -1526,6 +1556,7 @@ const App: React.FC = () => {
   const handleDrawingEditStart = () => {
     if (!lyrics) return;
     setLyrics(null);
+    clearPhase1Generation();
     setError(null);
     setVoicevoxWarning(null);
     setSelectedDemoRecordId(null);
@@ -2677,7 +2708,7 @@ const App: React.FC = () => {
                     </div>
                     <p className="mt-6 text-center text-sm font-bold text-gray-500">歌声は、ローカルVOICEVOX連携の実装後に再生できます。</p>
                     {renderDebugExportButton()}
-                    {lyrics.modelName && <p className="mt-3 text-right text-xs font-bold text-gray-400">model: {lyrics.modelName}</p>}
+                    {renderModelInfo()}
                   </>
                 ) : error ? (
                   <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
@@ -2810,11 +2841,7 @@ const App: React.FC = () => {
                       </p>
                     )}
 
-                    {lyrics.modelName && (
-                      <p className="mt-3 text-right text-xs font-bold text-gray-400">
-                        model: {lyrics.modelName}
-                      </p>
-                    )}
+                    {renderModelInfo()}
                   </>
                 ) : null}
               </div>

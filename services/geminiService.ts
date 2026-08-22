@@ -1,4 +1,4 @@
-import { DrawingData, LyricsResponse } from "../types";
+import { DrawingData, GeneratedEkakiUtaResult, LyricsResponse, Phase1LyricsResponse } from "../types";
 
 type GenerateEkakiUtaErrorResponse = {
   error?: unknown;
@@ -6,7 +6,7 @@ type GenerateEkakiUtaErrorResponse = {
   stage?: unknown;
 };
 
-type GenerateEkakiUtaResponse = LyricsResponse | GenerateEkakiUtaErrorResponse;
+type GenerateEkakiUtaResponse = LyricsResponse | Phase1LyricsResponse | GenerateEkakiUtaErrorResponse;
 
 const isSafeDiagnosticValue = (value: unknown): value is string =>
   typeof value === "string" && /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(value);
@@ -26,6 +26,21 @@ export class GenerateEkakiUtaError extends Error {
 const isLyricsResponse = (value: GenerateEkakiUtaResponse): value is LyricsResponse =>
   "title" in value && "lines" in value && "identifiedObject" in value && Array.isArray(value.lines);
 
+const isPhase1LyricsResponse = (value: GenerateEkakiUtaResponse): value is Phase1LyricsResponse =>
+  "pipelineMode" in value &&
+  value.pipelineMode === "phase1" &&
+  "drawingAnalysis" in value &&
+  "candidates" in value &&
+  Array.isArray(value.candidates) &&
+  "selectedCandidateId" in value &&
+  "modelInfo" in value &&
+  typeof value.modelInfo === "object" &&
+  value.modelInfo !== null &&
+  "drawingAnalysis" in value.modelInfo &&
+  typeof value.modelInfo.drawingAnalysis === "string" &&
+  "lyricsGeneration" in value.modelInfo &&
+  typeof value.modelInfo.lyricsGeneration === "string";
+
 const parseErrorResponse = async (response: Response) => {
   try {
     const payload = (await response.json()) as GenerateEkakiUtaErrorResponse;
@@ -39,7 +54,7 @@ const parseErrorResponse = async (response: Response) => {
   }
 };
 
-export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?: string): Promise<LyricsResponse> => {
+export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?: string): Promise<GeneratedEkakiUtaResult> => {
   const response = await fetch("/api/gemini/generate-ekaki-uta", {
     method: "POST",
     headers: {
@@ -60,6 +75,14 @@ export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?
 
   const result = (await response.json()) as GenerateEkakiUtaResponse;
 
+  if (isPhase1LyricsResponse(result)) {
+    const selected = result.candidates.find((candidate) => candidate.candidateId === result.selectedCandidateId) ?? result.candidates[0];
+    if (!selected) {
+      throw new GenerateEkakiUtaError("絵かき歌の生成に失敗しました。もう一度試してください。", response.status, null, null);
+    }
+    return { lyrics: selected, candidates: result.candidates, drawingAnalysis: result.drawingAnalysis, modelInfo: result.modelInfo };
+  }
+
   if (!isLyricsResponse(result)) {
     throw new GenerateEkakiUtaError(
       typeof result.error === "string" ? result.error : "絵かき歌の生成に失敗しました。もう一度試してください。",
@@ -69,5 +92,5 @@ export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?
     );
   }
 
-  return result;
+  return { lyrics: result, candidates: null, drawingAnalysis: null, modelInfo: null };
 };
