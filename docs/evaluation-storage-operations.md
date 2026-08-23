@@ -5,7 +5,7 @@
 ## 現在の設定状態（2026-08-24）
 
 - 本番D1とPreview専用D1を作成済み。本番`wrangler.jsonc`の`EVALUATIONS_DB.database_id`は本番D1だけを指し、Preview D1は`wrangler.staging.jsonc`の`database_id`にだけ設定する。
-- `0001_evaluation_records.sql`をローカル・Preview D1・本番D1へ適用済み。staging検証前は両remote DBが0件だった。
+- `0001_evaluation_records.sql`と`0002_evaluation_followups.sql`をローカル・Preview D1・本番D1へ適用済み。0002適用時は本番の既存評価11件を維持し、事後評価0件から開始した。
 - `EVALUATION_RECEIPT_SECRET`をWorker Secretへ登録済み。値は端末・文書・Gitへ保存していない。
 - Cloudflare Version Previewへ一時的に中央保存ONの版をアップロードし、同一Origin・`no-store`・payload検証・Secret認識を確認した。ただしVersion Previewは`preview_database_id`へ自動切替されず本番D1 bindingだった。送信は無効payloadだけで本番D1は0件のまま。公開aliasは中央保存OFFの安全な版へ差し替え済み。
 - 本番ON前にはD1 bindingとSecretを含むOFF版をデプロイし、配信Versionの本番D1 UUID、トップページ200、評価APIの503 + `no-store`を確認した。
@@ -19,11 +19,23 @@
 - 修正後のWorkers Buildsで、`wrangler deploy`が本番config内の`preview_database_id`を本番Workerへ結び付ける挙動を実測した。自動Versionは検証済みVersionへ即時rollbackし、本番configから`preview_database_id`を削除して、Preview D1を専用staging configへ完全分離した。
 - 分離修正後のWorkers Build `34a5d878-740d-48fe-bf63-8bb64a2320dc`は成功した。配信Version `db3b7d7c-4b98-42c9-b0a4-1d02bea3c6f0`で本番D1 UUID、3 Secret、二段生成・中央保存ONを再確認し、トップページ200、同一Origin制約、payload拒否400 + `no-store`、本番D1 0件を確認した。以後のVersion IDはpushごとに変わるため、固定値ではなく`wrangler versions view`で配信Versionのbindingを確認する。
 
+## 公開版・staging・ローカルの分離
+
+| 用途 | Worker / URL | 設定 | D1 |
+| --- | --- | --- | --- |
+| 公開版 | `cho-ekaki-uta.nitsc-proclub.workers.dev` | `wrangler.jsonc` | `cho-ekaki-uta-evaluations` |
+| 確認版 | `cho-ekaki-uta-staging.nitsc-proclub.workers.dev` | `wrangler.staging.jsonc` | `cho-ekaki-uta-evaluations-preview` |
+| ローカル | Vite / Wranglerのローカル起動 | `.env.local`等のGit対象外設定 | WranglerローカルD1 |
+
+stagingを出すときは`npm.cmd run deploy:staging`、設定とbundleだけ確認するときは`npm.cmd run deploy:staging:check`を使う。本番のdry-runは`npm.cmd run deploy:production:check`を使う。各スクリプトがbuildと対象configをまとめて指定するため、手入力で本番・stagingを混ぜない。
+
+画面下部には`公開版` / `確認版` / `ローカル`と、Vite build時のGit commit先頭7文字を小さく表示する。表示値の全commitは要素のtitle属性で確認できる。配信中のbundleとGit履歴の対応確認にはこの表示を使い、Worker bindingとVersion IDは`wrangler versions view`で別に確認する。
+
 ## 保存境界
 
 中央保存するのは、利用者が毎回同意した最小限の評価メタデータだけとする。
 
-- 保存対象: `generationId`、表示順、候補歌詞、最初の印象の選択、`DrawingAnalysis`、stroke group IDの参照、モデル名・版、同意状態、保存日時
+- 保存対象: `generationId`、表示順、候補歌詞、最初の印象の選択、`DrawingAnalysis`、stroke group IDの参照、モデル名・版、同意状態、保存日時。任意の事後送信では、聞き比べ後の最終選択、3.7題材候補への固定回答、4項目の固定3段階評価
 - 保存しない: 完成画像、音声、raw strokes、氏名、年齢、生年月日、自由記述、Cloudflare Access情報、APIキー
 - ローカル起動: IndexedDBの端末内下書きだけを使い、中央へ送信しない
 - 公開版: 同意ポップアップで拒否しても、生成・再生は継続できる
@@ -96,6 +108,7 @@ npx.cmd wrangler d1 migrations apply cho-ekaki-uta-evaluations --remote
 ```powershell
 npx.cmd wrangler d1 execute cho-ekaki-uta-evaluations --local --command "SELECT COUNT(*) AS count FROM evaluation_records" --json
 npx.cmd wrangler d1 execute cho-ekaki-uta-evaluations --remote --command "SELECT generation_id, status, created_at FROM evaluation_records ORDER BY created_at DESC LIMIT 20" --json
+npx.cmd wrangler d1 execute cho-ekaki-uta-evaluations --remote --command "SELECT COUNT(*) AS count FROM evaluation_followups" --json
 ```
 
 SQLファイルを適用する一回限りの確認には`--file`を使えるが、本番スキーマ変更はmigrationを正規経路とする。
@@ -174,7 +187,7 @@ npm.cmd run evaluation:exclude -- <GENERATION_ID> --reviewer=operator --reason="
 npm.cmd run evaluation:export -- --output=approved-evaluations.jsonl
 ```
 
-Preview DBを操作する場合は各管理コマンドの末尾に`--preview`を加える。このオプションはPreview D1名、`--remote`、`wrangler.staging.jsonc`を自動選択し、本番configの`preview_database_id`へは依存しない。exportは既存ファイルを上書きせず、進捗・エラーを標準エラーへ出す。`approved-evaluations.jsonl`は人が内容を確認してからGCSへ渡す。承認条件、除外基準、保存期間、削除担当、SFT投入件数はユーザーが決定する。
+Preview DBを操作する場合は各管理コマンドの末尾に`--preview`を加える。このオプションはPreview D1名、`--remote`、`wrangler.staging.jsonc`を自動選択し、本番configの`preview_database_id`へは依存しない。exportは既存ファイルを上書きせず、進捗・エラーを標準エラーへ出す。`approved-evaluations.jsonl`は人が内容を確認してからGCSへ渡す。SFTの出力候補は歌詞だけを見た`firstImpressionSelection`を使い、再生後の`finalPreferenceSelection`、題材確認、4項目評価はmetadataへ残す。承認条件、除外基準、保存期間、削除担当、SFT投入件数はユーザーが決定する。
 
 ## 7. 公式資料
 

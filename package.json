@@ -8,9 +8,13 @@
     "build": "vite build",
     "build:deployment-preview": "vite build --mode deployment-preview",
     "build:staging": "vite build --mode staging",
+    "deploy:staging:check": "npm run build:staging && npx wrangler deploy --config wrangler.staging.jsonc --dry-run",
+    "deploy:staging": "npm run build:staging && npx wrangler deploy --config wrangler.staging.jsonc",
+    "deploy:production:check": "npm run build && npx wrangler deploy --dry-run",
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
     "test:lyrics-pipeline": "node --test scripts/lyricsPipeline.test.mjs",
+    "test:evaluation-follow-up": "node --test scripts/evaluationFollowUp.test.mjs",
     "evaluation:approve": "node scripts/evaluationAdmin.mjs approve",
     "evaluation:exclude": "node scripts/evaluationAdmin.mjs exclude",
     "evaluation:export": "node scripts/exportApprovedEvaluations.mjs"
