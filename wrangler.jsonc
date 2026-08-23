@@ -3,6 +3,7 @@
   "name": "cho-ekaki-uta",
   "main": "src/worker.ts",
   "compatibility_date": "2026-08-08",
+  "preview_urls": false,
   "vars": {
     "TURNSTILE_EXPECTED_HOSTNAME": "cho-ekaki-uta.nitsc-proclub.workers.dev",
     "LYRICS_PIPELINE_MODE": "legacy",

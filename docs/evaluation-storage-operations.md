@@ -10,6 +10,7 @@
 - Cloudflare Version Previewへ一時的に中央保存ONの版をアップロードし、同一Origin・`no-store`・payload検証・Secret認識を確認した。ただしVersion Previewは`preview_database_id`へ自動切替されず本番D1 bindingだった。送信は無効payloadだけで本番D1は0件のまま。公開aliasは中央保存OFFの安全な版へ差し替え済み。
 - 本番の`EVALUATION_CENTRAL_STORAGE_ENABLED`は引き続き`false`。本番ONの前に、Turnstileを含む実ブラウザの生成・同意・拒否・保存確認が必要。
 - 本番WorkerへD1 bindingとSecretを含むOFF版をデプロイ済み。配信Versionの実測で本番D1 UUIDと`false`を確認し、トップページHTTP 200、評価APIは503 + `Cache-Control: no-store`であることを確認済み。
+- 監査中に作成した中央保存ONの旧Version URLを無効化するため、`preview_urls=false`を設定済み。以後の保存確認は本番D1を参照しない別staging Workerで行う。
 
 ## 保存境界
 
