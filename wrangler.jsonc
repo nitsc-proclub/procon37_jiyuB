@@ -6,14 +6,21 @@
   "preview_urls": false,
   "vars": {
     "TURNSTILE_EXPECTED_HOSTNAME": "cho-ekaki-uta.nitsc-proclub.workers.dev",
-    "LYRICS_PIPELINE_MODE": "legacy",
+    "LYRICS_PIPELINE_MODE": "phase1",
     "GEMINI_VISION_MODEL": "gemini-3.7-flash",
     "LYRICS_BASE_MODEL": "gemini-3.5-flash",
     "LYRICS_CANDIDATE_COUNT": "2",
     "DRAWING_ANALYSIS_SCHEMA_VERSION": "1",
     "LYRICS_PROMPT_VERSION": "1",
-    "EVALUATION_CENTRAL_STORAGE_ENABLED": "false",
+    "EVALUATION_CENTRAL_STORAGE_ENABLED": "true",
     "EVALUATION_RECEIPT_TTL_SECONDS": "21600"
+  },
+  "secrets": {
+    "required": [
+      "GEMINI_API_KEY",
+      "TURNSTILE_SECRET",
+      "EVALUATION_RECEIPT_SECRET"
+    ]
   },
   "assets": {
     "directory": "./dist",

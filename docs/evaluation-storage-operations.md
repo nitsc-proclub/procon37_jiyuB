@@ -1,20 +1,20 @@
 # 評価データ保存の運用手順（Step 5）
 
-この文書は、Step 5の評価データ中央保存をCloudflare Worker + D1で有効化するときの運用手順である。現時点では中央送信を有効にせず、`wrangler.jsonc`の機能フラグは`false`のままにする。
+この文書は、Step 5の評価データ中央保存をCloudflare Worker + D1で運用する手順である。staging検証完了後の2026-08-24に、本番の二段生成と中央保存を有効化した。
 
 ## 現在の設定状態（2026-08-24）
 
 - 本番D1とPreview専用D1を作成し、`EVALUATIONS_DB`の`database_id` / `preview_database_id`を`wrangler.jsonc`へ設定済み。
-- `0001_evaluation_records.sql`をローカル・Preview D1・本番D1へ適用し、両remote DBが0件であることを確認済み。
+- `0001_evaluation_records.sql`をローカル・Preview D1・本番D1へ適用済み。staging検証前は両remote DBが0件だった。
 - `EVALUATION_RECEIPT_SECRET`をWorker Secretへ登録済み。値は端末・文書・Gitへ保存していない。
 - Cloudflare Version Previewへ一時的に中央保存ONの版をアップロードし、同一Origin・`no-store`・payload検証・Secret認識を確認した。ただしVersion Previewは`preview_database_id`へ自動切替されず本番D1 bindingだった。送信は無効payloadだけで本番D1は0件のまま。公開aliasは中央保存OFFの安全な版へ差し替え済み。
-- 本番の`EVALUATION_CENTRAL_STORAGE_ENABLED`は引き続き`false`。本番ONの前に、Turnstileを含む実ブラウザの生成・同意・拒否・保存確認が必要。
-- 本番WorkerへD1 bindingとSecretを含むOFF版をデプロイ済み。配信Versionの実測で本番D1 UUIDと`false`を確認し、トップページHTTP 200、評価APIは503 + `Cache-Control: no-store`であることを確認済み。
+- 本番ON前にはD1 bindingとSecretを含むOFF版をデプロイし、配信Versionの本番D1 UUID、トップページ200、評価APIの503 + `no-store`を確認した。
 - 監査中に作成した中央保存ONの旧Version URLを無効化するため、`preview_urls=false`を設定済み。以後の保存確認は本番D1を参照しない別staging Workerで行う。
-- `wrangler.staging.jsonc`で独立した`cho-ekaki-uta-staging` Workerを定義した。中央保存はstagingだけONにし、`database_id`をPreview D1へ直接向け、本番Worker・本番D1とは分離する。
+- `wrangler.staging.jsonc`で独立した`cho-ekaki-uta-staging` Workerを定義した。`database_id`をPreview D1へ直接向け、本番Worker・本番D1とは分離する。
 - staging専用Turnstile Widgetの公開Site keyは`.env.staging`からbuildへ渡す。Widget Secret、Gemini API key、評価receipt secretはstaging Worker Secretにだけ登録し、Gitへ保存しない。
-- `cho-ekaki-uta-staging.nitsc-proclub.workers.dev`へdeploy済み。トップページ200、評価APIのpayload拒否400 + `no-store`、stagingの3 Secret、本番・Preview D1がともに0件、本番評価APIが引き続き503であることを確認済み。
-- 実ブラウザの390x844表示で横はみ出しなし、Turnstile、二段生成、A/B第一印象選択、中央保存同意UIまで確認済み。Preview D1へテスト評価1件を作る最終送信と、拒否時0件の再確認は未完了。
+- 本番の公開Turnstile Site keyと実験ラウンドIDは`.env.production`でGit管理する。どちらもブラウザbundleへ入る非秘密値であり、Worker Secretをこのファイルへ書いてはいけない。version upload・deployの前には必ず`npm.cmd run build`を実行する。
+- stagingの実ブラウザでTurnstile、二段生成、A/B第一印象選択、同意保存、同意拒否、390x844と1280x800の横はみ出しなしを確認済み。Preview D1には同意したテスト評価が1件あり、拒否後も1件のままである。
+- 本番Version `ce95b03f-e723-4738-8115-afa59379682a`を100%配信し、`LYRICS_PIPELINE_MODE=phase1`、`EVALUATION_CENTRAL_STORAGE_ENABLED=true`、本番D1 UUID `c305d19d-2119-4eb4-8e82-f941e8f57414`、3 Secretを実測した。トップページ200、評価APIのpayload拒否400 + `no-store`を確認し、本番D1は有効化時点で0件である。
 
 ## 保存境界
 
@@ -106,12 +106,13 @@ SQLファイルを適用する一回限りの確認には`--file`を使えるが
 npx.cmd wrangler secret put EVALUATION_RECEIPT_SECRET
 ```
 
-ローカル検証では`.dev.vars`または`.env`を使うが、どちらもGitへコミットしない。`wrangler.jsonc`の非秘密feature flagは次のように無効状態を維持する。
+ローカル検証では`.dev.vars`または`.env`を使うが、どちらもGitへコミットしない。現在の本番設定は次の組み合わせで有効化している。
 
 ```jsonc
 {
   "vars": {
-    "EVALUATION_CENTRAL_STORAGE_ENABLED": "false"
+    "LYRICS_PIPELINE_MODE": "phase1",
+    "EVALUATION_CENTRAL_STORAGE_ENABLED": "true"
   }
 }
 ```
@@ -156,7 +157,7 @@ npx.cmd wrangler deploy --config wrangler.staging.jsonc
 - `TURNSTILE_SECRET`: staging hostname専用WidgetのSecretを登録する。
 - `EVALUATION_RECEIPT_SECRET`: staging専用に新しく生成し、本番の値を再利用しない。
 
-`wrangler.staging.jsonc`の`secrets.required`により、3つのいずれかが未設定ならdeployを失敗させる。stagingの実ブラウザ確認後も、本番の`EVALUATION_CENTRAL_STORAGE_ENABLED=false`は、利用者が明示的に本番有効化を決めるまで変更しない。
+`wrangler.staging.jsonc`の`secrets.required`により、3つのいずれかが未設定ならdeployを失敗させる。本番にも同じrequired Secret検査を設定済みである。問題が見つかった場合は、`LYRICS_PIPELINE_MODE=legacy`と`EVALUATION_CENTRAL_STORAGE_ENABLED=false`を同時に再deployするか、直前Versionへrollbackする。
 
 評価APIは同一Originだけを受け付け、レスポンスに`Cache-Control: no-store`を付ける。IPベースのレート制限は共有ネットワークへの影響があるため、既定では追加しない。Turnstileの生成トークンを評価APIで再利用しない。
 

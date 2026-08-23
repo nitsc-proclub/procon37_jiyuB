@@ -1,6 +1,6 @@
 # 適応型・絵描き歌生成 第一段階 設計メモ
 
-> 状態: Step 1〜4実装済み。Step 5は独立staging Workerの実ブラウザ生成・同意UI確認まで完了し、D1への最終保存確認待ち。本番中央保存は既定OFF。Step 6は未着手。
+> 状態: Step 1〜4実装済み。Step 5はstagingで保存・拒否を検証し、本番の二段生成と中央保存を有効化済み。Step 6は未着手。
 > 確認日: 2026-08-24
 > 対象: Gemini 3.7 Flash による描画理解と、Gemini 3.5 Flash 基礎モデルによる歌詞生成。SFT + Continuous Tuning は後続段階。
 > 将来候補: 同じ実証データを利用した Gemini 3.5 Flash の RLFT
@@ -274,16 +274,16 @@ Step 4の現行実装では、二候補が有効な`phase1`生成だけに表示
 | Step 1〜3 | 実装済み | 二段生成、3.7描画理解、3.5候補A/B、旧経路への切戻し |
 | Step 4 現行 | 実装済み | A/Bランダム表示、候補ごとの試聴、好み選択、「どちらも違う」、端末内評価下書き |
 | Step 4 改善 | 実装済み | 生成直後の歌詞第一印象ポップアップ、最初の選択を即 preference 確定、任意のもう一方確認 |
-| Step 5 | staging実生成・同意UI確認済み、本番OFF | 毎回同意UI、署名receipt、Worker評価API、D1 migration、冪等保存、承認・除外、approved-only JSONL。残りはstagingで同意送信してPreview D1へ1件保存、拒否時に追加0件の確認と本番有効化判断 |
+| Step 5 | 実装・staging検証・本番有効化済み | 毎回同意UI、署名receipt、Worker評価API、D1 migration、冪等保存、承認・除外、approved-only JSONL。本番運用では件数・エラー・同意UIを監視する |
 | Step 6 | 未着手 | 承認済みJSONLのGCS連携、SFT、固定評価、モデル版比較・切替、Continuous Tuning |
 
-Step 5のコード、D1 binding、Secret、全migration、Version PreviewでのAPI安全境界検証に加え、Preview D1を`database_id`へ明示した独立staging Workerのdeployと実ブラウザ生成まで完了した。横画面・スマホ縦画面の同意UIにも横はみ出しがない。中央保存は本番だけ既定OFFのままである。次は`docs/evaluation-storage-operations.md`に従い、stagingの同意送信でPreview D1へ1件保存し、別生成の同意拒否で件数が増えないことを確認してから本番有効化を判断する。
+Step 5のコード、D1 binding、Secret、全migration、Version PreviewでのAPI安全境界検証に加え、独立staging Workerで同意保存1件と拒否時の非送信を確認した。横画面・スマホ縦画面の同意UIにも横はみ出しがない。本番は`phase1`と中央保存を有効化し、配信Versionの本番D1 UUID、必須Secret、API境界を確認済みである。
 
-### Step 5: 収集・書き出しを追加（基盤設定済み・本番OFF）
+### Step 5: 収集・書き出しを追加（本番有効化済み）
 
 - **コード実装済み:** クライアントの`generationId`送信、毎回同意UI、payloadの厳格なwhitelist/group参照検証、Workerの署名receipt、`POST /api/evaluations`のsame-origin・`no-store`・256KiB制限、D1 migration、`generation_id` + `payload_hash`の冪等保存と409競合、承認済みレコードを上書きしない承認・除外CLI、approved-only JSONL export。
 - **Cloudflare側で完了:** 本番・Preview D1作成、binding、全migration適用、`EVALUATION_RECEIPT_SECRET`登録、Version Previewでのsame-origin・`no-store`・payload検証・Secret認識。Version Previewは本番D1 bindingになるため、無効payloadだけで確認してOFF版へ差し替えた。
-- **本番ON前の残件:** stagingの同意送信でPreview D1へ1件保存し、別生成の同意拒否で件数が増えないことを確認する。それまでは本番の`EVALUATION_CENTRAL_STORAGE_ENABLED=false`を維持する。
+- **本番運用:** 最初の本番同意レコード、保存エラー、異常な件数増加、横画面・スマホ縦画面の同意UIを確認する。問題時は二段生成と中央保存を同時にOFFへ戻す。
 - ローカル起動時は既存のIndexedDBだけを使い、中央送信はしない。公開版で同意を得た最小データだけをWorkerの評価API経由でD1へ保存する。画像、音声、raw strokes、氏名、年齢、自由記述は中央保存しない。
 - 認識訂正と詳細4項目評価は、保存API接続後に端末内下書きから追加する。評価尺度、必須／任意、除外基準、承認者はユーザーの研究・運用判断が必要である。
 - Cloudflare R2は、将来のJSONLバックアップや明示的に同意を得た添付データの保管が必要になった場合だけ追加する。R2を公開バケットにせず、評価データの主DBにはしない。
@@ -307,6 +307,8 @@ Step 5のコード、D1 binding、Secret、全migration、Version PreviewでのA
 - **2026-08-23: Cloudflare基盤を設定** — 本番・Preview D1、binding、migration、Worker Secret、生成型を設定し、Version Previewで評価APIの安全境界を確認した。本番中央保存は実ブラウザ確認までOFFを維持する。
 - **2026-08-24: 安全なOFF版を本番反映** — 本番WorkerへD1 bindingとSecretを反映し、配信Versionの本番D1 UUID、中央保存OFF、トップページ200、評価APIの503 + `no-store`を確認した。
 - **2026-08-24: Version Previewを無効化** — 監査中の中央保存ON版を含むVersion Preview URLを閉じるため`preview_urls=false`を設定し、今後の検証先を別staging Workerに限定した。
+- **2026-08-24: stagingの保存・拒否を検証** — Preview D1へ同意済みテスト評価1件を保存し、別生成で保存を拒否しても件数が1件から増えず、生成結果を利用し続けられることを確認した。
+- **2026-08-24: 本番の二段生成・中央保存を有効化** — Version `ce95b03f-e723-4738-8115-afa59379682a`を100%配信し、3.7描画理解、3.5候補生成、毎回同意、評価API、本番D1 bindingを有効化した。有効化時点の本番D1は0件である。
 - **2026-08-22: 将来の保存同意方針を決定** — Step 5の中央保存時は毎回確認ポップアップを出し、横画面・スマホ縦画面の双方で利用できるようにする。拒否しても生成・再生は可能とする。
 
 ## 8. 設定項目案
