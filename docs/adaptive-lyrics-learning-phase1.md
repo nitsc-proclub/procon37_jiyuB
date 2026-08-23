@@ -305,6 +305,7 @@ Step 5のコード、D1 binding、Secret、ローカル・Preview・本番migrat
 - **2026-08-23: Step 4改善を実装** — 生成直後の第一印象モーダル、候補選択の固定、表示先頭へ進む「どちらも違う」、通常結果の小さな代替候補ボタン、端末内下書き項目を追加した。中央保存はreceipt・機能フラグがそろった場合だけ同意UIを表示できる準備に留め、送信は行わない。
 - **2026-08-23: Step 5のコード実装を完了** — 毎回同意UI、評価payloadの厳格検証、署名receipt/fingerprint、Worker評価route、D1 migrationと冪等保存、承認・除外、approved-only exportを追加した。CloudflareのD1作成・binding・secret・migration適用・本番有効化は未実施である。
 - **2026-08-23: Cloudflare基盤を設定** — 本番・Preview D1、binding、migration、Worker Secret、生成型を設定し、Version Previewで評価APIの安全境界を確認した。本番中央保存は実ブラウザ確認までOFFを維持する。
+- **2026-08-24: 安全なOFF版を本番反映** — 本番WorkerへD1 bindingとSecretを反映し、配信Versionの本番D1 UUID、中央保存OFF、トップページ200、評価APIの503 + `no-store`を確認した。
 - **2026-08-22: 将来の保存同意方針を決定** — Step 5の中央保存時は毎回確認ポップアップを出し、横画面・スマホ縦画面の双方で利用できるようにする。拒否しても生成・再生は可能とする。
 
 ## 8. 設定項目案
