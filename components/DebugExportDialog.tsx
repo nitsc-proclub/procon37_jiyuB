@@ -51,28 +51,28 @@ const DebugExportDialog: React.FC<DebugExportDialogProps> = ({
           }
         }}
       >
-        <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-500">Debug bundle</p>
+        <p className="text-xs font-black tracking-[0.18em] text-violet-500">不具合の確認用</p>
         <h2 id="debug-export-title" className="mt-1 text-2xl font-black text-gray-800">
           共有用のZIPを作成します
         </h2>
         <p id="debug-export-description" className="mt-3 text-sm font-semibold leading-relaxed text-gray-600">
-          バグ報告の相手が同じ生成結果を調べられるように、今回のデータだけを1つのZIPにまとめます。
+          今回の結果を調べられるように、必要なデータを1つにまとめます。
         </p>
 
         <div className="mt-4 rounded-2xl border border-violet-100 bg-violet-50/70 p-4 text-sm font-semibold leading-relaxed text-gray-700">
           <p className="font-black text-violet-800">ZIPに含めるもの</p>
           <ul className="mt-2 list-inside list-disc space-y-1">
-            <li>入力画像、描画ストローク、キャンバス設定</li>
-            <li>生成した歌詞: {hasLyrics ? "あり" : "なし（Geminiの失敗情報を記録）"}</li>
-            <li>楽譜データ: {hasScore ? "あり" : "なし"}</li>
-            <li>VOICEVOXの実歌声: {hasVoice ? "あり（voice.wav）" : "なし"}</li>
-            {hasError && <li>今回表示されたエラー情報</li>}
+            <li>描いた絵、描いた順番、画面の設定</li>
+            <li>歌詞: {hasLyrics ? "あり" : "なし（失敗情報を記録）"}</li>
+            <li>楽譜: {hasScore ? "あり" : "なし"}</li>
+            <li>歌声: {hasVoice ? "あり" : "なし"}</li>
+            {hasError && <li>画面に出たエラー</li>}
           </ul>
         </div>
 
         <div className="mt-3 rounded-2xl bg-gray-50 p-4 text-xs font-bold leading-relaxed text-gray-600">
-          APIキー、Cloudflareの認証情報、メールアドレス、年齢、VOICEVOXの接続URL、無音アニメーション用WAVは含めません。
-          描画やメモに個人情報がないかを確認してから共有してください。
+          APIキーやログイン情報、メールアドレス、年齢、音声ソフトの接続先は含めません。
+          絵やメモに個人情報がないか、共有する前に確認してください。
         </div>
 
         <label className="mt-4 block text-sm font-black text-gray-700">
