@@ -17,6 +17,7 @@
 - 本番Version `ce95b03f-e723-4738-8115-afa59379682a`を100%配信し、`LYRICS_PIPELINE_MODE=phase1`、`EVALUATION_CENTRAL_STORAGE_ENABLED=true`、本番D1 UUID `c305d19d-2119-4eb4-8e82-f941e8f57414`、3 Secretを実測した。トップページ200、評価APIのpayload拒否400 + `no-store`を確認し、本番D1は有効化時点で0件である。
 - Workers Buildsに残っていた旧`build:deployment-preview` / `--assets`設定がpush後に本番を上書きしたため、検証済みVersionへ即時復旧した。その後、Dashboardの本番Build commandを`npm run build`、Deploy commandを`npx wrangler deploy`へ修正し、Cloudflare APIから保存値を再確認した。
 - 修正後のWorkers Buildsで、`wrangler deploy`が本番config内の`preview_database_id`を本番Workerへ結び付ける挙動を実測した。自動Versionは検証済みVersionへ即時rollbackし、本番configから`preview_database_id`を削除して、Preview D1を専用staging configへ完全分離した。
+- 分離修正後のWorkers Build `34a5d878-740d-48fe-bf63-8bb64a2320dc`は成功した。配信Version `db3b7d7c-4b98-42c9-b0a4-1d02bea3c6f0`で本番D1 UUID、3 Secret、二段生成・中央保存ONを再確認し、トップページ200、同一Origin制約、payload拒否400 + `no-store`、本番D1 0件を確認した。以後のVersion IDはpushごとに変わるため、固定値ではなく`wrangler versions view`で配信Versionのbindingを確認する。
 
 ## 保存境界
 
