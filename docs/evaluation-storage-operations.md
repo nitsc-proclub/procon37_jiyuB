@@ -12,9 +12,10 @@
 - 監査中に作成した中央保存ONの旧Version URLを無効化するため、`preview_urls=false`を設定済み。以後の保存確認は本番D1を参照しない別staging Workerで行う。
 - `wrangler.staging.jsonc`で独立した`cho-ekaki-uta-staging` Workerを定義した。`database_id`をPreview D1へ直接向け、本番Worker・本番D1とは分離する。
 - staging専用Turnstile Widgetの公開Site keyは`.env.staging`からbuildへ渡す。Widget Secret、Gemini API key、評価receipt secretはstaging Worker Secretにだけ登録し、Gitへ保存しない。
-- 本番の公開Turnstile Site keyと実験ラウンドIDは`.env.production`でGit管理する。どちらもブラウザbundleへ入る非秘密値であり、Worker Secretをこのファイルへ書いてはいけない。version upload・deployの前には必ず`npm.cmd run build`を実行する。
+- 本番の公開Turnstile Site keyと実験ラウンドIDは`.env.production`でGit管理する。どちらもブラウザbundleへ入る非秘密値であり、Worker Secretをこのファイルへ書いてはいけない。手動のversion upload・deploy前には`npm.cmd run build`を実行する。Workers BuildsはBuild commandを`npm run build`、Deploy commandを`npx wrangler deploy`に固定し、`build:deployment-preview`や`--assets`を使わない。
 - stagingの実ブラウザでTurnstile、二段生成、A/B第一印象選択、同意保存、同意拒否、390x844と1280x800の横はみ出しなしを確認済み。Preview D1には同意したテスト評価が1件あり、拒否後も1件のままである。
 - 本番Version `ce95b03f-e723-4738-8115-afa59379682a`を100%配信し、`LYRICS_PIPELINE_MODE=phase1`、`EVALUATION_CENTRAL_STORAGE_ENABLED=true`、本番D1 UUID `c305d19d-2119-4eb4-8e82-f941e8f57414`、3 Secretを実測した。トップページ200、評価APIのpayload拒否400 + `no-store`を確認し、本番D1は有効化時点で0件である。
+- Workers Buildsに残っていた旧`build:deployment-preview` / `--assets`設定がpush後に本番を上書きしたため、検証済みVersionへ即時復旧した。その後、Dashboardの本番Build commandを`npm run build`、Deploy commandを`npx wrangler deploy`へ修正し、Cloudflare APIから保存値を再確認した。
 
 ## 保存境界
 

@@ -9,16 +9,18 @@
 - ブラウザを開いたPCのVOICEVOX Engineへ、固定loopback URLから任意で接続する。
 - VOICEVOXが使える場合は歌声WAVを生成し、描画アニメーションと歌詞を同期再生する。
 - Engine未起動、CORS未設定、ブラウザ権限拒否、合成失敗の場合も、楽譜長の無音WAVを時計としてアニメーションを再生する。
-- demo-records、データ保存、生成計測、メロディ実験画面は公開版では無効のままにする。
+- A/B歌詞評価と、毎回の同意後に行う評価データのD1保存を公開版で有効にする。demo-records、生成計測、メロディ実験画面は公開版では無効のままにする。
 
 ## Cloudflare設定
 
 | 項目 | 値 |
 | --- | --- |
 | Production branch | `main` |
-| Build command | `npm run build:deployment-preview` |
+| Build command | `npm run build` |
 | Deploy command | `npx wrangler deploy` |
 | Root directory | リポジトリ直下 |
+
+Workers Buildsは`main`へのpushごとに、上記のBuild command、Deploy commandの順で実行する。Deploy commandへ`--assets`を付けず、`wrangler.jsonc`の`assets.directory`とWorker bindingをそのまま使う。`npm.cmd`はWindowsから手動実行するときだけ使い、Cloudflare Dashboardには`npm run build`を設定する。`npm run build:deployment-preview`は公開版の評価機能を無効化するため、本番ビルドには使わない。
 
 WorkerのSettings → Variables and Secretsで`GEMINI_API_KEY`と`TURNSTILE_SECRET`をSecretとして登録する。`VITE_`を付けたり、値をGitや`wrangler.jsonc`へ書いたりしない。
 
@@ -63,7 +65,7 @@ Turnstileは生成APIの乱用を減らすための確認であり、IPベース
 
 ```bash
 npm run type-check
-npm run build:deployment-preview
+npm run build
 npx wrangler deploy --dry-run
 ```
 
