@@ -1085,7 +1085,7 @@ const App: React.FC = () => {
     setDrawingDisplayMode("animated");
     setIsInitialPlaybackPromptVisible(false);
     setAppView("maker");
-    setSaveToast({ message: "デバッグ履歴をメーカーに読み込みました", tone: "success" });
+    setSaveToast({ message: "端末の記録を開きました", tone: "success" });
   };
 
   const checkVoicevoxConnection = async (forceRefresh = false) => {
@@ -1764,14 +1764,14 @@ const App: React.FC = () => {
           .then(saveDebugHistoryRecord)
           .then(() => {
             if (isMountedRef.current) {
-              setSaveToast({ message: "デバッグ履歴に保存しました", tone: "success" });
+              setSaveToast({ message: "この端末に記録しました", tone: "success" });
             }
           })
           .catch((historyError) => {
             if (!isMountedRef.current) return;
             const message = isDebugHistoryError(historyError, "record-limit") || isDebugHistoryError(historyError, "size-limit") || isDebugHistoryError(historyError, "quota") || isDebugHistoryError(historyError, "origin-quota")
-              ? "デバッグ履歴の容量がいっぱいです。今回の結果は残っています。ZIPを保存できます。"
-              : "デバッグ履歴を保存できませんでした。今回の結果は残っています。ZIPを保存できます。";
+              ? "この端末の記録がいっぱいです。今回の結果は残っており、ZIPにも保存できます。"
+              : "この端末に記録できませんでした。今回の結果は残っており、ZIPにも保存できます。";
             setSaveToast({ message, tone: "error" });
           });
       }
@@ -2190,9 +2190,9 @@ const App: React.FC = () => {
         });
       downloadDebugBundle(bundle);
       setIsDebugExportOpen(false);
-      setSaveToast({ message: "デバッグ用ZIPをダウンロードしました", tone: "success" });
+      setSaveToast({ message: "確認用ZIPを保存しました", tone: "success" });
     } catch (exportError) {
-      setDebugBundleError(exportError instanceof Error ? exportError.message : "デバッグ用ZIPを作成できませんでした。");
+      setDebugBundleError(exportError instanceof Error ? exportError.message : "確認用ZIPを作成できませんでした。");
     } finally {
       setIsDebugBundleDownloading(false);
     }
@@ -2204,9 +2204,13 @@ const App: React.FC = () => {
       <button
         type="button"
         onClick={openDebugExport}
-        className="absolute left-4 top-4 z-10 rounded-full border-2 border-violet-200 bg-violet-50 px-3 py-2 text-xs font-black text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100 active:scale-95 sm:px-4 sm:text-sm"
+        className="absolute left-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full border-2 border-violet-100 bg-white/85 text-violet-400 shadow-sm transition hover:border-violet-200 hover:bg-violet-50 hover:text-violet-600 active:scale-95"
+        title="確認用ZIPを保存"
+        aria-label="確認用ZIPを保存"
       >
-        デバッグ用ZIPを保存
+        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 3v11m0 0 4-4m-4 4-4-4M5 15v4h14v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </button>
     );
   };
@@ -2305,7 +2309,7 @@ const App: React.FC = () => {
           >
             <div className="mb-3 flex items-center justify-between gap-3 border-b border-orange-100 pb-3">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.24em] text-orange-400">Shortcut Guide</p>
+                <p className="text-xs font-black tracking-[0.24em] text-orange-400">キー操作</p>
                 <h2 className="text-lg font-black text-gray-800">ショートカット一覧</h2>
               </div>
               <button
@@ -2366,13 +2370,13 @@ const App: React.FC = () => {
       {isDebugHistoryConsentOpen && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-900/40 px-4 py-6 backdrop-blur-sm" role="presentation">
           <section className="w-full max-w-lg rounded-3xl border-4 border-violet-100 bg-white p-5 text-left shadow-2xl sm:p-6" role="dialog" aria-modal="true" aria-labelledby="debug-history-consent-title">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-500">Browser-only debug history</p>
-            <h2 id="debug-history-consent-title" className="mt-1 text-2xl font-black text-gray-800">このブラウザにデバッグ履歴を保存しますか？</h2>
-            <p className="mt-3 text-sm font-semibold leading-relaxed text-gray-600">生成した絵、ストローク、歌詞、楽譜、エラー情報と、作成できた場合だけ歌声をこのブラウザ内に保存します。ほかの人に送るときは、あとからZIPとして取り出せます。</p>
-            <div className="mt-4 rounded-2xl bg-violet-50 p-4 text-xs font-bold leading-relaxed text-violet-900">APIキー、Cloudflareの認証情報、メールアドレス、年齢、VOICEVOX URL、無音の再生用WAVは保存しません。保存先はこのブラウザだけで、サーバーには送信しません。</div>
+            <p className="text-xs font-black tracking-[0.18em] text-violet-500">この端末だけの記録</p>
+            <h2 id="debug-history-consent-title" className="mt-1 text-2xl font-black text-gray-800">この端末に記録を残しますか？</h2>
+            <p className="mt-3 text-sm font-semibold leading-relaxed text-gray-600">絵、描いた順番、歌詞、楽譜、エラーと、作れた場合は歌声をこのブラウザだけに保存します。あとからZIPにして共有できます。</p>
+            <div className="mt-4 rounded-2xl bg-violet-50 p-4 text-xs font-bold leading-relaxed text-violet-900">APIキー、ログイン情報、メールアドレス、年齢、音声ソフトの接続先は保存しません。サーバーにも送りません。</div>
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <button type="button" onClick={() => void startPendingDebugHistoryGeneration("enabled")} className="flex min-h-12 items-center justify-center rounded-2xl bg-violet-600 px-4 py-3 text-sm font-black text-white shadow-md transition hover:bg-violet-700 active:scale-95">保存して生成する</button>
-              <button type="button" onClick={() => void startPendingDebugHistoryGeneration("disabled")} className="flex min-h-12 items-center justify-center rounded-2xl bg-gray-200 px-4 py-3 text-sm font-black text-gray-700 shadow-sm transition hover:bg-gray-300 active:scale-95">保存せず生成する</button>
+              <button type="button" onClick={() => void startPendingDebugHistoryGeneration("enabled")} className="flex min-h-12 items-center justify-center rounded-2xl bg-violet-600 px-4 py-3 text-sm font-black text-white shadow-md transition hover:bg-violet-700 active:scale-95">保存して作る</button>
+              <button type="button" onClick={() => void startPendingDebugHistoryGeneration("disabled")} className="flex min-h-12 items-center justify-center rounded-2xl bg-gray-200 px-4 py-3 text-sm font-black text-gray-700 shadow-sm transition hover:bg-gray-300 active:scale-95">保存せず作る</button>
             </div>
           </section>
         </div>
@@ -2425,14 +2429,14 @@ const App: React.FC = () => {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-5 border-b border-orange-100 pb-4">
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">Data Record</p>
+              <p className="text-xs font-black tracking-[0.18em] text-orange-400">アプリの改善</p>
               <h2 id="record-consent-title" className="mt-1 text-2xl font-black leading-tight text-gray-800">
-                アプリ改善のため、データを記録してもよろしいですか？
+                記録に協力してもよいですか？
               </h2>
             </div>
 
             <div className="space-y-3 text-sm font-semibold leading-relaxed text-gray-600">
-              <p>記録したデータは、このアプリをより楽しく、使いやすくするために使います。</p>
+              <p>記録は、このアプリをより楽しく使いやすくするために使います。</p>
               <p>記録されるのは、描いた絵、できあがった歌、音声、描いた順番、年齢（選んだ場合のみ）です。</p>
               <p>名前や住所など、個人がわかることは入力しないでください。</p>
             </div>
@@ -2465,7 +2469,7 @@ const App: React.FC = () => {
             </div>
 
             <p className="mt-4 rounded-2xl bg-gray-50 px-4 py-3 text-sm font-bold text-gray-600">
-              「記録しない」を選んでも、日別の生成回数と処理時間・モデル名・ストローク数・曲の長さなどの匿名メトリクスは保存します。絵・歌・音声・年齢は保存しません。
+              記録しない場合も、利用回数や処理時間など、個人が分からない情報だけを保存します。絵・歌・音声・年齢は保存しません。
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
