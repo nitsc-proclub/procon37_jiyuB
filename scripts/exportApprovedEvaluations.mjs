@@ -8,10 +8,16 @@ if (!outputOption?.slice("--output=".length)) {
   console.error("Usage: node scripts/exportApprovedEvaluations.mjs --output=approved.jsonl [--preview]");
   process.exit(2);
 }
-const database = process.env.EVALUATIONS_D1_DATABASE || "cho-ekaki-uta-evaluations";
-const target = options.includes("--preview") ? "--preview" : "--remote";
+const isPreview = options.includes("--preview");
+// Keep Preview D1 out of the production Wrangler config. Preview exports
+// always use the isolated staging config and its database name directly.
+const database = isPreview ? "cho-ekaki-uta-evaluations-preview" : (process.env.EVALUATIONS_D1_DATABASE || "cho-ekaki-uta-evaluations");
+const targetArgs = isPreview ? ["--remote", "--config", "wrangler.staging.jsonc"] : ["--remote"];
 const sql = "SELECT generation_id, evaluation_json FROM evaluation_records WHERE status='approved' ORDER BY created_at ASC";
-const result = spawnSync("npx.cmd", ["wrangler", "d1", "execute", database, target, "--command", sql, "--json"], { encoding: "utf8", shell: false });
+const wranglerArgs = ["wrangler", "d1", "execute", database, ...targetArgs, "--command", sql, "--json"];
+const result = process.platform === "win32"
+  ? spawnSync("cmd.exe", ["/d", "/s", "/c", "npx.cmd", ...wranglerArgs], { encoding: "utf8", shell: false })
+  : spawnSync("npx", wranglerArgs, { encoding: "utf8", shell: false });
 if (result.status !== 0) {
   process.stderr.write(result.stderr || "D1 export failed.\n");
   process.exit(result.status ?? 1);

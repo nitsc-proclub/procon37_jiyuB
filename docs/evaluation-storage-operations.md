@@ -4,7 +4,7 @@
 
 ## 現在の設定状態（2026-08-24）
 
-- 本番D1とPreview専用D1を作成し、`EVALUATIONS_DB`の`database_id` / `preview_database_id`を`wrangler.jsonc`へ設定済み。
+- 本番D1とPreview専用D1を作成済み。本番`wrangler.jsonc`の`EVALUATIONS_DB.database_id`は本番D1だけを指し、Preview D1は`wrangler.staging.jsonc`の`database_id`にだけ設定する。
 - `0001_evaluation_records.sql`をローカル・Preview D1・本番D1へ適用済み。staging検証前は両remote DBが0件だった。
 - `EVALUATION_RECEIPT_SECRET`をWorker Secretへ登録済み。値は端末・文書・Gitへ保存していない。
 - Cloudflare Version Previewへ一時的に中央保存ONの版をアップロードし、同一Origin・`no-store`・payload検証・Secret認識を確認した。ただしVersion Previewは`preview_database_id`へ自動切替されず本番D1 bindingだった。送信は無効payloadだけで本番D1は0件のまま。公開aliasは中央保存OFFの安全な版へ差し替え済み。
@@ -16,6 +16,7 @@
 - stagingの実ブラウザでTurnstile、二段生成、A/B第一印象選択、同意保存、同意拒否、390x844と1280x800の横はみ出しなしを確認済み。Preview D1には同意したテスト評価が1件あり、拒否後も1件のままである。
 - 本番Version `ce95b03f-e723-4738-8115-afa59379682a`を100%配信し、`LYRICS_PIPELINE_MODE=phase1`、`EVALUATION_CENTRAL_STORAGE_ENABLED=true`、本番D1 UUID `c305d19d-2119-4eb4-8e82-f941e8f57414`、3 Secretを実測した。トップページ200、評価APIのpayload拒否400 + `no-store`を確認し、本番D1は有効化時点で0件である。
 - Workers Buildsに残っていた旧`build:deployment-preview` / `--assets`設定がpush後に本番を上書きしたため、検証済みVersionへ即時復旧した。その後、Dashboardの本番Build commandを`npm run build`、Deploy commandを`npx wrangler deploy`へ修正し、Cloudflare APIから保存値を再確認した。
+- 修正後のWorkers Buildsで、`wrangler deploy`が本番config内の`preview_database_id`を本番Workerへ結び付ける挙動を実測した。自動Versionは検証済みVersionへ即時rollbackし、本番configから`preview_database_id`を削除して、Preview D1を専用staging configへ完全分離した。
 
 ## 保存境界
 
@@ -46,7 +47,6 @@ npx.cmd wrangler d1 create cho-ekaki-uta-evaluations --binding EVALUATIONS_DB --
       "binding": "EVALUATIONS_DB",
       "database_name": "cho-ekaki-uta-evaluations",
       "database_id": "<D1_DATABASE_UUID>",
-      "preview_database_id": "<PREVIEW_D1_DATABASE_UUID>",
       "migrations_dir": "migrations"
     }
   ]
@@ -59,7 +59,7 @@ npx.cmd wrangler d1 create cho-ekaki-uta-evaluations --binding EVALUATIONS_DB --
 npx.cmd wrangler d1 create cho-ekaki-uta-evaluations --binding EVALUATIONS_DB --location apac --update-config
 ```
 
-`preview_database_id`は、`wrangler dev --remote`で本番DBを誤操作しないためにPreview専用DBを設定する。D1 migrationの対象にはdatabase名を使う。binding名は将来変更され得るためである。
+本番configには`preview_database_id`を置かない。Preview D1は本番Workerと混線させないため、`wrangler.staging.jsonc`の`database_id`へ直接設定する。D1 migrationの対象にはdatabase名を使う。binding名は将来変更され得るためである。本番`wrangler.jsonc`で`wrangler dev --remote`を実行してはならない。remote Preview D1を確認する場合は、必ずstaging configを明示する。
 
 公式: [D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/)、[Wrangler configuration](https://developers.cloudflare.com/workers/wrangler/configuration/)
 
@@ -75,8 +75,8 @@ npx.cmd wrangler d1 migrations apply cho-ekaki-uta-evaluations --local
 ローカルWorkerで確認する場合は、ローカルD1を使う。Preview DBを確認してから本番DBへ進める。
 
 ```powershell
-npx.cmd wrangler d1 migrations list cho-ekaki-uta-evaluations --remote --preview
-npx.cmd wrangler d1 migrations apply cho-ekaki-uta-evaluations --remote --preview
+npx.cmd wrangler d1 migrations list cho-ekaki-uta-evaluations-preview --remote --config wrangler.staging.jsonc
+npx.cmd wrangler d1 migrations apply cho-ekaki-uta-evaluations-preview --remote --config wrangler.staging.jsonc
 ```
 
 本番適用は明示的に`--remote`を付ける。
@@ -140,7 +140,7 @@ npx.cmd wrangler types --check
 7. approvedレコードが再送で上書きされないことを確認する。
 8. 同意拒否時に生成・再生が継続し、中央APIへ送信しないことを確認する。
 9. 公開版の横画面・スマホ縦画面で、毎回の同意ポップアップが表示されることを確認する。
-10. 正常保存を本番前に確認する場合は、別Worker名またはstaging環境を作り、`database_id`自体をPreview D1のUUIDへ向けた専用configを使う。`preview_database_id`だけでは`wrangler versions upload`のbindingは切り替わらない。通常の`wrangler deploy`は本番Workerを更新するためPreview確認には使わない。
+10. 正常保存を本番前に確認する場合は、別Worker名またはstaging環境を作り、`database_id`自体をPreview D1のUUIDへ向けた専用configを使う。本番configへ`preview_database_id`を置かず、通常の`wrangler deploy`でPreview確認を行わない。
 
 ### staging Workerのbuild・deploy
 
@@ -173,7 +173,7 @@ npm.cmd run evaluation:exclude -- <GENERATION_ID> --reviewer=operator --reason="
 npm.cmd run evaluation:export -- --output=approved-evaluations.jsonl
 ```
 
-Preview DBを操作する場合は各コマンドの末尾に`--preview`を加える。exportは既存ファイルを上書きせず、進捗・エラーを標準エラーへ出す。`approved-evaluations.jsonl`は人が内容を確認してからGCSへ渡す。承認条件、除外基準、保存期間、削除担当、SFT投入件数はユーザーが決定する。
+Preview DBを操作する場合は各管理コマンドの末尾に`--preview`を加える。このオプションはPreview D1名、`--remote`、`wrangler.staging.jsonc`を自動選択し、本番configの`preview_database_id`へは依存しない。exportは既存ファイルを上書きせず、進捗・エラーを標準エラーへ出す。`approved-evaluations.jsonl`は人が内容を確認してからGCSへ渡す。承認条件、除外基準、保存期間、削除担当、SFT投入件数はユーザーが決定する。
 
 ## 7. 公式資料
 
