@@ -10,8 +10,9 @@ type SchemaTypes<T extends string> = {
 const MAX_ANALYSIS_OBJECT_CANDIDATES = 5;
 const MAX_ANALYSIS_PARTS = 64;
 const MAX_ANALYSIS_TEXT_LENGTH = 160;
-const MIN_CANDIDATE_LYRIC_LINES = 4;
-const MAX_CANDIDATE_LYRIC_LINES = 5;
+const REQUIRED_LYRIC_LINES = 4;
+const MIN_CANDIDATE_LYRIC_LINES = REQUIRED_LYRIC_LINES;
+const MAX_CANDIDATE_LYRIC_LINES = REQUIRED_LYRIC_LINES;
 const MAX_CANDIDATE_DISPLAY_LINE_CHARACTERS = 18;
 const MAX_CANDIDATE_SINGING_LINE_CHARACTERS = 22;
 export const DRAWING_ANALYSIS_SCHEMA_VERSION = 1;
@@ -65,7 +66,7 @@ export const buildLegacyLyricsPrompt = (strokeGroups: StrokeGroup[]) => `
 入力された完成画像と stroke group 情報を見て、子どもにも歌いやすい短い絵描き歌を作ってください。
 
 歌詞ルール:
-1. lines は4行程度にしてください。
+1. lines は必ず4行にしてください。
 2. singingKanaLines は lines と同じ行数にしてください。
 3. lines は画面表示用なので、自然な日本語の表記にしてください。漢字を使っても構いません。
 4. singingKanaLines は VOICEVOX が歌うための読み上げ形です。lines の意味と文脈に沿って、実際に声に出す読みをひらがな中心で正確に書いてください。
@@ -101,7 +102,7 @@ ${buildStrokeGroupDescriptions(strokeGroups).join("\n")}
 export const buildLyricsCandidatesPrompt = (drawingAnalysis: DrawingAnalysis, promptVersion: string) => `
 あなたは日本語の「絵描き歌」を作る作詞家です。画像やraw strokeは渡されません。次の描画理解JSONだけを根拠に、子どもにも歌いやすい候補A/Bを1回で作ってください。
 このA/B比較の目的は「同じ描画理解に対して、どちらがより絵描き歌らしいか」を比べることです。objectCandidates[0].label が共通題材です。候補A/Bで題材を変えたり、別の動物・物として再解釈したり、題材の正しさを競わせたりしないでください。題材名はサーバーが共通で設定するため、identifiedObject は返さないでください。
-候補は candidate-a と candidate-b の2件です。各候補は必ず4〜5行にし、表示用 lines と、VOICEVOX用のひらがな中心の singingKanaLines を同じ行数にしてください。表示用の各行は空白を除いて18文字以内、歌唱用の各行は22文字以内にしてください。
+候補は candidate-a と candidate-b の2件です。各候補は必ず4行にし、表示用 lines と、VOICEVOX用のひらがな中心の singingKanaLines を同じ4行にしてください。表示用の各行は空白を除いて18文字以内、歌唱用の各行は22文字以内にしてください。
 singingKanaLines では漢字、英字、数字、句読点、絵文字、ASCII記号を避け、発音どおりの読みを使ってください。例: 「ねこは」→「ねこわ」、「まるを」→「まるお」。
 各行は、描く動作・形・位置をそのまま歌える短い言葉にしてください。「〜なので」「〜を表します」「〜してください」のような説明文、理由づけ、長い完成説明は避けてください。候補の違いは、リズム、言葉選び、描く順の見せ方にしてください。
 各候補で title、lineStrokeMappings を返してください。lineStrokeMappings は歌詞1行につき1件、drawingAnalysisに存在するgroup idだけを使い、描画順を尊重して同じgroup idを複数行に使わないでください。最後の完成宣言は空配列でも構いません。
@@ -112,8 +113,8 @@ ${JSON.stringify(drawingAnalysis)}
 
 const lyricFieldsSchema = <T extends string>(types: SchemaTypes<T>) => ({
   title: { type: types.STRING },
-  lines: { type: types.ARRAY, items: { type: types.STRING } },
-  singingKanaLines: { type: types.ARRAY, items: { type: types.STRING } },
+  lines: { type: types.ARRAY, items: { type: types.STRING }, minItems: REQUIRED_LYRIC_LINES, maxItems: REQUIRED_LYRIC_LINES },
+  singingKanaLines: { type: types.ARRAY, items: { type: types.STRING }, minItems: REQUIRED_LYRIC_LINES, maxItems: REQUIRED_LYRIC_LINES },
   identifiedObject: { type: types.STRING },
   lineStrokeMappings: {
     type: types.ARRAY,
@@ -202,7 +203,7 @@ export const createLyricsCandidatesResponseSchema = <T extends string>(types: Sc
 export const normalizeLyricsResponse = (value: unknown, strokeGroups: StrokeGroup[]): LyricsResponse => {
   if (!isRecord(value)) throw new Error("Gemini の応答形式が正しくありません。");
   const result = value as unknown as LyricsResponse;
-  if (!Array.isArray(result.lines) || result.lines.length === 0 || !Array.isArray(result.singingKanaLines) || result.singingKanaLines.length !== result.lines.length) {
+  if (!Array.isArray(result.lines) || result.lines.length !== REQUIRED_LYRIC_LINES || !Array.isArray(result.singingKanaLines) || result.singingKanaLines.length !== result.lines.length) {
     throw new Error("Gemini の歌詞形式が正しくありません。");
   }
   if (typeof result.title !== "string" || typeof result.identifiedObject !== "string") throw new Error("Gemini の歌詞形式が正しくありません。");

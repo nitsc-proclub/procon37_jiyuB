@@ -108,7 +108,7 @@ test("candidate validation rejects non-string lyric fields and malformed mapping
   );
 });
 
-test("candidate lyrics keep the shared subject and reject too many or too-long lines", () => {
+test("candidate lyrics keep the shared subject and require exactly four short lines", () => {
   const withConflictingSubject = { ...validLyrics("candidate-a", "g1"), identifiedObject: "モンスター" };
   const candidates = pipeline.normalizeLyricsCandidates({ candidates: [withConflictingSubject] }, strokeGroups, drawingAnalysis);
   assert.equal(candidates[0].identifiedObject, "りんご");
@@ -118,6 +118,10 @@ test("candidate lyrics keep the shared subject and reject too many or too-long l
   );
   assert.throws(
     () => pipeline.normalizeLyricsCandidates({ candidates: [{ ...validLyrics("candidate-a", "g1"), lines: ["まるをかこう", "うえにせん", "できあがり"], singingKanaLines: ["まるおかこお", "うえにせん", "できあがり"], lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: ["g1"] }, { lineIndex: 1, strokeGroupIds: [] }, { lineIndex: 2, strokeGroupIds: [] }] }] }, strokeGroups, drawingAnalysis),
+    /有効な歌詞候補/,
+  );
+  assert.throws(
+    () => pipeline.normalizeLyricsCandidates({ candidates: [{ ...validLyrics("candidate-a", "g1"), lines: ["まるをかこう", "うえにせん", "よこにせん", "したにもせん", "できあがり"], singingKanaLines: ["まるおかこお", "うえにせん", "よこにせん", "したにもせん", "できあがり"], lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: ["g1"] }, { lineIndex: 1, strokeGroupIds: [] }, { lineIndex: 2, strokeGroupIds: [] }, { lineIndex: 3, strokeGroupIds: [] }, { lineIndex: 4, strokeGroupIds: [] }] }] }, strokeGroups, drawingAnalysis),
     /有効な歌詞候補/,
   );
 });
@@ -157,7 +161,7 @@ test("candidate response schema makes the subject server-owned and bounds line c
   const candidate = schema.properties.candidates.items;
   assert.equal("identifiedObject" in candidate.properties, false);
   assert.equal(candidate.properties.lines.minItems, 4);
-  assert.equal(candidate.properties.lines.maxItems, 5);
+  assert.equal(candidate.properties.lines.maxItems, 4);
 });
 
 test("candidate display length ignores whitespace but still limits visible characters", () => {

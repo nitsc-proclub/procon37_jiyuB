@@ -60,7 +60,7 @@ const MODEL_LIST_CACHE_MS = 10 * 60 * 1000;
 const DEFAULT_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_VISION_MODEL = "gemini-3.7-flash";
 const DEFAULT_LYRICS_BASE_MODEL = "gemini-3.5-flash";
-const DEFAULT_LYRICS_PROMPT_VERSION = "2";
+const DEFAULT_LYRICS_PROMPT_VERSION = "3";
 const GENERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let modelListCache: { expiresAt: number; names: string[] } | null = null;
 
