@@ -6,6 +6,7 @@ import GenerationJourney from "./components/GenerationJourney";
 import Turnstile, { TurnstileHandle, TurnstileStatus } from "./components/Turnstile";
 import DebugExportDialog from "./components/DebugExportDialog";
 import EvaluationConsentModal from "./components/EvaluationConsentModal";
+import EvaluationFollowUpModal, { EvaluationFollowUpAnswers } from "./components/EvaluationFollowUpModal";
 import DebugHistoryView from "./components/DebugHistoryView";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
@@ -16,6 +17,7 @@ import { buildDebugBundleArtifacts, createDebugBundle, createDebugBundleFromArti
 import { DebugHistoryRecord, isDebugHistoryError, saveDebugHistoryRecord } from "./services/debugHistoryDb";
 import { createEvaluationDraft, createGenerationId, getEvaluationDraft, getInitialPreviewCandidate, isComparableCandidateSet, saveEvaluationDraft, shuffleCandidateIds, updateEvaluationDraftState } from "./services/evaluationDraftDb";
 import { buildEvaluationSubmission, submitEvaluation } from "./services/evaluationSubmissionService";
+import { buildEvaluationFollowUpSubmission, submitEvaluationFollowUp } from "./services/evaluationFollowUpService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { createSilentPlaybackAudio } from "./services/silentPlaybackService";
 import { groupStrokes } from "./services/strokeGroupingService";
@@ -27,7 +29,7 @@ import {
   setDirectVoicevoxBaseUrl,
 } from "./services/voicevoxHttp";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
-import { DemoRecordSummary, DrawingAnalysis, DrawingData, EvaluationCentralConsent, EvaluationDraft, EvaluationSelection, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsCandidate, LyricsResponse, Phase1ModelInfo, SingingScore, UsageStats } from "./types";
+import { DemoRecordSummary, DrawingAnalysis, DrawingData, DrawingSubjectFeedbackChoice, EvaluationCentralConsent, EvaluationDraft, EvaluationSelection, EvaluationStructuredRatings, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsCandidate, LyricsResponse, Phase1ModelInfo, SingingScore, UsageStats } from "./types";
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
 
@@ -395,6 +397,15 @@ const App: React.FC = () => {
   const [evaluationReceipt, setEvaluationReceipt] = useState<string | null>(null);
   const [evaluationReceiptExpiresAt, setEvaluationReceiptExpiresAt] = useState<string | null>(null);
   const [isEvaluationSubmissionPending, setIsEvaluationSubmissionPending] = useState(false);
+  const [finalPreferenceSelection, setFinalPreferenceSelection] = useState<EvaluationSelection>(null);
+  const [subjectFeedbackChoice, setSubjectFeedbackChoice] = useState<DrawingSubjectFeedbackChoice | null>(null);
+  const [evaluationRatings, setEvaluationRatings] = useState<EvaluationStructuredRatings>({});
+  const [isEvaluationFollowUpOpen, setIsEvaluationFollowUpOpen] = useState(false);
+  const [followUpPreferencePrefill, setFollowUpPreferencePrefill] = useState<LyricsCandidate["candidateId"] | null>(null);
+  const [isEvaluationFollowUpPending, setIsEvaluationFollowUpPending] = useState(false);
+  const [isEvaluationCentrallySaved, setIsEvaluationCentrallySaved] = useState(false);
+  const [hasAlternativePreviewed, setHasAlternativePreviewed] = useState(false);
+  const [hasPlaybackStartedForGeneration, setHasPlaybackStartedForGeneration] = useState(false);
   const [isCandidatePreviewLoading, setIsCandidatePreviewLoading] = useState<LyricsCandidate["candidateId"] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [generationFailureDisplay, setGenerationFailureDisplay] = useState<GenerationFailureDisplay | null>(null);
@@ -833,6 +844,15 @@ const App: React.FC = () => {
     setEvaluationReceipt(null);
     setEvaluationReceiptExpiresAt(null);
     setIsEvaluationSubmissionPending(false);
+    setFinalPreferenceSelection(null);
+    setSubjectFeedbackChoice(null);
+    setEvaluationRatings({});
+    setIsEvaluationFollowUpOpen(false);
+    setFollowUpPreferencePrefill(null);
+    setIsEvaluationFollowUpPending(false);
+    setIsEvaluationCentrallySaved(false);
+    setHasAlternativePreviewed(false);
+    setHasPlaybackStartedForGeneration(false);
     setIsCandidatePreviewLoading(null);
   };
 
@@ -1166,8 +1186,10 @@ const App: React.FC = () => {
     if (!targetCandidateId) return;
 
     setEvaluationSelection(selection);
+    setFinalPreferenceSelection(selection);
     updateEvaluationDraftStateBestEffort({
       firstImpressionSelection: selection,
+      finalPreferenceSelection: selection,
       activeCandidateId: targetCandidateId,
       alternativePreviewed: false,
       centralConsent: "not-asked",
@@ -1191,6 +1213,7 @@ const App: React.FC = () => {
     if (isEvaluationSubmissionPending) return;
     setCentralConsent(nextConsent);
     if (!evaluationGenerationId) {
+      setIsEvaluationCentrallySaved(false);
       setIsEvaluationConsentOpen(false);
       setIsInitialPlaybackPromptVisible(true);
       return;
@@ -1200,6 +1223,7 @@ const App: React.FC = () => {
     const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
     evaluationDraftWriteQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
     if (nextConsent === "declined") {
+      setIsEvaluationCentrallySaved(false);
       void queuedWrite.catch(() => setSaveToast({ message: "このブラウザへの同意結果の保存に失敗しました", tone: "error" }));
       setIsEvaluationConsentOpen(false);
       setIsInitialPlaybackPromptVisible(true);
@@ -1212,9 +1236,11 @@ const App: React.FC = () => {
       if (!draft || !evaluationReceipt) throw new Error("評価下書きまたは保存用情報が見つかりません。");
       const payload = buildEvaluationSubmission(draft, evaluationReceipt, appBuildId, updatedAt, EVALUATION_EXPERIMENT_ROUND_ID);
       const result = await submitEvaluation(payload);
-      setSaveToast({ message: result.duplicate ? "評価はすでに保存されています" : "評価を保存しました。ご協力ありがとう！", tone: "success" });
+      setIsEvaluationCentrallySaved(true);
+      setSaveToast({ message: result.duplicate ? "この結果は保存済みです" : "保存しました。ご協力ありがとう！", tone: "success" });
     } catch (submissionError) {
-      setSaveToast({ message: submissionError instanceof Error ? submissionError.message : "評価を中央に保存できませんでした", tone: "error" });
+      setIsEvaluationCentrallySaved(false);
+      setSaveToast({ message: submissionError instanceof Error ? submissionError.message : "改善研究のために保存できませんでした", tone: "error" });
     } finally {
       if (isMountedRef.current) {
         setIsEvaluationSubmissionPending(false);
@@ -1222,6 +1248,74 @@ const App: React.FC = () => {
         setIsInitialPlaybackPromptVisible(true);
       }
     }
+  };
+
+  const persistEvaluationFollowUpAnswers = async (
+    answers: EvaluationFollowUpAnswers,
+    followUpConsent: EvaluationCentralConsent,
+  ): Promise<EvaluationDraft> => {
+    if (!evaluationGenerationId) throw new Error("この回答の保存先が見つかりません。");
+    const updatedAt = new Date().toISOString();
+    setFinalPreferenceSelection(answers.finalPreferenceSelection);
+    setSubjectFeedbackChoice(answers.subjectFeedbackChoice);
+    setEvaluationRatings({ ...answers.ratings });
+    const write = () => updateEvaluationDraftState(evaluationGenerationId, {
+      finalPreferenceSelection: answers.finalPreferenceSelection,
+      subjectFeedbackChoice: answers.subjectFeedbackChoice,
+      ratings: answers.ratings,
+      followUpCentralConsent: followUpConsent,
+    }, updatedAt);
+    const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
+    evaluationDraftWriteQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
+    const wasUpdated = await queuedWrite;
+    if (!wasUpdated) throw new Error("この回答を端末に保存できませんでした。");
+    const draft = await getEvaluationDraft(evaluationGenerationId);
+    if (!draft) throw new Error("この回答を端末に保存できませんでした。");
+    return draft;
+  };
+
+  const handleSaveEvaluationFollowUpLocally = async (answers: EvaluationFollowUpAnswers) => {
+    if (isEvaluationFollowUpPending) return;
+    setIsEvaluationFollowUpPending(true);
+    try {
+      await persistEvaluationFollowUpAnswers(answers, "declined");
+      setSaveToast({ message: "回答をこの端末に保存しました", tone: "success" });
+      setIsEvaluationFollowUpOpen(false);
+      setFollowUpPreferencePrefill(null);
+    } catch (followUpError) {
+      setSaveToast({ message: followUpError instanceof Error ? followUpError.message : "回答を保存できませんでした", tone: "error" });
+    } finally {
+      if (isMountedRef.current) setIsEvaluationFollowUpPending(false);
+    }
+  };
+
+  const handleSendEvaluationFollowUp = async (answers: EvaluationFollowUpAnswers) => {
+    if (isEvaluationFollowUpPending || !evaluationReceipt || !isEvaluationCentrallySaved) return;
+    setIsEvaluationFollowUpPending(true);
+    let savedLocally = false;
+    try {
+      const draft = await persistEvaluationFollowUpAnswers(answers, "not-asked");
+      savedLocally = true;
+      const payload = buildEvaluationFollowUpSubmission(draft, evaluationReceipt);
+      const result = await submitEvaluationFollowUp(payload);
+      updateEvaluationDraftStateBestEffort({ followUpCentralConsent: "accepted" });
+      setSaveToast({ message: result.duplicate ? "この回答はすでに届いています" : "回答を送りました。ありがとう！", tone: "success" });
+      setIsEvaluationFollowUpOpen(false);
+      setFollowUpPreferencePrefill(null);
+    } catch (followUpError) {
+      setSaveToast({
+        message: `${savedLocally ? "回答は端末に保存しました。" : ""}${followUpError instanceof Error ? followUpError.message : "回答を送れませんでした"}`,
+        tone: "error",
+      });
+    } finally {
+      if (isMountedRef.current) setIsEvaluationFollowUpPending(false);
+    }
+  };
+
+  const handleChooseCurrentAsFinalPreference = () => {
+    if (!previewCandidateId || evaluationSelection === null) return;
+    setFollowUpPreferencePrefill(previewCandidateId);
+    setIsEvaluationFollowUpOpen(true);
   };
 
   const activateLyricsCandidate = async (candidateId: LyricsCandidate["candidateId"], showPlaybackPrompt = true) => {
@@ -1270,9 +1364,11 @@ const App: React.FC = () => {
       setPlaybackKind(playback.playbackKind);
       setVoicevoxWarning(playback.voicevoxWarning);
       setPreviewCandidateId(candidateId);
+      const alternativeWasPreviewed = evaluationSelection !== null;
+      if (alternativeWasPreviewed) setHasAlternativePreviewed(true);
       updateEvaluationDraftStateBestEffort({
         activeCandidateId: candidateId,
-        alternativePreviewed: evaluationSelection !== null && evaluationSelection !== candidateId,
+        ...(alternativeWasPreviewed ? { alternativePreviewed: true } : {}),
       });
       setIsInitialPlaybackPromptVisible(showPlaybackPrompt);
     } catch (candidateError) {
@@ -1859,8 +1955,6 @@ const App: React.FC = () => {
     if (!isComparableCandidateSet(generatedLyricsCandidates) || candidateDisplayOrder.length !== 2 || evaluationSelection === null) return null;
     const alternativeCandidateId = generatedLyricsCandidates.find((candidate) => candidate.candidateId !== previewCandidateId)?.candidateId;
     if (!alternativeCandidateId) return null;
-    const alternativeCandidate = generatedLyricsCandidates.find((candidate) => candidate.candidateId === alternativeCandidateId);
-
     return (
       <div className="mt-4 flex justify-end">
         <button
@@ -1873,7 +1967,47 @@ const App: React.FC = () => {
           aria-busy={isCandidatePreviewLoading === alternativeCandidateId}
           className="min-h-10 rounded-full border border-violet-200 bg-violet-50 px-4 py-2 text-xs font-black text-violet-800 shadow-sm transition hover:bg-violet-100 disabled:cursor-wait disabled:opacity-60"
         >
-          {isCandidatePreviewLoading === alternativeCandidateId ? "準備中..." : `もう一つも見る／聞く${alternativeCandidate ? `（${alternativeCandidate.title}）` : ""}`}
+          {isCandidatePreviewLoading === alternativeCandidateId ? "準備中..." : "もう一つも聞く"}
+        </button>
+      </div>
+    );
+  };
+
+  const renderEvaluationFollowUpControls = () => {
+    if (
+      !hasPlaybackStartedForGeneration ||
+      !isComparableCandidateSet(generatedLyricsCandidates) ||
+      evaluationSelection === null ||
+      !previewCandidateId
+    ) return null;
+    const currentCandidate = generatedLyricsCandidates.find((candidate) => candidate.candidateId === previewCandidateId);
+    const currentIsFinalPreference = finalPreferenceSelection === previewCandidateId;
+
+    return (
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+        {hasAlternativePreviewed && currentCandidate && (
+          currentIsFinalPreference ? (
+            <span className="rounded-full bg-orange-50 px-3 py-2 text-xs font-black text-orange-700">いまの一番</span>
+          ) : (
+            <button
+              type="button"
+              onClick={handleChooseCurrentAsFinalPreference}
+              disabled={isEvaluationFollowUpPending}
+              className="min-h-9 rounded-full border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-black text-orange-800 transition hover:bg-orange-100 disabled:opacity-60"
+            >
+              この歌をいまの一番にする
+            </button>
+          )
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setFollowUpPreferencePrefill(null);
+            setIsEvaluationFollowUpOpen(true);
+          }}
+          className="min-h-9 rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-black text-sky-800 transition hover:bg-sky-100"
+        >
+          絵の見え方・歌の感想（任意）
         </button>
       </div>
     );
@@ -1927,7 +2061,7 @@ const App: React.FC = () => {
           >
             どちらも違う
           </button>
-          <p className="mt-3 text-center text-xs font-bold text-violet-700">選んだ第一印象は評価として確定し、このブラウザ内の下書きに保存されます。</p>
+          <p className="mt-3 text-center text-xs font-bold text-violet-700">最初に選んだ方を記録します。あとから聞き比べて、いまの一番を変えられます。</p>
         </section>
       </div>
     );
@@ -1939,6 +2073,17 @@ const App: React.FC = () => {
   const playbackDrawing = selectedDemoDrawing ?? selectedDebugHistoryDrawing ?? generatedDrawing;
   const playbackLyricLineCount = getSingingLineCount(lyrics);
   const playbackAnimationEndProgress = getDrawingAnimationEndProgress(lyrics, playbackScore);
+  const followUpFinalPreferenceSelection = finalPreferenceSelection ?? evaluationSelection;
+  const canSendEvaluationFollowUp = isEvaluationCentrallySaved
+    && !!evaluationReceipt
+    && !!evaluationReceiptExpiresAt
+    && Date.parse(evaluationReceiptExpiresAt) > Date.now();
+  const releaseLabel = window.location.hostname.includes("-staging.")
+    ? "確認版"
+    : ["localhost", "127.0.0.1"].includes(window.location.hostname)
+      ? "ローカル"
+      : "公開版";
+  const shortBuildId = appBuildId === "unknown" ? "unknown" : appBuildId.slice(0, 7);
   const visibleDemoRecords = showFavoriteOnly ? demoRecords.filter((record) => record.isFavorite) : demoRecords;
   const experimentScoreJson = serializeSingingScore(experimentScore);
   const canShowPrintLayout = !!lyrics && !!playbackDrawing && !isGenerating;
@@ -2242,6 +2387,27 @@ const App: React.FC = () => {
         onAccept={() => void handleEvaluationCentralConsent("accepted")}
         onDecline={() => void handleEvaluationCentralConsent("declined")}
       />
+
+      {isComparableCandidateSet(generatedLyricsCandidates) && followUpFinalPreferenceSelection !== null && (
+        <EvaluationFollowUpModal
+          open={isEvaluationFollowUpOpen}
+          candidates={generatedLyricsCandidates}
+          objectCandidates={generatedDrawingAnalysis?.objectCandidates ?? []}
+          initialAnswers={{
+            finalPreferenceSelection: followUpPreferencePrefill ?? followUpFinalPreferenceSelection,
+            subjectFeedbackChoice,
+            ratings: evaluationRatings,
+          }}
+          canSend={canSendEvaluationFollowUp}
+          pending={isEvaluationFollowUpPending}
+          onClose={() => {
+            setIsEvaluationFollowUpOpen(false);
+            setFollowUpPreferencePrefill(null);
+          }}
+          onSaveLocal={(answers) => void handleSaveEvaluationFollowUpLocally(answers)}
+          onSend={(answers) => void handleSendEvaluationFollowUp(answers)}
+        />
+      )}
 
       {isRecordConsentOpen && (
         <div
@@ -3185,6 +3351,7 @@ const App: React.FC = () => {
                         onPlay={() => {
                           setIsInitialPlaybackPromptVisible(false);
                           setIsAudioPlaying(true);
+                          setHasPlaybackStartedForGeneration(true);
                         }}
                         onPause={() => setIsAudioPlaying(false)}
                         onEnded={() => setIsAudioPlaying(false)}
@@ -3204,6 +3371,7 @@ const App: React.FC = () => {
                     )}
 
                     {renderAlternativeCandidateButton()}
+                    {renderEvaluationFollowUpControls()}
                     {renderModelInfo()}
                   </>
                 ) : null}
@@ -3234,6 +3402,7 @@ const App: React.FC = () => {
 
       <footer className="mt-auto text-gray-400 text-sm font-medium pb-8 text-center">
         <p>&copy; 2026 超えかき歌！</p>
+        <p className="mt-1 text-[10px] font-bold text-gray-300" title={`build ${appBuildId}`}>{releaseLabel} build {shortBuildId}</p>
       </footer>
 
       {saveToast && (

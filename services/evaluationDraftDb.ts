@@ -1,4 +1,4 @@
-import type { DrawingAnalysis, EvaluationCentralConsent, EvaluationDraft, EvaluationSelection, LyricsCandidate, Phase1ModelInfo } from "../types";
+import type { DrawingAnalysis, DrawingSubjectFeedbackChoice, EvaluationCentralConsent, EvaluationDraft, EvaluationSelection, EvaluationStructuredRatings, LyricsCandidate, Phase1ModelInfo } from "../types";
 
 export const EVALUATION_DRAFT_SCHEMA_VERSION = 1 as const;
 
@@ -150,9 +150,13 @@ export const createEvaluationDraft = ({
   displayOrder: [...displayOrder],
   selection: null,
   firstImpressionSelection: null,
+  finalPreferenceSelection: null,
   activeCandidateId,
   alternativePreviewed: false,
   centralConsent: "not-asked",
+  subjectFeedbackChoice: null,
+  ratings: {},
+  followUpCentralConsent: "not-asked",
   drawingAnalysis: copyDrawingAnalysis(drawingAnalysis),
   modelInfo: {
     drawingAnalysis: modelInfo.drawingAnalysis,
@@ -172,6 +176,7 @@ export const withEvaluationDraftSelection = (
     ...draft,
     selection: firstImpressionSelection,
     firstImpressionSelection,
+    finalPreferenceSelection: draft.finalPreferenceSelection ?? firstImpressionSelection,
     updatedAt,
   };
 };
@@ -219,9 +224,13 @@ export const updateEvaluationDraftSelection = async (
 
 export type EvaluationDraftStatePatch = {
   firstImpressionSelection?: EvaluationSelection;
+  finalPreferenceSelection?: EvaluationSelection;
   activeCandidateId?: LyricsCandidate["candidateId"] | null;
   alternativePreviewed?: boolean;
   centralConsent?: EvaluationCentralConsent;
+  subjectFeedbackChoice?: DrawingSubjectFeedbackChoice | null;
+  ratings?: EvaluationStructuredRatings;
+  followUpCentralConsent?: EvaluationCentralConsent;
 };
 
 /** Updates only the whitelisted local evaluation state; no drawing or media can enter the draft. */
@@ -237,6 +246,9 @@ export const updateEvaluationDraftState = async (
     const existing = await requestResult(store.get(generationId) as IDBRequest<EvaluationDraft | undefined>);
     if (existing) {
       const nextFirstImpressionSelection = patch.firstImpressionSelection ?? existing.firstImpressionSelection ?? existing.selection;
+      const nextFinalPreferenceSelection = patch.finalPreferenceSelection !== undefined
+        ? patch.finalPreferenceSelection
+        : existing.finalPreferenceSelection ?? nextFirstImpressionSelection;
       store.put({
         ...existing,
         ...patch,
@@ -244,6 +256,7 @@ export const updateEvaluationDraftState = async (
         // intentionally never changed by later alternative previews.
         selection: nextFirstImpressionSelection,
         firstImpressionSelection: nextFirstImpressionSelection,
+        finalPreferenceSelection: nextFinalPreferenceSelection,
         updatedAt,
       });
     }

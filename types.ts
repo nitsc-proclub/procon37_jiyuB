@@ -118,6 +118,13 @@ export type EvaluationSelection = LyricsCandidate["candidateId"] | "neither" | n
 
 export type EvaluationCentralConsent = "not-asked" | "accepted" | "declined";
 
+/** A bounded answer about the subject suggested by DrawingAnalysis. */
+export type DrawingSubjectFeedbackChoice = "primary" | "alternate-1" | "alternate-2" | "other";
+
+export type EvaluationRatingDimension = "drawingSongQuality" | "drawingOrderClarity" | "childFriendliness" | "singability";
+export type EvaluationRatingValue = "good" | "okay" | "needs-work";
+export type EvaluationStructuredRatings = Partial<Record<EvaluationRatingDimension, EvaluationRatingValue>>;
+
 export interface EvaluationSubmissionPayload {
   schemaVersion: 1;
   generationId: string;
@@ -146,6 +153,23 @@ export interface EvaluationSubmissionResponse {
   generationId: string;
 }
 
+/** Optional answers collected after playback. The first impression stays in the base evaluation. */
+export interface EvaluationFollowUpSubmissionPayload {
+  schemaVersion: 1;
+  generationId: string;
+  evaluationReceipt: string;
+  updatedAt: string;
+  finalPreferenceSelection: Exclude<EvaluationSelection, null> | null;
+  subjectFeedbackChoice: DrawingSubjectFeedbackChoice | null;
+  ratings: EvaluationStructuredRatings;
+}
+
+export interface EvaluationFollowUpSubmissionResponse {
+  saved: true;
+  duplicate: boolean;
+  generationId: string;
+}
+
 export interface EvaluationDraft {
   schemaVersion: 1;
   generationId: string;
@@ -157,12 +181,20 @@ export interface EvaluationDraft {
   selection: EvaluationSelection;
   /** The first-impression preference is immutable after the modal is confirmed. */
   firstImpressionSelection: EvaluationSelection;
+  /** A later preference may change without overwriting the first impression. */
+  finalPreferenceSelection?: EvaluationSelection;
   /** The candidate currently shown or prepared for playback. */
   activeCandidateId: LyricsCandidate["candidateId"] | null;
   /** Whether the participant has intentionally opened the other candidate. */
   alternativePreviewed: boolean;
   /** Central-storage consent is tracked locally until the D1 API is connected. */
   centralConsent: EvaluationCentralConsent;
+  /** Optional, bounded subject feedback. No free text is collected. */
+  subjectFeedbackChoice?: DrawingSubjectFeedbackChoice | null;
+  /** Four optional, fixed-choice lyric-quality ratings. */
+  ratings?: EvaluationStructuredRatings;
+  /** Separate consent for a later central follow-up submission. */
+  followUpCentralConsent?: EvaluationCentralConsent;
   drawingAnalysis: DrawingAnalysis;
   modelInfo: Phase1ModelInfo;
   drawingAnalysisSchemaVersion: DrawingAnalysis["schemaVersion"];

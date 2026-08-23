@@ -22,6 +22,12 @@ import {
   validateEvaluationSubmission,
   verifyEvaluationReceipt,
 } from "../services/evaluationSubmissionService";
+import {
+  EVALUATION_FOLLOW_UP_MAX_BYTES,
+  loadStoredEvaluationForFollowUp,
+  parseEvaluationFollowUpSubmission,
+  saveEvaluationFollowUp,
+} from "../services/evaluationFollowUpService";
 
 type Env = {
   ASSETS: { fetch(request: Request): Promise<Response> };
@@ -449,11 +455,37 @@ const handleEvaluation = async (request: Request, env: Env) => {
   }
 };
 
+const handleEvaluationFollowUp = async (request: Request, env: Env) => {
+  if (request.method !== "POST") return evaluationJson({ error: "Method not allowed" }, 405);
+  if (request.headers.get("Origin") !== new URL(request.url).origin) return evaluationJson({ error: "同じサイトからのみ保存できます。", code: "invalid-origin" }, 403);
+  if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) return evaluationJson({ error: "Content-Type must be application/json" }, 415);
+  if (env.EVALUATION_CENTRAL_STORAGE_ENABLED?.trim().toLowerCase() !== "true" || !env.EVALUATIONS_DB || !env.EVALUATION_RECEIPT_SECRET || env.EVALUATION_RECEIPT_SECRET.length < 32) {
+    return evaluationJson({ error: "追加の回答はまだ送れません。", code: "evaluation-unavailable" }, 503);
+  }
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > EVALUATION_FOLLOW_UP_MAX_BYTES) return evaluationJson({ error: "追加の回答が大きすぎます。", code: "evaluation-follow-up-too-large" }, 413);
+  try {
+    const body = await request.arrayBuffer();
+    if (body.byteLength > EVALUATION_FOLLOW_UP_MAX_BYTES) return evaluationJson({ error: "追加の回答が大きすぎます。", code: "evaluation-follow-up-too-large" }, 413);
+    const followUp = parseEvaluationFollowUpSubmission(new TextDecoder().decode(body));
+    const base = await loadStoredEvaluationForFollowUp(env.EVALUATIONS_DB, followUp.generationId, followUp.evaluationReceipt);
+    if (!await verifyEvaluationReceipt(followUp.evaluationReceipt, followUp.generationId, base, env.EVALUATION_RECEIPT_SECRET)) {
+      return evaluationJson({ error: "送信用の情報の期限が切れています。回答はこの端末に残ります。", code: "invalid-evaluation-receipt" }, 403);
+    }
+    const saved = await saveEvaluationFollowUp(env.EVALUATIONS_DB, base, followUp);
+    return evaluationJson({ saved: true, duplicate: saved.duplicate, generationId: followUp.generationId });
+  } catch (error) {
+    if (error instanceof EvaluationSubmissionError) return evaluationJson({ error: error.message, code: error.code }, error.status);
+    return evaluationJson({ error: "追加の回答を保存できませんでした。", code: "evaluation-follow-up-save-failed" }, 500);
+  }
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname === "/api/gemini/generate-ekaki-uta") return handleGemini(request, env);
     if (pathname === "/api/evaluations") return handleEvaluation(request, env);
+    if (pathname === "/api/evaluations/follow-up") return handleEvaluationFollowUp(request, env);
     return env.ASSETS.fetch(request);
   },
 };

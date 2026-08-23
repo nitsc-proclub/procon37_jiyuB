@@ -13,7 +13,7 @@ const isPreview = options.includes("--preview");
 // always use the isolated staging config and its database name directly.
 const database = isPreview ? "cho-ekaki-uta-evaluations-preview" : (process.env.EVALUATIONS_D1_DATABASE || "cho-ekaki-uta-evaluations");
 const targetArgs = isPreview ? ["--remote", "--config", "wrangler.staging.jsonc"] : ["--remote"];
-const sql = "SELECT generation_id, evaluation_json FROM evaluation_records WHERE status='approved' ORDER BY created_at ASC";
+const sql = "SELECT r.generation_id, r.evaluation_json, f.final_preference_selection, f.subject_feedback_choice, f.subject_feedback_label, f.rating_drawing_song_quality, f.rating_drawing_order_clarity, f.rating_child_friendliness, f.rating_singability FROM evaluation_records r LEFT JOIN evaluation_followups f ON f.generation_id = r.generation_id WHERE r.status='approved' ORDER BY r.created_at ASC";
 const wranglerArgs = ["wrangler", "d1", "execute", database, ...targetArgs, "--command", sql, "--json"];
 const result = process.platform === "win32"
   ? spawnSync("cmd.exe", ["/d", "/s", "/c", "npx.cmd", ...wranglerArgs], { encoding: "utf8", shell: false })
@@ -30,6 +30,8 @@ let skipped = 0;
 for (const row of rows) {
   try {
     const evaluation = JSON.parse(row.evaluation_json);
+    // SFT remains grounded in the lyric-only first impression. Playback can
+    // influence the later preference, so keep it as analysis metadata only.
     const selectedId = evaluation.firstImpressionSelection;
     const candidate = evaluation.candidates?.find((item) => item.candidateId === selectedId);
     if (!candidate) { skipped += 1; continue; }
@@ -37,7 +39,19 @@ for (const row of rows) {
       generationId: row.generation_id,
       input: { drawingAnalysis: evaluation.drawingAnalysis },
       output: { title: candidate.title, lines: candidate.lines, singingKanaLines: candidate.singingKanaLines, identifiedObject: candidate.identifiedObject, lineStrokeMappings: candidate.lineStrokeMappings },
-      metadata: { modelInfo: evaluation.modelInfo, promptVersion: evaluation.lyricsPromptVersion },
+      metadata: {
+        modelInfo: evaluation.modelInfo,
+        promptVersion: evaluation.lyricsPromptVersion,
+        firstImpressionSelection: evaluation.firstImpressionSelection,
+        finalPreferenceSelection: row.final_preference_selection ?? null,
+        subjectFeedback: row.subject_feedback_choice ? { choice: row.subject_feedback_choice, label: row.subject_feedback_label } : null,
+        ratings: {
+          drawingSongQuality: row.rating_drawing_song_quality ?? null,
+          drawingOrderClarity: row.rating_drawing_order_clarity ?? null,
+          childFriendliness: row.rating_child_friendliness ?? null,
+          singability: row.rating_singability ?? null,
+        },
+      },
     }));
   } catch { skipped += 1; }
 }
