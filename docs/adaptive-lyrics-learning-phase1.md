@@ -104,6 +104,8 @@ SFTデータ作成 → Continuous Tuning → 固定データで比較
 公開版の歌詞モデルを更新
 ```
 
+候補A/Bは、何を描いたかを当てる比較ではない。3.7が返した `DrawingAnalysis.objectCandidates[0]` をこの生成の共通題材とし、Workerが両候補の `identifiedObject` に同じ値を設定する。3.5への出力スキーマには `identifiedObject` を含めず、候補ごとに別の題材を再解釈する余地を作らない。比較するのは、同じ部品・同じ描画順を、どちらがより短く歌いやすい絵描き歌にできたかである。
+
 ### 二段構成にする理由
 
 - 画像理解は最新の3.7に任せ、独自学習の対象を「作詞」に絞れる。
@@ -157,7 +159,7 @@ SFTデータ作成 → Continuous Tuning → 固定データで比較
 }
 ```
 
-`confidence` は厳密な確率ではなく、断定を避けるための段階値とする。利用者による題材の訂正は保存するが、3.7の画像認識を独自学習させる教師データにはしない。歌詞候補の文脈や、認識失敗率の把握に使う。
+`confidence` は厳密な確率ではなく、断定を避けるための段階値とする。`objectCandidates` は確からしい順に並べ、先頭をこの生成の共通題材として3.5候補A/Bへ渡す。利用者による題材の訂正は保存するが、3.7の画像認識を独自学習させる教師データにはしない。歌詞候補の文脈や、認識失敗率の把握に使う。
 
 ### 5.2 3.5の出力: `LyricsCandidate[]`
 
@@ -168,7 +170,7 @@ SFTデータ作成 → Continuous Tuning → 固定データで比較
 - `lines`
 - `singingKanaLines`
 - `lineStrokeMappings`
-- `identifiedObject`（3.7の候補を歌詞表示向けに整えたもの）
+- `identifiedObject`（3.7の先頭候補からWorkerが共通で設定する値。3.5には生成させない）
 
 既存の `LyricsResponse` と楽譜・VOICEVOX処理を再利用できる形にし、利用者が選んだ候補だけを従来の再生処理へ渡す。
 
@@ -245,6 +247,8 @@ Step 4の現行実装では、二候補が有効な`phase1`生成だけに表示
 
 - `DrawingAnalysis` のみをGemini 3.5 Flash基礎モデルへ渡す。
 - 1回の応答で候補A/Bを生成し、両方をスキーマ検証する。
+- 3.5の候補出力は `identifiedObject` を持たず、Workerが3.7の先頭題材を両候補へ同じ値として注入する。これによりA/Bの比較は題材推定ではなく歌詞表現に限定される。
+- 各候補は4〜5行、表示歌詞は各行18文字以内、歌唱かなは各行22文字以内とする。「〜なので」「〜を表します」のような説明文ではなく、形・位置・描く動作を短く歌える文にする。
 - 片方だけ不正なら有効な候補を残し、両方失敗なら再試行または安全な基準モデルへ戻す。
 - 選択後は既存の `melodyService`、VOICEVOX、描画同期をそのまま利用する。
 
@@ -283,7 +287,7 @@ Step 5のコード、D1 binding、Secret、全migration、Version PreviewでのA
 
 - **コード実装済み:** クライアントの`generationId`送信、毎回同意UI、payloadの厳格なwhitelist/group参照検証、Workerの署名receipt、`POST /api/evaluations`のsame-origin・`no-store`・256KiB制限、D1 migration、`generation_id` + `payload_hash`の冪等保存と409競合、承認済みレコードを上書きしない承認・除外CLI、approved-only JSONL export。
 - **Cloudflare側で完了:** 本番・Preview D1作成、binding、全migration適用、`EVALUATION_RECEIPT_SECRET`登録、Version Previewでのsame-origin・`no-store`・payload検証・Secret認識。Version Previewは本番D1 bindingになるため、無効payloadだけで確認してOFF版へ差し替えた。
-- **本番運用:** 最初の本番同意レコード、保存エラー、異常な件数増加、横画面・スマホ縦画面の同意UIを確認する。問題時は二段生成と中央保存を同時にOFFへ戻す。
+- **本番運用:** 2026-08-24に本番同意レコード3件の保存を確認済み。今後は保存エラー、異常な件数増加、横画面・スマホ縦画面の同意UIを継続確認する。問題時は二段生成と中央保存を同時にOFFへ戻す。
 - ローカル起動時は既存のIndexedDBだけを使い、中央送信はしない。公開版で同意を得た最小データだけをWorkerの評価API経由でD1へ保存する。画像、音声、raw strokes、氏名、年齢、自由記述は中央保存しない。
 - 認識訂正と詳細4項目評価は、保存API接続後に端末内下書きから追加する。評価尺度、必須／任意、除外基準、承認者はユーザーの研究・運用判断が必要である。
 - Cloudflare R2は、将来のJSONLバックアップや明示的に同意を得た添付データの保管が必要になった場合だけ追加する。R2を公開バケットにせず、評価データの主DBにはしない。
@@ -309,6 +313,7 @@ Step 5のコード、D1 binding、Secret、全migration、Version PreviewでのA
 - **2026-08-24: Version Previewを無効化** — 監査中の中央保存ON版を含むVersion Preview URLを閉じるため`preview_urls=false`を設定し、今後の検証先を別staging Workerに限定した。
 - **2026-08-24: stagingの保存・拒否を検証** — Preview D1へ同意済みテスト評価1件を保存し、別生成で保存を拒否しても件数が1件から増えず、生成結果を利用し続けられることを確認した。
 - **2026-08-24: 本番の二段生成・中央保存を有効化** — Version `ce95b03f-e723-4738-8115-afa59379682a`を100%配信し、3.7描画理解、3.5候補生成、毎回同意、評価API、本番D1 bindingを有効化した。有効化時点の本番D1は0件である。
+- **2026-08-24: 本番保存とA/B目的を再確認** — 本番D1へ同意済み評価3件が保存されることを確認した。亀／モンスターの候補差は、3.7が返した題材候補を3.5が候補ごとに再解釈できた旧契約によるものだったため、prompt version 2では3.7の先頭題材を両候補で固定した。A/Bは同じ題材に対する絵描き歌らしさだけを比較し、4〜5行・表示18文字・歌唱22文字の上限と説明口調の抑制を追加した。結果画面の代替候補ボタンは再生UI下の1つに整理した。
 - **2026-08-22: 将来の保存同意方針を決定** — Step 5の中央保存時は毎回確認ポップアップを出し、横画面・スマホ縦画面の双方で利用できるようにする。拒否しても生成・再生は可能とする。
 
 ## 8. 設定項目案
@@ -323,7 +328,7 @@ Step 5のコード、D1 binding、Secret、全migration、Version PreviewでのA
 | `LYRICS_PIPELINE_MODE=phase1` | 新旧経路を切替・切戻し | いいえ |
 | `LYRICS_CANDIDATE_COUNT=2` | A/B候補数 | いいえ |
 | `DRAWING_ANALYSIS_SCHEMA_VERSION` | 3.7出力形式の版 | いいえ |
-| `LYRICS_PROMPT_VERSION` | 3.5入力指示の版 | いいえ |
+| `LYRICS_PROMPT_VERSION=2` | 3.5入力指示の版。生成結果と評価payloadへ実値を保存する | いいえ |
 | `EXPERIMENT_ROUND_ID` | 実証実験回 | いいえ |
 | `EVALUATION_STORAGE_MODE=d1` | 公開版の評価保存先をD1に固定 | いいえ |
 | `GOOGLE_CLOUD_PROJECT` / `LOCATION` | チューニングと推論先 | いいえ |

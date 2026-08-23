@@ -10,6 +10,10 @@ type SchemaTypes<T extends string> = {
 const MAX_ANALYSIS_OBJECT_CANDIDATES = 5;
 const MAX_ANALYSIS_PARTS = 64;
 const MAX_ANALYSIS_TEXT_LENGTH = 160;
+const MIN_CANDIDATE_LYRIC_LINES = 4;
+const MAX_CANDIDATE_LYRIC_LINES = 5;
+const MAX_CANDIDATE_DISPLAY_LINE_CHARACTERS = 18;
+const MAX_CANDIDATE_SINGING_LINE_CHARACTERS = 22;
 export const DRAWING_ANALYSIS_SCHEMA_VERSION = 1;
 const candidateIds = new Set<string>(["candidate-a", "candidate-b"]);
 
@@ -17,6 +21,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> => !!value &
 
 const nonEmptyString = (value: unknown, maxLength = MAX_ANALYSIS_TEXT_LENGTH) =>
   typeof value === "string" && value.trim().length > 0 && value.trim().length <= maxLength ? value.trim() : null;
+
+const boundedCandidateLine = (value: unknown, maxCharacters: number) => {
+  // The visible/voiced character budget intentionally ignores whitespace.
+  // Keep a separate hard cap to avoid accepting unbounded padding from a model.
+  const normalized = nonEmptyString(value, MAX_ANALYSIS_TEXT_LENGTH);
+  return normalized !== null && normalized.replace(/\s/g, "").length <= maxCharacters ? normalized : null;
+};
 
 export const parseInlineImage = (imageUri: string) => {
   const imageMatch = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i.exec(imageUri);
@@ -78,7 +89,7 @@ ${buildStrokeGroupDescriptions(strokeGroups).join("\n")}
 export const buildDrawingAnalysisPrompt = (strokeGroups: StrokeGroup[], schemaVersion: string) => `
 あなたは絵描き歌のために、完成画像と描画順を観察して構造化する役です。歌詞は作らないでください。
 画像と stroke group 情報から、見える題材の候補、部品の形と位置、部品に対応する stroke group、描画順をJSONで返してください。
-題材は断定しすぎず、候補と low / medium / high の段階的な確からしさを返してください。confidence は確率ではありません。
+題材は断定しすぎず、候補と low / medium / high の段階的な確からしさを返してください。confidence は確率ではありません。objectCandidates は最も確からしい題材を先頭にして確からしい順に並べてください。先頭候補は後段の歌詞候補A/Bが共有する題材になります。
 存在する stroke group id だけを使い、同じ id を複数の部品へ割り当てないでください。parts と drawingOrder は空にしないでください。
 schemaVersion: ${schemaVersion}
 
@@ -89,9 +100,11 @@ ${buildStrokeGroupDescriptions(strokeGroups).join("\n")}
 
 export const buildLyricsCandidatesPrompt = (drawingAnalysis: DrawingAnalysis, promptVersion: string) => `
 あなたは日本語の「絵描き歌」を作る作詞家です。画像やraw strokeは渡されません。次の描画理解JSONだけを根拠に、子どもにも歌いやすい候補A/Bを1回で作ってください。
-候補は candidate-a と candidate-b の2件です。各候補は4行程度で、表示用 lines と、VOICEVOX用のひらがな中心の singingKanaLines を同じ行数にしてください。
+このA/B比較の目的は「同じ描画理解に対して、どちらがより絵描き歌らしいか」を比べることです。objectCandidates[0].label が共通題材です。候補A/Bで題材を変えたり、別の動物・物として再解釈したり、題材の正しさを競わせたりしないでください。題材名はサーバーが共通で設定するため、identifiedObject は返さないでください。
+候補は candidate-a と candidate-b の2件です。各候補は必ず4〜5行にし、表示用 lines と、VOICEVOX用のひらがな中心の singingKanaLines を同じ行数にしてください。表示用の各行は空白を除いて18文字以内、歌唱用の各行は22文字以内にしてください。
 singingKanaLines では漢字、英字、数字、句読点、絵文字、ASCII記号を避け、発音どおりの読みを使ってください。例: 「ねこは」→「ねこわ」、「まるを」→「まるお」。
-各候補で title、identifiedObject、lineStrokeMappings を返してください。lineStrokeMappings は歌詞1行につき1件、drawingAnalysisに存在するgroup idだけを使い、描画順を尊重して同じgroup idを複数行に使わないでください。最後の完成宣言は空配列でも構いません。
+各行は、描く動作・形・位置をそのまま歌える短い言葉にしてください。「〜なので」「〜を表します」「〜してください」のような説明文、理由づけ、長い完成説明は避けてください。候補の違いは、リズム、言葉選び、描く順の見せ方にしてください。
+各候補で title、lineStrokeMappings を返してください。lineStrokeMappings は歌詞1行につき1件、drawingAnalysisに存在するgroup idだけを使い、描画順を尊重して同じgroup idを複数行に使わないでください。最後の完成宣言は空配列でも構いません。
 promptVersion: ${promptVersion}
 DrawingAnalysis JSON:
 ${JSON.stringify(drawingAnalysis)}
@@ -112,6 +125,26 @@ const lyricFieldsSchema = <T extends string>(types: SchemaTypes<T>) => ({
       },
       required: ["lineIndex", "strokeGroupIds"],
     },
+  },
+});
+
+/** Candidate output deliberately omits the subject: it is copied from the shared DrawingAnalysis. */
+const candidateLyricFieldsSchema = <T extends string>(types: SchemaTypes<T>) => ({
+  title: { type: types.STRING },
+  lines: { type: types.ARRAY, items: { type: types.STRING }, minItems: MIN_CANDIDATE_LYRIC_LINES, maxItems: MAX_CANDIDATE_LYRIC_LINES },
+  singingKanaLines: { type: types.ARRAY, items: { type: types.STRING }, minItems: MIN_CANDIDATE_LYRIC_LINES, maxItems: MAX_CANDIDATE_LYRIC_LINES },
+  lineStrokeMappings: {
+    type: types.ARRAY,
+    items: {
+      type: types.OBJECT,
+      properties: {
+        lineIndex: { type: types.INTEGER },
+        strokeGroupIds: { type: types.ARRAY, items: { type: types.STRING } },
+      },
+      required: ["lineIndex", "strokeGroupIds"],
+    },
+    minItems: MIN_CANDIDATE_LYRIC_LINES,
+    maxItems: MAX_CANDIDATE_LYRIC_LINES,
   },
 });
 
@@ -158,8 +191,8 @@ export const createLyricsCandidatesResponseSchema = <T extends string>(types: Sc
       type: types.ARRAY,
       items: {
         type: types.OBJECT,
-        properties: { candidateId: { type: types.STRING }, ...lyricFieldsSchema(types) },
-        required: ["candidateId", "title", "lines", "singingKanaLines", "identifiedObject", "lineStrokeMappings"],
+        properties: { candidateId: { type: types.STRING }, ...candidateLyricFieldsSchema(types) },
+        required: ["candidateId", "title", "lines", "singingKanaLines", "lineStrokeMappings"],
       },
     },
   },
@@ -229,23 +262,26 @@ export const normalizeDrawingAnalysis = (value: unknown, strokeGroups: StrokeGro
   return { schemaVersion: DRAWING_ANALYSIS_SCHEMA_VERSION, objectCandidates, parts, drawingOrder };
 };
 
-export const normalizeLyricsCandidates = (value: unknown, strokeGroups: StrokeGroup[]): LyricsCandidate[] => {
+export const normalizeLyricsCandidates = (value: unknown, strokeGroups: StrokeGroup[], drawingAnalysis: DrawingAnalysis): LyricsCandidate[] => {
   if (!isRecord(value) || !Array.isArray(value.candidates)) throw new Error("歌詞候補の形式が正しくありません。");
+  // This is intentionally derived once, rather than accepted from either candidate.
+  // A/B is about lyric quality, not a second object-recognition contest.
+  const identifiedObject = drawingAnalysis.objectCandidates[0]?.label;
+  if (!identifiedObject) throw new Error("描画理解の共通題材がありません。");
   const seenCandidateIds = new Set<string>();
   const candidates = value.candidates.flatMap((candidate) => {
     if (!isRecord(candidate) || typeof candidate.candidateId !== "string" || !candidateIds.has(candidate.candidateId) || seenCandidateIds.has(candidate.candidateId)) return [];
     try {
       const title = nonEmptyString(candidate.title, 240);
-      const identifiedObject = nonEmptyString(candidate.identifiedObject, 240);
       if (
         !title ||
-        !identifiedObject ||
         !Array.isArray(candidate.lines) ||
-        candidate.lines.length === 0 ||
-        !candidate.lines.every((line) => nonEmptyString(line, 500) !== null) ||
+        candidate.lines.length < MIN_CANDIDATE_LYRIC_LINES ||
+        candidate.lines.length > MAX_CANDIDATE_LYRIC_LINES ||
+        !candidate.lines.every((line) => boundedCandidateLine(line, MAX_CANDIDATE_DISPLAY_LINE_CHARACTERS) !== null) ||
         !Array.isArray(candidate.singingKanaLines) ||
         candidate.singingKanaLines.length !== candidate.lines.length ||
-        !candidate.singingKanaLines.every((line) => nonEmptyString(line, 500) !== null) ||
+        !candidate.singingKanaLines.every((line) => boundedCandidateLine(line, MAX_CANDIDATE_SINGING_LINE_CHARACTERS) !== null) ||
         !Array.isArray(candidate.lineStrokeMappings) ||
         candidate.lineStrokeMappings.length !== candidate.lines.length
       ) {

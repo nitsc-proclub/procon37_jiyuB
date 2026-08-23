@@ -19,7 +19,7 @@ import {
 const DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite";
 const DEFAULT_VISION_MODEL = "gemini-3.7-flash";
 const DEFAULT_LYRICS_BASE_MODEL = "gemini-3.5-flash";
-const DEFAULT_SCHEMA_VERSION = "1";
+const DEFAULT_LYRICS_PROMPT_VERSION = "2";
 const MODEL_LIST_CACHE_MS = 10 * 60 * 1000;
 const MAX_GEMINI_REQUEST_BYTES = 15 * 1024 * 1024;
 
@@ -423,7 +423,7 @@ const generatePhase1EkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
   const drawingAnalysisSchemaVersion = resolveDrawingAnalysisSchemaVersion(env.DRAWING_ANALYSIS_SCHEMA_VERSION);
   if (drawingAnalysisSchemaVersion === null) throw new Error("Unsupported drawing analysis schema version");
   const schemaVersion = String(drawingAnalysisSchemaVersion);
-  const promptVersion = env.LYRICS_PROMPT_VERSION?.trim() || DEFAULT_SCHEMA_VERSION;
+  const promptVersion = env.LYRICS_PROMPT_VERSION?.trim() || DEFAULT_LYRICS_PROMPT_VERSION;
   const visionModel = env.GEMINI_VISION_MODEL?.trim() || DEFAULT_VISION_MODEL;
   const lyricsModel = env.LYRICS_BASE_MODEL?.trim() || DEFAULT_LYRICS_BASE_MODEL;
 
@@ -447,7 +447,7 @@ const generatePhase1EkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
     contents: [{ parts: [{ text: buildLyricsCandidatesPrompt(drawingAnalysis, promptVersion) }] }],
     config: { responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(Type) },
   });
-  const candidates = normalizeLyricsCandidates(JSON.parse(candidatesResponse.text.trim()), strokeGroups).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
+  const candidates = normalizeLyricsCandidates(JSON.parse(candidatesResponse.text.trim()), strokeGroups, drawingAnalysis).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
   const selectedCandidate = candidates.find((candidate) => candidate.candidateId === "candidate-a") ?? candidates[0];
   if (!selectedCandidate) throw new Error("No valid lyrics candidate");
   return {
@@ -456,6 +456,7 @@ const generatePhase1EkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
     candidates,
     selectedCandidateId: selectedCandidate.candidateId,
     modelInfo: { drawingAnalysis: visionModel, lyricsGeneration: lyricsModel },
+    lyricsPromptVersion: promptVersion,
   };
 };
 

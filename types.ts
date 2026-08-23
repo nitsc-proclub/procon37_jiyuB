@@ -93,6 +93,8 @@ export interface Phase1LyricsResponse {
   candidates: LyricsCandidate[];
   selectedCandidateId: "candidate-a" | "candidate-b";
   modelInfo: Phase1ModelInfo;
+  /** The exact prompt contract used for this two-stage lyric generation. */
+  lyricsPromptVersion: string;
   generationId?: string;
   evaluationReceipt?: string;
   evaluationReceiptExpiresAt?: string;
@@ -103,6 +105,8 @@ export interface GeneratedEkakiUtaResult {
   candidates: LyricsCandidate[] | null;
   drawingAnalysis: DrawingAnalysis | null;
   modelInfo: Phase1ModelInfo | null;
+  /** Present for Phase 1; legacy one-stage responses deliberately have no prompt contract. */
+  lyricsPromptVersion: string | null;
   /** Optional Worker-issued metadata; absent for local development and legacy responses. */
   generationId?: string;
   evaluationReceipt?: string;

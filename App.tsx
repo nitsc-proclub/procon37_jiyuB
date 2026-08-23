@@ -1514,9 +1514,7 @@ const App: React.FC = () => {
             drawingAnalysis: generationResult.drawingAnalysis,
             modelInfo: generationResult.modelInfo,
             activeCandidateId: initialPreviewCandidate.candidateId,
-            // The browser response currently does not expose a prompt version.
-            // Preserve that absence explicitly rather than guessing from a model name.
-            lyricsPromptVersion: null,
+            lyricsPromptVersion: generationResult.lyricsPromptVersion,
           });
         } else {
           evaluationDraftUnavailable = true;
@@ -3156,8 +3154,6 @@ const App: React.FC = () => {
                       showKanaLines={false}
                       compact={isCompactMakerLayout}
                     />
-
-                    {renderAlternativeCandidateButton()}
 
                     <div className={`mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5 ${isCompactMakerLayout ? "mobile-playback-player" : ""}`}>
                       <div className="mb-4 flex justify-end">

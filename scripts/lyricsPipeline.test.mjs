@@ -11,6 +11,7 @@ const vite = await createServer({
 const pipeline = await vite.ssrLoadModule("/services/lyricsPipeline.ts");
 const evaluationDraftDb = await vite.ssrLoadModule("/services/evaluationDraftDb.ts");
 const evaluationSubmission = await vite.ssrLoadModule("/services/evaluationSubmissionService.ts");
+const geminiService = await vite.ssrLoadModule("/services/geminiService.ts");
 
 const strokeGroups = [
   {
@@ -34,11 +35,24 @@ const strokeGroups = [
 const validLyrics = (candidateId, groupId) => ({
   candidateId,
   title: "まるのうた",
-  lines: ["まるをかこう"],
-  singingKanaLines: ["まるおかこお"],
+  // This helper represents a candidate after the Worker has injected its shared subject.
   identifiedObject: "りんご",
-  lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: [groupId, "unknown"] }],
+  lines: ["まるをかこう", "うえにせん", "よこにせん", "できあがり"],
+  singingKanaLines: ["まるおかこお", "うえにせん", "よこにせん", "できあがり"],
+  lineStrokeMappings: [
+    { lineIndex: 0, strokeGroupIds: [groupId, "unknown"] },
+    { lineIndex: 1, strokeGroupIds: [] },
+    { lineIndex: 2, strokeGroupIds: [] },
+    { lineIndex: 3, strokeGroupIds: [] },
+  ],
 });
+
+const drawingAnalysis = {
+  schemaVersion: 1,
+  objectCandidates: [{ label: "りんご", confidence: "high" }],
+  parts: [{ id: "body", shape: "丸", position: "中央", strokeGroupIds: ["g1"] }],
+  drawingOrder: ["body"],
+};
 
 test("drawing analysis removes unknown group IDs and completes drawing order", () => {
   const analysis = pipeline.normalizeDrawingAnalysis(
@@ -61,9 +75,11 @@ test("one valid candidate remains usable when its pair is malformed", () => {
   const candidates = pipeline.normalizeLyricsCandidates(
     { candidates: [validLyrics("candidate-a", "g1"), { candidateId: "candidate-b", lines: [] }] },
     strokeGroups,
+    drawingAnalysis,
   );
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0].candidateId, "candidate-a");
+  assert.equal(candidates[0].identifiedObject, "りんご");
   assert.deepEqual(candidates[0].lineStrokeMappings[0].strokeGroupIds, ["g1"]);
 });
 
@@ -82,11 +98,26 @@ test("candidate validation rejects non-string lyric fields and malformed mapping
           ],
         },
         strokeGroups,
+        drawingAnalysis,
       ),
     /有効な歌詞候補/,
   );
   assert.throws(
-    () => pipeline.normalizeLyricsCandidates({ candidates: [{ ...validLyrics("candidate-a", "g1"), lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: [12] }] }] }, strokeGroups),
+    () => pipeline.normalizeLyricsCandidates({ candidates: [{ ...validLyrics("candidate-a", "g1"), lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: [12] }] }] }, strokeGroups, drawingAnalysis),
+    /有効な歌詞候補/,
+  );
+});
+
+test("candidate lyrics keep the shared subject and reject too many or too-long lines", () => {
+  const withConflictingSubject = { ...validLyrics("candidate-a", "g1"), identifiedObject: "モンスター" };
+  const candidates = pipeline.normalizeLyricsCandidates({ candidates: [withConflictingSubject] }, strokeGroups, drawingAnalysis);
+  assert.equal(candidates[0].identifiedObject, "りんご");
+  assert.throws(
+    () => pipeline.normalizeLyricsCandidates({ candidates: [{ ...validLyrics("candidate-a", "g1"), lines: ["これでは歌詞の一行が必要以上に長くなりすぎます", "うえにせん", "よこにせん", "できあがり"] }] }, strokeGroups, drawingAnalysis),
+    /有効な歌詞候補/,
+  );
+  assert.throws(
+    () => pipeline.normalizeLyricsCandidates({ candidates: [{ ...validLyrics("candidate-a", "g1"), lines: ["まるをかこう", "うえにせん", "できあがり"], singingKanaLines: ["まるおかこお", "うえにせん", "できあがり"], lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: ["g1"] }, { lineIndex: 1, strokeGroupIds: [] }, { lineIndex: 2, strokeGroupIds: [] }] }] }, strokeGroups, drawingAnalysis),
     /有効な歌詞候補/,
   );
 });
@@ -104,16 +135,54 @@ test("only DrawingAnalysis schema version 1 is supported", () => {
 
 test("lyrics-stage prompt contains only DrawingAnalysis and no image payload", () => {
   const prompt = pipeline.buildLyricsCandidatesPrompt(
-    {
-      schemaVersion: 1,
-      objectCandidates: [{ label: "りんご", confidence: "high" }],
-      parts: [{ id: "body", shape: "丸", position: "中央", strokeGroupIds: ["g1"] }],
-      drawingOrder: ["body"],
-    },
+    drawingAnalysis,
     "1",
   );
   assert.match(prompt, /DrawingAnalysis JSON/);
   assert.doesNotMatch(prompt, /data:image|raw strokes/i);
+  assert.match(prompt, /題材を変えたり/);
+  assert.match(prompt, /18文字以内/);
+  assert.match(prompt, /identifiedObject は返さない/);
+});
+
+test("drawing analysis prompt makes the first, confidence-ordered candidate the shared subject", () => {
+  const prompt = pipeline.buildDrawingAnalysisPrompt(strokeGroups, "1");
+  assert.match(prompt, /最も確からしい題材を先頭/);
+  assert.match(prompt, /確からしい順/);
+  assert.match(prompt, /候補A\/Bが共有する題材/);
+});
+
+test("candidate response schema makes the subject server-owned and bounds line counts", () => {
+  const schema = pipeline.createLyricsCandidatesResponseSchema({ OBJECT: "OBJECT", ARRAY: "ARRAY", STRING: "STRING", INTEGER: "INTEGER" });
+  const candidate = schema.properties.candidates.items;
+  assert.equal("identifiedObject" in candidate.properties, false);
+  assert.equal(candidate.properties.lines.minItems, 4);
+  assert.equal(candidate.properties.lines.maxItems, 5);
+});
+
+test("candidate display length ignores whitespace but still limits visible characters", () => {
+  const padded = { ...validLyrics("candidate-a", "g1"), lines: [`${"あ".repeat(18)}  `, "うえにせん", "よこにせん", "できあがり"] };
+  assert.equal(pipeline.normalizeLyricsCandidates({ candidates: [padded] }, strokeGroups, drawingAnalysis).length, 1);
+  const tooLong = { ...padded, lines: ["あ".repeat(19), "うえにせん", "よこにせん", "できあがり"] };
+  assert.throws(() => pipeline.normalizeLyricsCandidates({ candidates: [tooLong] }, strokeGroups, drawingAnalysis), /有効な歌詞候補/);
+});
+
+test("phase1 responses retain their exact prompt version for evaluation", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    pipelineMode: "phase1",
+    drawingAnalysis,
+    candidates: [validLyrics("candidate-a", "g1")],
+    selectedCandidateId: "candidate-a",
+    modelInfo: { drawingAnalysis: "gemini-3.7-flash", lyricsGeneration: "gemini-3.5-flash" },
+    lyricsPromptVersion: "2",
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
+  try {
+    const result = await geminiService.generateEkakiUta({ imageUri: "data:image/png;base64,ZmFrZQ==", strokes: [] });
+    assert.equal(result.lyricsPromptVersion, "2");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("candidate display shuffle preserves immutable candidate IDs", () => {
@@ -166,7 +235,7 @@ test("evaluation draft builder whitelists fields and selection keeps its generat
     displayOrder: ["candidate-b", "candidate-a"],
     drawingAnalysis,
     modelInfo: { drawingAnalysis: "gemini-3.7-flash", lyricsGeneration: "gemini-3.5-flash", extra: "should-not-survive" },
-    lyricsPromptVersion: null,
+    lyricsPromptVersion: "2",
     participantAge: 9,
   });
   assert.equal("imageUri" in draft.candidates[0], false);
@@ -176,6 +245,7 @@ test("evaluation draft builder whitelists fields and selection keeps its generat
   assert.equal("rawStrokes" in draft.drawingAnalysis, false);
   assert.equal("participantName" in draft.drawingAnalysis.objectCandidates[0], false);
   assert.deepEqual(draft.modelInfo, { drawingAnalysis: "gemini-3.7-flash", lyricsGeneration: "gemini-3.5-flash" });
+  assert.equal(draft.lyricsPromptVersion, "2");
 
   const selected = evaluationDraftDb.withEvaluationDraftSelection(draft, "neither", "2026-08-22T00:01:00.000Z");
   assert.equal(selected.generationId, "generation-1");
@@ -197,12 +267,12 @@ const buildSubmissionFixture = () => ({
   buildId: "test-build",
   experimentRoundId: "phase1-test",
   drawingAnalysisSchemaVersion: 1,
-  lyricsPromptVersion: "1",
+  lyricsPromptVersion: "2",
   firstImpressionSelection: "candidate-a",
   displayOrder: ["candidate-b", "candidate-a"],
   candidates: [
-    { ...validLyrics("candidate-a", "g1"), lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: ["g1"] }], modelName: "gemini-3.5-flash" },
-    { ...validLyrics("candidate-b", "g2"), lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: ["g2"] }], modelName: "gemini-3.5-flash" },
+    { ...validLyrics("candidate-a", "g1"), lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: ["g1"] }, { lineIndex: 1, strokeGroupIds: [] }, { lineIndex: 2, strokeGroupIds: [] }, { lineIndex: 3, strokeGroupIds: [] }], modelName: "gemini-3.5-flash" },
+    { ...validLyrics("candidate-b", "g2"), lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: ["g2"] }, { lineIndex: 1, strokeGroupIds: [] }, { lineIndex: 2, strokeGroupIds: [] }, { lineIndex: 3, strokeGroupIds: [] }], modelName: "gemini-3.5-flash" },
   ],
   strokeGroupIds: ["g1", "g2"],
   drawingAnalysis: {
@@ -220,13 +290,15 @@ const buildSubmissionFixture = () => ({
   centralConsent: "accepted",
 });
 
-test("evaluation receipts bind generation and generated content", async () => {
+test("evaluation receipts bind generation, generated content, and generation contract", async () => {
   const payload = buildSubmissionFixture();
   const secret = "0123456789abcdef0123456789abcdef";
   const receipt = await evaluationSubmission.createEvaluationReceipt(payload.generationId, payload, secret, 1_000, 60);
   payload.evaluationReceipt = receipt.value;
   assert.equal(await evaluationSubmission.verifyEvaluationReceipt(receipt.value, payload.generationId, payload, secret, 2_000), true);
   assert.equal(await evaluationSubmission.verifyEvaluationReceipt(receipt.value, payload.generationId, { ...payload, candidates: [{ ...payload.candidates[0], title: "改ざん" }, payload.candidates[1]] }, secret, 2_000), false);
+  assert.equal(await evaluationSubmission.verifyEvaluationReceipt(receipt.value, payload.generationId, { ...payload, lyricsPromptVersion: "forged-version" }, secret, 2_000), false);
+  assert.equal(await evaluationSubmission.verifyEvaluationReceipt(receipt.value, payload.generationId, { ...payload, modelInfo: { ...payload.modelInfo, lyricsGeneration: "forged-model" } }, secret, 2_000), false);
   assert.equal(await evaluationSubmission.verifyEvaluationReceipt(receipt.value, "123e4567-e89b-42d3-a456-426614174001", payload, secret, 2_000), false);
   assert.equal(await evaluationSubmission.verifyEvaluationReceipt(receipt.value, payload.generationId, payload, secret, 62_000), false);
 });

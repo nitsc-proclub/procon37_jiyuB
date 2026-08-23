@@ -31,8 +31,18 @@ const base64UrlToBytes = (value: string) => { if (!/^[A-Za-z0-9_-]+$/.test(value
 const digest = async (value: unknown) => bytesToBase64Url(await crypto.subtle.digest("SHA-256", encoder.encode(canonicalJson(value))));
 const importHmacKey = (secret: string, usages: KeyUsage[]) => crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, usages);
 
-type EvaluationFingerprintInput = { drawingAnalysis: DrawingAnalysis; candidates: readonly LyricsCandidate[] };
-const fingerprintInput = (payload: EvaluationFingerprintInput) => ({ drawingAnalysis: payload.drawingAnalysis, candidates: payload.candidates });
+type EvaluationFingerprintInput = {
+  drawingAnalysis: DrawingAnalysis;
+  candidates: readonly LyricsCandidate[];
+  lyricsPromptVersion: string | null;
+  modelInfo: Phase1ModelInfo;
+};
+const fingerprintInput = (payload: EvaluationFingerprintInput) => ({
+  drawingAnalysis: payload.drawingAnalysis,
+  candidates: payload.candidates,
+  lyricsPromptVersion: payload.lyricsPromptVersion,
+  modelInfo: payload.modelInfo,
+});
 export const evaluationFingerprint = (payload: EvaluationFingerprintInput) => digest(fingerprintInput(payload));
 export const evaluationPayloadHash = ({ evaluationReceipt: _receipt, ...payload }: EvaluationSubmissionPayload) => digest(payload);
 

@@ -44,7 +44,10 @@ const isPhase1LyricsResponse = (value: GenerateEkakiUtaResponse): value is Phase
   "drawingAnalysis" in value.modelInfo &&
   typeof value.modelInfo.drawingAnalysis === "string" &&
   "lyricsGeneration" in value.modelInfo &&
-  typeof value.modelInfo.lyricsGeneration === "string";
+  typeof value.modelInfo.lyricsGeneration === "string" &&
+  "lyricsPromptVersion" in value &&
+  typeof value.lyricsPromptVersion === "string" &&
+  value.lyricsPromptVersion.trim().length > 0;
 
 const parseErrorResponse = async (response: Response) => {
   try {
@@ -95,7 +98,7 @@ export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?
     if (!selected) {
       throw new GenerateEkakiUtaError("絵かき歌の生成に失敗しました。もう一度試してください。", response.status, null, null);
     }
-    return { lyrics: selected, candidates: result.candidates, drawingAnalysis: result.drawingAnalysis, modelInfo: result.modelInfo, ...readReceiptMetadata(result) };
+    return { lyrics: selected, candidates: result.candidates, drawingAnalysis: result.drawingAnalysis, modelInfo: result.modelInfo, lyricsPromptVersion: result.lyricsPromptVersion, ...readReceiptMetadata(result) };
   }
 
   if (!isLyricsResponse(result)) {
@@ -107,5 +110,5 @@ export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?
     );
   }
 
-  return { lyrics: result, candidates: null, drawingAnalysis: null, modelInfo: null, ...readReceiptMetadata(result) };
+  return { lyrics: result, candidates: null, drawingAnalysis: null, modelInfo: null, lyricsPromptVersion: null, ...readReceiptMetadata(result) };
 };

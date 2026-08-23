@@ -60,7 +60,7 @@ const MODEL_LIST_CACHE_MS = 10 * 60 * 1000;
 const DEFAULT_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_VISION_MODEL = "gemini-3.7-flash";
 const DEFAULT_LYRICS_BASE_MODEL = "gemini-3.5-flash";
-const DEFAULT_SCHEMA_VERSION = "1";
+const DEFAULT_LYRICS_PROMPT_VERSION = "2";
 const GENERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let modelListCache: { expiresAt: number; names: string[] } | null = null;
 
@@ -307,7 +307,7 @@ const generatePhase1Lyrics = async (drawingData: DrawingData, env: Env): Promise
   const drawingAnalysisSchemaVersion = resolveDrawingAnalysisSchemaVersion(env.DRAWING_ANALYSIS_SCHEMA_VERSION);
   if (drawingAnalysisSchemaVersion === null) throw new Error("Unsupported drawing analysis schema version");
   const schemaVersion = String(drawingAnalysisSchemaVersion);
-  const promptVersion = env.LYRICS_PROMPT_VERSION?.trim() || DEFAULT_SCHEMA_VERSION;
+  const promptVersion = env.LYRICS_PROMPT_VERSION?.trim() || DEFAULT_LYRICS_PROMPT_VERSION;
   const visionModel = env.GEMINI_VISION_MODEL?.trim() || DEFAULT_VISION_MODEL;
   const lyricsModel = env.LYRICS_BASE_MODEL?.trim() || DEFAULT_LYRICS_BASE_MODEL;
   const schemaTypes = { OBJECT: "OBJECT", ARRAY: "ARRAY", STRING: "STRING", INTEGER: "INTEGER" } as const;
@@ -337,7 +337,7 @@ const generatePhase1Lyrics = async (drawingData: DrawingData, env: Env): Promise
     },
     env,
   );
-  const candidates = normalizeLyricsCandidates(JSON.parse(candidatesText), strokeGroups).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
+  const candidates = normalizeLyricsCandidates(JSON.parse(candidatesText), strokeGroups, drawingAnalysis).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
   const selectedCandidate = candidates.find((candidate) => candidate.candidateId === "candidate-a") ?? candidates[0];
   if (!selectedCandidate) throw new Error("No valid lyrics candidate");
   return {
@@ -346,6 +346,7 @@ const generatePhase1Lyrics = async (drawingData: DrawingData, env: Env): Promise
     candidates,
     selectedCandidateId: selectedCandidate.candidateId,
     modelInfo: { drawingAnalysis: visionModel, lyricsGeneration: lyricsModel },
+    lyricsPromptVersion: promptVersion,
   };
 };
 
