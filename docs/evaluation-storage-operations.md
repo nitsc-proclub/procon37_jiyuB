@@ -2,7 +2,7 @@
 
 この文書は、Step 5の評価データ中央保存をCloudflare Worker + D1で有効化するときの運用手順である。現時点では中央送信を有効にせず、`wrangler.jsonc`の機能フラグは`false`のままにする。
 
-## 現在の設定状態（2026-08-23）
+## 現在の設定状態（2026-08-24）
 
 - 本番D1とPreview専用D1を作成し、`EVALUATIONS_DB`の`database_id` / `preview_database_id`を`wrangler.jsonc`へ設定済み。
 - `0001_evaluation_records.sql`をローカル・Preview D1・本番D1へ適用し、両remote DBが0件であることを確認済み。
@@ -11,6 +11,10 @@
 - 本番の`EVALUATION_CENTRAL_STORAGE_ENABLED`は引き続き`false`。本番ONの前に、Turnstileを含む実ブラウザの生成・同意・拒否・保存確認が必要。
 - 本番WorkerへD1 bindingとSecretを含むOFF版をデプロイ済み。配信Versionの実測で本番D1 UUIDと`false`を確認し、トップページHTTP 200、評価APIは503 + `Cache-Control: no-store`であることを確認済み。
 - 監査中に作成した中央保存ONの旧Version URLを無効化するため、`preview_urls=false`を設定済み。以後の保存確認は本番D1を参照しない別staging Workerで行う。
+- `wrangler.staging.jsonc`で独立した`cho-ekaki-uta-staging` Workerを定義した。中央保存はstagingだけONにし、`database_id`をPreview D1へ直接向け、本番Worker・本番D1とは分離する。
+- staging専用Turnstile Widgetの公開Site keyは`.env.staging`からbuildへ渡す。Widget Secret、Gemini API key、評価receipt secretはstaging Worker Secretにだけ登録し、Gitへ保存しない。
+- `cho-ekaki-uta-staging.nitsc-proclub.workers.dev`へdeploy済み。トップページ200、評価APIのpayload拒否400 + `no-store`、stagingの3 Secret、本番・Preview D1がともに0件、本番評価APIが引き続き503であることを確認済み。
+- 実ブラウザの390x844表示で横はみ出しなし、Turnstile、二段生成、A/B第一印象選択、中央保存同意UIまで確認済み。Preview D1へテスト評価1件を作る最終送信と、拒否時0件の再確認は未完了。
 
 ## 保存境界
 
@@ -135,6 +139,24 @@ npx.cmd wrangler types --check
 8. 同意拒否時に生成・再生が継続し、中央APIへ送信しないことを確認する。
 9. 公開版の横画面・スマホ縦画面で、毎回の同意ポップアップが表示されることを確認する。
 10. 正常保存を本番前に確認する場合は、別Worker名またはstaging環境を作り、`database_id`自体をPreview D1のUUIDへ向けた専用configを使う。`preview_database_id`だけでは`wrangler versions upload`のbindingは切り替わらない。通常の`wrangler deploy`は本番Workerを更新するためPreview確認には使わない。
+
+### staging Workerのbuild・deploy
+
+stagingは本番設定を継承しない独立Workerとして扱う。次のコマンドは`wrangler.staging.jsonc`だけを対象にし、`.env.staging`の公開Turnstile Site keyをbundleへ含める。
+
+```powershell
+npm.cmd run build:staging
+npx.cmd wrangler deploy --config wrangler.staging.jsonc --dry-run
+npx.cmd wrangler deploy --config wrangler.staging.jsonc
+```
+
+初回deploy前に、次の3つをstaging Worker Secretへ登録する。
+
+- `GEMINI_API_KEY`: 既存のGoogle AI Studio API keyをstaging Workerへ複写する。
+- `TURNSTILE_SECRET`: staging hostname専用WidgetのSecretを登録する。
+- `EVALUATION_RECEIPT_SECRET`: staging専用に新しく生成し、本番の値を再利用しない。
+
+`wrangler.staging.jsonc`の`secrets.required`により、3つのいずれかが未設定ならdeployを失敗させる。stagingの実ブラウザ確認後も、本番の`EVALUATION_CENTRAL_STORAGE_ENABLED=false`は、利用者が明示的に本番有効化を決めるまで変更しない。
 
 評価APIは同一Originだけを受け付け、レスポンスに`Cache-Control: no-store`を付ける。IPベースのレート制限は共有ネットワークへの影響があるため、既定では追加しない。Turnstileの生成トークンを評価APIで再利用しない。
 
