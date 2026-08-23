@@ -93,6 +93,9 @@ export interface Phase1LyricsResponse {
   candidates: LyricsCandidate[];
   selectedCandidateId: "candidate-a" | "candidate-b";
   modelInfo: Phase1ModelInfo;
+  generationId?: string;
+  evaluationReceipt?: string;
+  evaluationReceiptExpiresAt?: string;
 }
 
 export interface GeneratedEkakiUtaResult {
@@ -100,10 +103,44 @@ export interface GeneratedEkakiUtaResult {
   candidates: LyricsCandidate[] | null;
   drawingAnalysis: DrawingAnalysis | null;
   modelInfo: Phase1ModelInfo | null;
+  /** Optional Worker-issued metadata; absent for local development and legacy responses. */
+  generationId?: string;
+  evaluationReceipt?: string;
+  evaluationReceiptExpiresAt?: string;
 }
 
 /** A browser-only, unsent preference draft for one Phase 1 generation. */
 export type EvaluationSelection = LyricsCandidate["candidateId"] | "neither" | null;
+
+export type EvaluationCentralConsent = "not-asked" | "accepted" | "declined";
+
+export interface EvaluationSubmissionPayload {
+  schemaVersion: 1;
+  generationId: string;
+  evaluationReceipt: string;
+  createdAt: string;
+  updatedAt: string;
+  consentedAt: string;
+  buildId: string;
+  experimentRoundId: string | null;
+  drawingAnalysisSchemaVersion: DrawingAnalysis["schemaVersion"];
+  lyricsPromptVersion: string | null;
+  firstImpressionSelection: Exclude<EvaluationSelection, null>;
+  displayOrder: [LyricsCandidate["candidateId"], LyricsCandidate["candidateId"]];
+  candidates: [LyricsCandidate, LyricsCandidate];
+  strokeGroupIds: string[];
+  drawingAnalysis: DrawingAnalysis;
+  modelInfo: Phase1ModelInfo;
+  activeCandidateId: LyricsCandidate["candidateId"] | null;
+  alternativePreviewed: boolean;
+  centralConsent: "accepted";
+}
+
+export interface EvaluationSubmissionResponse {
+  saved: true;
+  duplicate: boolean;
+  generationId: string;
+}
 
 export interface EvaluationDraft {
   schemaVersion: 1;
@@ -114,6 +151,14 @@ export interface EvaluationDraft {
   /** Candidate IDs in the participant-facing order; IDs themselves never change. */
   displayOrder: LyricsCandidate["candidateId"][];
   selection: EvaluationSelection;
+  /** The first-impression preference is immutable after the modal is confirmed. */
+  firstImpressionSelection: EvaluationSelection;
+  /** The candidate currently shown or prepared for playback. */
+  activeCandidateId: LyricsCandidate["candidateId"] | null;
+  /** Whether the participant has intentionally opened the other candidate. */
+  alternativePreviewed: boolean;
+  /** Central-storage consent is tracked locally until the D1 API is connected. */
+  centralConsent: EvaluationCentralConsent;
   drawingAnalysis: DrawingAnalysis;
   modelInfo: Phase1ModelInfo;
   drawingAnalysisSchemaVersion: DrawingAnalysis["schemaVersion"];

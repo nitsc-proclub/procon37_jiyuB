@@ -9,7 +9,10 @@
     "build:deployment-preview": "vite build --mode deployment-preview",
     "preview": "vite preview",
     "type-check": "tsc --noEmit",
-    "test:lyrics-pipeline": "node --test scripts/lyricsPipeline.test.mjs"
+    "test:lyrics-pipeline": "node --test scripts/lyricsPipeline.test.mjs",
+    "evaluation:approve": "node scripts/evaluationAdmin.mjs approve",
+    "evaluation:exclude": "node scripts/evaluationAdmin.mjs exclude",
+    "evaluation:export": "node scripts/exportApprovedEvaluations.mjs"
   },
   "dependencies": {
     "react-dom": "^19.2.3",

@@ -1,4 +1,4 @@
-import type { DrawingAnalysis, EvaluationDraft, EvaluationSelection, LyricsCandidate, Phase1ModelInfo } from "../types";
+import type { DrawingAnalysis, EvaluationCentralConsent, EvaluationDraft, EvaluationSelection, LyricsCandidate, Phase1ModelInfo } from "../types";
 
 export const EVALUATION_DRAFT_SCHEMA_VERSION = 1 as const;
 
@@ -123,11 +123,14 @@ type CreateEvaluationDraftInput = {
   drawingAnalysis: DrawingAnalysis;
   modelInfo: Phase1ModelInfo;
   lyricsPromptVersion: string | null;
+  activeCandidateId?: LyricsCandidate["candidateId"] | null;
 };
 
 /**
  * Builds the only browser-persisted evaluation shape. Its input deliberately
- * excludes DrawingData, Blob/audio, age, consent, and arbitrary payloads.
+ * excludes DrawingData, Blob/audio, participant age, and arbitrary payloads.
+ * The centralConsent field is only the local state of the future consent
+ * boundary; it is not a central submission or a consent record.
  */
 export const createEvaluationDraft = ({
   generationId,
@@ -137,6 +140,7 @@ export const createEvaluationDraft = ({
   drawingAnalysis,
   modelInfo,
   lyricsPromptVersion,
+  activeCandidateId = null,
 }: CreateEvaluationDraftInput): EvaluationDraft => ({
   schemaVersion: EVALUATION_DRAFT_SCHEMA_VERSION,
   generationId,
@@ -145,6 +149,10 @@ export const createEvaluationDraft = ({
   candidates: candidates.map(copyCandidate),
   displayOrder: [...displayOrder],
   selection: null,
+  firstImpressionSelection: null,
+  activeCandidateId,
+  alternativePreviewed: false,
+  centralConsent: "not-asked",
   drawingAnalysis: copyDrawingAnalysis(drawingAnalysis),
   modelInfo: {
     drawingAnalysis: modelInfo.drawingAnalysis,
@@ -158,7 +166,15 @@ export const withEvaluationDraftSelection = (
   draft: EvaluationDraft,
   selection: EvaluationSelection,
   updatedAt: string,
-): EvaluationDraft => ({ ...draft, selection, updatedAt });
+): EvaluationDraft => {
+  const firstImpressionSelection = draft.firstImpressionSelection ?? selection;
+  return {
+    ...draft,
+    selection: firstImpressionSelection,
+    firstImpressionSelection,
+    updatedAt,
+  };
+};
 
 export const saveEvaluationDraft = async (draft: EvaluationDraft): Promise<void> => {
   try {
@@ -166,6 +182,18 @@ export const saveEvaluationDraft = async (draft: EvaluationDraft): Promise<void>
     const transaction = database.transaction(DRAFTS_STORE, "readwrite");
     transaction.objectStore(DRAFTS_STORE).put(draft);
     await transactionDone(transaction);
+  } catch (error) {
+    throw asEvaluationDraftError(error);
+  }
+};
+
+export const getEvaluationDraft = async (generationId: string): Promise<EvaluationDraft | null> => {
+  try {
+    const database = await openDatabase();
+    const transaction = database.transaction(DRAFTS_STORE, "readonly");
+    const draft = await requestResult(transaction.objectStore(DRAFTS_STORE).get(generationId) as IDBRequest<EvaluationDraft | undefined>);
+    await transactionDone(transaction);
+    return draft ?? null;
   } catch (error) {
     throw asEvaluationDraftError(error);
   }
@@ -182,6 +210,43 @@ export const updateEvaluationDraftSelection = async (
     const store = transaction.objectStore(DRAFTS_STORE);
     const existing = await requestResult(store.get(generationId) as IDBRequest<EvaluationDraft | undefined>);
     if (existing) store.put(withEvaluationDraftSelection(existing, selection, updatedAt));
+    await transactionDone(transaction);
+    return !!existing;
+  } catch (error) {
+    throw asEvaluationDraftError(error);
+  }
+};
+
+export type EvaluationDraftStatePatch = {
+  firstImpressionSelection?: EvaluationSelection;
+  activeCandidateId?: LyricsCandidate["candidateId"] | null;
+  alternativePreviewed?: boolean;
+  centralConsent?: EvaluationCentralConsent;
+};
+
+/** Updates only the whitelisted local evaluation state; no drawing or media can enter the draft. */
+export const updateEvaluationDraftState = async (
+  generationId: string,
+  patch: EvaluationDraftStatePatch,
+  updatedAt: string,
+): Promise<boolean> => {
+  try {
+    const database = await openDatabase();
+    const transaction = database.transaction(DRAFTS_STORE, "readwrite");
+    const store = transaction.objectStore(DRAFTS_STORE);
+    const existing = await requestResult(store.get(generationId) as IDBRequest<EvaluationDraft | undefined>);
+    if (existing) {
+      const nextFirstImpressionSelection = patch.firstImpressionSelection ?? existing.firstImpressionSelection ?? existing.selection;
+      store.put({
+        ...existing,
+        ...patch,
+        // Keep the old `selection` field as a compatibility mirror. It is
+        // intentionally never changed by later alternative previews.
+        selection: nextFirstImpressionSelection,
+        firstImpressionSelection: nextFirstImpressionSelection,
+        updatedAt,
+      });
+    }
     await transactionDone(transaction);
     return !!existing;
   } catch (error) {

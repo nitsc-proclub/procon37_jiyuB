@@ -10,6 +10,7 @@ const vite = await createServer({
 });
 const pipeline = await vite.ssrLoadModule("/services/lyricsPipeline.ts");
 const evaluationDraftDb = await vite.ssrLoadModule("/services/evaluationDraftDb.ts");
+const evaluationSubmission = await vite.ssrLoadModule("/services/evaluationSubmissionService.ts");
 
 const strokeGroups = [
   {
@@ -179,8 +180,93 @@ test("evaluation draft builder whitelists fields and selection keeps its generat
   const selected = evaluationDraftDb.withEvaluationDraftSelection(draft, "neither", "2026-08-22T00:01:00.000Z");
   assert.equal(selected.generationId, "generation-1");
   assert.equal(selected.selection, "neither");
+  const attemptedLaterSelection = evaluationDraftDb.withEvaluationDraftSelection(selected, "candidate-a", "2026-08-22T00:02:00.000Z");
+  assert.equal(attemptedLaterSelection.selection, "neither");
+  assert.equal(attemptedLaterSelection.firstImpressionSelection, "neither");
   assert.equal(selected.updatedAt, "2026-08-22T00:01:00.000Z");
   assert.equal(draft.selection, null);
+});
+
+const buildSubmissionFixture = () => ({
+  schemaVersion: 1,
+  generationId: "123e4567-e89b-42d3-a456-426614174000",
+  evaluationReceipt: "v1.9999999999999.fingerprint.signature",
+  createdAt: "2026-08-23T00:00:00.000Z",
+  updatedAt: "2026-08-23T00:01:00.000Z",
+  consentedAt: "2026-08-23T00:01:00.000Z",
+  buildId: "test-build",
+  experimentRoundId: "phase1-test",
+  drawingAnalysisSchemaVersion: 1,
+  lyricsPromptVersion: "1",
+  firstImpressionSelection: "candidate-a",
+  displayOrder: ["candidate-b", "candidate-a"],
+  candidates: [
+    { ...validLyrics("candidate-a", "g1"), lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: ["g1"] }], modelName: "gemini-3.5-flash" },
+    { ...validLyrics("candidate-b", "g2"), lineStrokeMappings: [{ lineIndex: 0, strokeGroupIds: ["g2"] }], modelName: "gemini-3.5-flash" },
+  ],
+  strokeGroupIds: ["g1", "g2"],
+  drawingAnalysis: {
+    schemaVersion: 1,
+    objectCandidates: [{ label: "りんご", confidence: "high" }],
+    parts: [
+      { id: "body", shape: "丸", position: "中央", strokeGroupIds: ["g1"] },
+      { id: "stem", shape: "線", position: "上", strokeGroupIds: ["g2"] },
+    ],
+    drawingOrder: ["body", "stem"],
+  },
+  modelInfo: { drawingAnalysis: "gemini-3.7-flash", lyricsGeneration: "gemini-3.5-flash" },
+  activeCandidateId: "candidate-a",
+  alternativePreviewed: false,
+  centralConsent: "accepted",
+});
+
+test("evaluation receipts bind generation and generated content", async () => {
+  const payload = buildSubmissionFixture();
+  const secret = "0123456789abcdef0123456789abcdef";
+  const receipt = await evaluationSubmission.createEvaluationReceipt(payload.generationId, payload, secret, 1_000, 60);
+  payload.evaluationReceipt = receipt.value;
+  assert.equal(await evaluationSubmission.verifyEvaluationReceipt(receipt.value, payload.generationId, payload, secret, 2_000), true);
+  assert.equal(await evaluationSubmission.verifyEvaluationReceipt(receipt.value, payload.generationId, { ...payload, candidates: [{ ...payload.candidates[0], title: "改ざん" }, payload.candidates[1]] }, secret, 2_000), false);
+  assert.equal(await evaluationSubmission.verifyEvaluationReceipt(receipt.value, "123e4567-e89b-42d3-a456-426614174001", payload, secret, 2_000), false);
+  assert.equal(await evaluationSubmission.verifyEvaluationReceipt(receipt.value, payload.generationId, payload, secret, 62_000), false);
+});
+
+test("central submission rejects non-whitelisted personal or media fields", () => {
+  const payload = buildSubmissionFixture();
+  assert.equal(evaluationSubmission.validateEvaluationSubmission(payload).generationId, payload.generationId);
+  for (const forbidden of ["imageUri", "audio", "rawStrokes", "participantName", "participantAge", "freeText"]) {
+    assert.throws(() => evaluationSubmission.validateEvaluationSubmission({ ...payload, [forbidden]: "must-not-pass" }), /形式が正しく/);
+  }
+});
+
+test("D1 save is idempotent and never overwrites an approved generation", async () => {
+  let row = null;
+  const database = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...nextValues) { values = nextValues; return this; },
+        async run() {
+          if (row) return { meta: { changes: 0 } };
+          row = { generation_id: values[0], payload_hash: values[1], status: "pending", evaluation_json: values[4] };
+          return { meta: { changes: 1 } };
+        },
+        async first() { return sql.startsWith("SELECT") ? row : null; },
+      };
+    },
+  };
+  const payload = buildSubmissionFixture();
+  const first = await evaluationSubmission.saveEvaluationIdempotently(database, payload);
+  assert.equal(first.duplicate, false);
+  row.status = "approved";
+  const duplicate = await evaluationSubmission.saveEvaluationIdempotently(database, payload);
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(row.status, "approved");
+  await assert.rejects(
+    evaluationSubmission.saveEvaluationIdempotently(database, { ...payload, firstImpressionSelection: "candidate-b" }),
+    (error) => error.status === 409 && error.code === "evaluation-conflict",
+  );
+  assert.equal(row.status, "approved");
 });
 
 test.after(async () => {

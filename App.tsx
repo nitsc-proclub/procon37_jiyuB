@@ -5,6 +5,7 @@ import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
 import Turnstile, { TurnstileHandle, TurnstileStatus } from "./components/Turnstile";
 import DebugExportDialog from "./components/DebugExportDialog";
+import EvaluationConsentModal from "./components/EvaluationConsentModal";
 import DebugHistoryView from "./components/DebugHistoryView";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
@@ -13,7 +14,8 @@ import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, getUsageS
 import { GenerateEkakiUtaError, generateEkakiUta } from "./services/geminiService";
 import { buildDebugBundleArtifacts, createDebugBundle, createDebugBundleFromArtifacts, createDebugRecordId, DebugBundleArtifacts, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
 import { DebugHistoryRecord, isDebugHistoryError, saveDebugHistoryRecord } from "./services/debugHistoryDb";
-import { createEvaluationDraft, createGenerationId, getInitialPreviewCandidate, isComparableCandidateSet, saveEvaluationDraft, shuffleCandidateIds, updateEvaluationDraftSelection } from "./services/evaluationDraftDb";
+import { createEvaluationDraft, createGenerationId, getEvaluationDraft, getInitialPreviewCandidate, isComparableCandidateSet, saveEvaluationDraft, shuffleCandidateIds, updateEvaluationDraftState } from "./services/evaluationDraftDb";
+import { buildEvaluationSubmission, submitEvaluation } from "./services/evaluationSubmissionService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { createSilentPlaybackAudio } from "./services/silentPlaybackService";
 import { groupStrokes } from "./services/strokeGroupingService";
@@ -25,7 +27,7 @@ import {
   setDirectVoicevoxBaseUrl,
 } from "./services/voicevoxHttp";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
-import { DemoRecordSummary, DrawingAnalysis, DrawingData, EvaluationDraft, EvaluationSelection, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsCandidate, LyricsResponse, Phase1ModelInfo, SingingScore, UsageStats } from "./types";
+import { DemoRecordSummary, DrawingAnalysis, DrawingData, EvaluationCentralConsent, EvaluationDraft, EvaluationSelection, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsCandidate, LyricsResponse, Phase1ModelInfo, SingingScore, UsageStats } from "./types";
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
 
@@ -155,6 +157,7 @@ const VOICEVOX_BASE_URL_STORAGE_KEY = "ekaki-uta:voicevox-base-url";
 const DEBUG_HISTORY_CONSENT_STORAGE_KEY = "ekaki-uta:debug-history-autosave-v1";
 const TURNSTILE_ACTION = "generate-ekaki-uta";
 const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY?.trim() ?? "";
+const EVALUATION_EXPERIMENT_ROUND_ID = import.meta.env.VITE_EVALUATION_EXPERIMENT_ROUND_ID?.trim() || null;
 type DebugHistoryConsent = "unknown" | "enabled" | "disabled";
 
 const loadVoicevoxBaseUrl = () => {
@@ -385,7 +388,13 @@ const App: React.FC = () => {
   const [candidateDisplayOrder, setCandidateDisplayOrder] = useState<LyricsCandidate["candidateId"][]>([]);
   const [previewCandidateId, setPreviewCandidateId] = useState<LyricsCandidate["candidateId"] | null>(null);
   const [evaluationSelection, setEvaluationSelection] = useState<EvaluationSelection>(null);
+  const [isFirstImpressionOpen, setIsFirstImpressionOpen] = useState(false);
+  const [centralConsent, setCentralConsent] = useState<EvaluationCentralConsent>("not-asked");
+  const [isEvaluationConsentOpen, setIsEvaluationConsentOpen] = useState(false);
   const [evaluationGenerationId, setEvaluationGenerationId] = useState<string | null>(null);
+  const [evaluationReceipt, setEvaluationReceipt] = useState<string | null>(null);
+  const [evaluationReceiptExpiresAt, setEvaluationReceiptExpiresAt] = useState<string | null>(null);
+  const [isEvaluationSubmissionPending, setIsEvaluationSubmissionPending] = useState(false);
   const [isCandidatePreviewLoading, setIsCandidatePreviewLoading] = useState<LyricsCandidate["candidateId"] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [generationFailureDisplay, setGenerationFailureDisplay] = useState<GenerationFailureDisplay | null>(null);
@@ -462,6 +471,7 @@ const App: React.FC = () => {
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const completionHeadingRef = useRef<HTMLHeadingElement>(null);
+  const firstImpressionDialogRef = useRef<HTMLElement>(null);
   const recordConsentDialogRef = useRef<HTMLElement>(null);
   const recordConsentPrimaryButtonRef = useRef<HTMLButtonElement>(null);
   const generationRunRef = useRef(false);
@@ -561,6 +571,14 @@ const App: React.FC = () => {
     const frameId = window.requestAnimationFrame(() => recordConsentPrimaryButtonRef.current?.focus());
     return () => window.cancelAnimationFrame(frameId);
   }, [isRecordConsentOpen]);
+
+  useEffect(() => {
+    if (!isFirstImpressionOpen) return;
+    const frameId = window.requestAnimationFrame(() => {
+      firstImpressionDialogRef.current?.querySelector<HTMLButtonElement>("button[data-first-impression-choice]")?.focus();
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isFirstImpressionOpen]);
 
   useEffect(() => {
     if (appView !== "maker" || !audioUrl) return;
@@ -674,6 +692,8 @@ const App: React.FC = () => {
         return;
       }
 
+      if (isFirstImpressionOpen) return;
+
       if (isInitialPlaybackPromptVisible) {
         return;
       }
@@ -770,6 +790,7 @@ const App: React.FC = () => {
     appView,
     generatedDrawing,
     isExperimentGenerating,
+    isFirstImpressionOpen,
     isGenerating,
     isInitialPlaybackPromptVisible,
     isRecordConsentOpen,
@@ -805,7 +826,13 @@ const App: React.FC = () => {
     setCandidateDisplayOrder([]);
     setPreviewCandidateId(null);
     setEvaluationSelection(null);
+    setIsFirstImpressionOpen(false);
+    setCentralConsent("not-asked");
+    setIsEvaluationConsentOpen(false);
     setEvaluationGenerationId(null);
+    setEvaluationReceipt(null);
+    setEvaluationReceiptExpiresAt(null);
+    setIsEvaluationSubmissionPending(false);
     setIsCandidatePreviewLoading(null);
   };
 
@@ -1113,11 +1140,9 @@ const App: React.FC = () => {
     });
   };
 
-  const handleEvaluationSelection = (selection: EvaluationSelection) => {
-    setEvaluationSelection(selection);
+  const updateEvaluationDraftStateBestEffort = (patch: Parameters<typeof updateEvaluationDraftState>[1]) => {
     if (!evaluationGenerationId) return;
-
-    const write = () => updateEvaluationDraftSelection(evaluationGenerationId, selection, new Date().toISOString());
+    const write = () => updateEvaluationDraftState(evaluationGenerationId, patch, new Date().toISOString());
     const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
     evaluationDraftWriteQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
     void queuedWrite
@@ -1133,7 +1158,73 @@ const App: React.FC = () => {
       });
   };
 
-  const activateLyricsCandidate = async (candidateId: LyricsCandidate["candidateId"]) => {
+  const handleFirstImpressionSelection = async (selection: EvaluationSelection) => {
+    if (!isFirstImpressionOpen || evaluationSelection !== null || !isComparableCandidateSet(generatedLyricsCandidates)) return;
+
+    const firstCandidateId = candidateDisplayOrder[0];
+    const targetCandidateId = selection === "neither" ? firstCandidateId : selection;
+    if (!targetCandidateId) return;
+
+    setEvaluationSelection(selection);
+    updateEvaluationDraftStateBestEffort({
+      firstImpressionSelection: selection,
+      activeCandidateId: targetCandidateId,
+      alternativePreviewed: false,
+      centralConsent: "not-asked",
+    });
+
+    if (previewCandidateId !== targetCandidateId) {
+      await activateLyricsCandidate(targetCandidateId, false);
+    }
+
+    if (!isMountedRef.current) return;
+    setIsFirstImpressionOpen(false);
+    setIsInitialPlaybackPromptVisible(true);
+    if (evaluationReceipt && evaluationReceiptExpiresAt && Date.parse(evaluationReceiptExpiresAt) > Date.now()) {
+      setCentralConsent("not-asked");
+      setIsEvaluationConsentOpen(true);
+      setIsInitialPlaybackPromptVisible(false);
+    }
+  };
+
+  const handleEvaluationCentralConsent = async (nextConsent: Exclude<EvaluationCentralConsent, "not-asked">) => {
+    if (isEvaluationSubmissionPending) return;
+    setCentralConsent(nextConsent);
+    if (!evaluationGenerationId) {
+      setIsEvaluationConsentOpen(false);
+      setIsInitialPlaybackPromptVisible(true);
+      return;
+    }
+    const updatedAt = new Date().toISOString();
+    const write = () => updateEvaluationDraftState(evaluationGenerationId, { centralConsent: nextConsent }, updatedAt);
+    const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
+    evaluationDraftWriteQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
+    if (nextConsent === "declined") {
+      void queuedWrite.catch(() => setSaveToast({ message: "このブラウザへの同意結果の保存に失敗しました", tone: "error" }));
+      setIsEvaluationConsentOpen(false);
+      setIsInitialPlaybackPromptVisible(true);
+      return;
+    }
+    setIsEvaluationSubmissionPending(true);
+    try {
+      await queuedWrite;
+      const draft = await getEvaluationDraft(evaluationGenerationId);
+      if (!draft || !evaluationReceipt) throw new Error("評価下書きまたは保存用情報が見つかりません。");
+      const payload = buildEvaluationSubmission(draft, evaluationReceipt, appBuildId, updatedAt, EVALUATION_EXPERIMENT_ROUND_ID);
+      const result = await submitEvaluation(payload);
+      setSaveToast({ message: result.duplicate ? "評価はすでに保存されています" : "評価を保存しました。ご協力ありがとう！", tone: "success" });
+    } catch (submissionError) {
+      setSaveToast({ message: submissionError instanceof Error ? submissionError.message : "評価を中央に保存できませんでした", tone: "error" });
+    } finally {
+      if (isMountedRef.current) {
+        setIsEvaluationSubmissionPending(false);
+        setIsEvaluationConsentOpen(false);
+        setIsInitialPlaybackPromptVisible(true);
+      }
+    }
+  };
+
+  const activateLyricsCandidate = async (candidateId: LyricsCandidate["candidateId"], showPlaybackPrompt = true) => {
     if (!isComparableCandidateSet(generatedLyricsCandidates) || isCandidatePreviewLoading) return;
     const candidate = generatedLyricsCandidates.find((item) => item.candidateId === candidateId);
     if (!candidate || previewCandidateId === candidateId) return;
@@ -1179,7 +1270,11 @@ const App: React.FC = () => {
       setPlaybackKind(playback.playbackKind);
       setVoicevoxWarning(playback.voicevoxWarning);
       setPreviewCandidateId(candidateId);
-      setIsInitialPlaybackPromptVisible(true);
+      updateEvaluationDraftStateBestEffort({
+        activeCandidateId: candidateId,
+        alternativePreviewed: evaluationSelection !== null && evaluationSelection !== candidateId,
+      });
+      setIsInitialPlaybackPromptVisible(showPlaybackPrompt);
     } catch (candidateError) {
       if (candidateActivationSequenceRef.current === activationSequence && isMountedRef.current) {
         setSaveToast({ message: "この歌の再生準備に失敗しました", tone: "error" });
@@ -1385,14 +1480,17 @@ const App: React.FC = () => {
       const localVoicevoxProbe = appFeatures.localVoicevox
         ? checkVoicevoxConnection(true)
         : Promise.resolve(false);
-      const generationResult = await generateEkakiUta(groupedDrawingData, turnstileTokenForRequest);
+      const requestedGenerationId = createGenerationId();
+      const generationResult = await generateEkakiUta(groupedDrawingData, turnstileTokenForRequest, requestedGenerationId ?? undefined);
       generatedLyrics = generationResult.lyrics;
       generatedCandidates = generationResult.candidates;
+      setEvaluationReceipt(generationResult.evaluationReceipt ?? null);
+      setEvaluationReceiptExpiresAt(generationResult.evaluationReceiptExpiresAt ?? null);
       setGeneratedLyricsCandidates(generationResult.candidates);
       setGeneratedDrawingAnalysis(generationResult.drawingAnalysis);
       setGeneratedPhase1ModelInfo(generationResult.modelInfo);
       if (isComparableCandidateSet(generationResult.candidates) && generationResult.drawingAnalysis && generationResult.modelInfo) {
-        const generationId = createGenerationId();
+        const generationId = generationResult.generationId ?? requestedGenerationId;
         const displayOrder = shuffleCandidateIds(generationResult.candidates.map((candidate) => candidate.candidateId));
         const initialPreviewCandidate = getInitialPreviewCandidate(generationResult.candidates, displayOrder);
         if (!initialPreviewCandidate) {
@@ -1415,6 +1513,7 @@ const App: React.FC = () => {
             displayOrder,
             drawingAnalysis: generationResult.drawingAnalysis,
             modelInfo: generationResult.modelInfo,
+            activeCandidateId: initialPreviewCandidate.candidateId,
             // The browser response currently does not expose a prompt version.
             // Preserve that absence explicitly rather than guessing from a model name.
             lyricsPromptVersion: null,
@@ -1625,7 +1724,12 @@ const App: React.FC = () => {
         setIsGenerating(false);
         generationRunRef.current = false;
         if (generationErrorMessage === null && generatedLyrics && generatedAudioBlob) {
-          setIsInitialPlaybackPromptVisible(true);
+          if (isComparableCandidateSet(generatedCandidates) && evaluationDraft) {
+            setIsFirstImpressionOpen(true);
+            setIsInitialPlaybackPromptVisible(false);
+          } else {
+            setIsInitialPlaybackPromptVisible(true);
+          }
         }
       }
     }
@@ -1753,71 +1857,81 @@ const App: React.FC = () => {
     }
   };
 
-  const renderCandidateComparison = () => {
-    if (!isComparableCandidateSet(generatedLyricsCandidates) || candidateDisplayOrder.length !== 2) return null;
+  const renderAlternativeCandidateButton = () => {
+    if (!isComparableCandidateSet(generatedLyricsCandidates) || candidateDisplayOrder.length !== 2 || evaluationSelection === null) return null;
+    const alternativeCandidateId = generatedLyricsCandidates.find((candidate) => candidate.candidateId !== previewCandidateId)?.candidateId;
+    if (!alternativeCandidateId) return null;
+    const alternativeCandidate = generatedLyricsCandidates.find((candidate) => candidate.candidateId === alternativeCandidateId);
+
+    return (
+      <div className="mt-4 flex justify-end">
+        <button
+          type="button"
+          onClick={() => {
+            updateEvaluationDraftStateBestEffort({ activeCandidateId: alternativeCandidateId, alternativePreviewed: true });
+            void activateLyricsCandidate(alternativeCandidateId);
+          }}
+          disabled={!!isCandidatePreviewLoading}
+          aria-busy={isCandidatePreviewLoading === alternativeCandidateId}
+          className="min-h-10 rounded-full border border-violet-200 bg-violet-50 px-4 py-2 text-xs font-black text-violet-800 shadow-sm transition hover:bg-violet-100 disabled:cursor-wait disabled:opacity-60"
+        >
+          {isCandidatePreviewLoading === alternativeCandidateId ? "準備中..." : `もう一つも見る／聞く${alternativeCandidate ? `（${alternativeCandidate.title}）` : ""}`}
+        </button>
+      </div>
+    );
+  };
+
+  const renderFirstImpressionModal = () => {
+    if (!isFirstImpressionOpen || !isComparableCandidateSet(generatedLyricsCandidates) || candidateDisplayOrder.length !== 2) return null;
     const candidatesById = new Map(generatedLyricsCandidates.map((candidate) => [candidate.candidateId, candidate]));
     const displayedCandidates = candidateDisplayOrder.map((candidateId) => candidatesById.get(candidateId)).filter((candidate): candidate is LyricsCandidate => !!candidate);
     if (displayedCandidates.length !== 2) return null;
 
     return (
-      <fieldset className="mt-6 rounded-3xl border-2 border-violet-100 bg-violet-50/60 p-4 sm:p-5" aria-describedby="candidate-choice-help">
-        <legend className="px-2 text-lg font-black text-violet-800">どちらの歌が好き？</legend>
-        <p id="candidate-choice-help" className="mt-1 text-sm font-semibold leading-relaxed text-violet-900">
-          まず「この歌を試す」で順番に聴けます。試すだけでは、好みは決まりません。
-        </p>
-        <p className="sr-only" role="status" aria-live="polite">
-          {isCandidatePreviewLoading
-            ? "選んだ歌の再生を準備しています"
-            : previewCandidateId
-              ? "いま試している歌を更新しました"
-              : "歌を選んで試せます"}
-        </p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          {displayedCandidates.map((candidate, index) => {
-            const isPreview = previewCandidateId === candidate.candidateId;
-            const isLoading = isCandidatePreviewLoading === candidate.candidateId;
-            const isPreferred = evaluationSelection === candidate.candidateId;
-            return (
-              <article key={candidate.candidateId} className={`rounded-2xl border-2 bg-white p-4 shadow-sm ${isPreview ? "border-violet-400 ring-2 ring-violet-100" : "border-violet-100"}`}>
-                <p className="text-xs font-black text-violet-500">歌 {index + 1}</p>
-                <h3 className="mt-1 text-lg font-black text-gray-800">{candidate.title}</h3>
-                <p className="mt-2 min-h-12 text-sm font-semibold leading-relaxed text-gray-600">
-                  {candidate.lines.slice(0, 2).join("　")}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void activateLyricsCandidate(candidate.candidateId)}
-                  disabled={!!isCandidatePreviewLoading || isPreview}
-                  aria-pressed={isPreview}
-                  aria-busy={isLoading}
-                  className="mt-4 flex min-h-12 w-full items-center justify-center rounded-2xl border-2 border-violet-200 bg-violet-50 px-4 py-3 text-sm font-black text-violet-800 transition hover:bg-violet-100 disabled:cursor-wait disabled:opacity-60"
-                >
-                  {isLoading ? "再生を準備中..." : isPreview ? "いま試している歌" : "この歌を試す"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleEvaluationSelection(candidate.candidateId)}
-                  disabled={!!isCandidatePreviewLoading}
-                  aria-pressed={isPreferred}
-                  className={`mt-3 flex min-h-14 w-full items-center justify-center rounded-2xl px-4 py-3 text-base font-black shadow-sm transition active:scale-[.98] disabled:cursor-wait disabled:opacity-60 ${isPreferred ? "bg-violet-600 text-white" : "bg-orange-400 text-white hover:bg-orange-500"}`}
-                >
-                  {isPreferred ? "この歌が好き！" : "この歌が好き"}
-                </button>
-              </article>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          onClick={() => handleEvaluationSelection("neither")}
-          disabled={!!isCandidatePreviewLoading}
-          aria-pressed={evaluationSelection === "neither"}
-          className={`mt-4 flex min-h-14 w-full items-center justify-center rounded-2xl border-2 px-4 py-3 text-base font-black transition active:scale-[.98] disabled:cursor-wait disabled:opacity-60 ${evaluationSelection === "neither" ? "border-gray-700 bg-gray-700 text-white" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"}`}
+      <div className="fixed inset-0 z-[97] flex items-center justify-center bg-slate-900/45 px-4 py-5 backdrop-blur-sm" role="presentation">
+        <section
+          ref={firstImpressionDialogRef}
+          className="max-h-[calc(100svh-2.5rem)] w-full max-w-3xl overflow-y-auto rounded-3xl border-4 border-violet-100 bg-white p-5 text-left shadow-2xl sm:p-7"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="first-impression-title"
         >
-          どちらも違う
-        </button>
-        <p className="mt-3 text-center text-xs font-bold text-violet-700">評価はこのブラウザ内の下書きだけに保存され、まだ送信されません。</p>
-      </fieldset>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-500">歌詞の第一印象</p>
+          <h2 id="first-impression-title" className="mt-1 text-2xl font-black leading-tight text-gray-800">どちらの歌詞を先に見てみたい？</h2>
+          <p className="mt-2 text-sm font-semibold leading-relaxed text-gray-600">歌声を聴く前に、タイトルと歌詞から感じた方を選んでね。</p>
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            {displayedCandidates.map((candidate, index) => (
+              <button
+                key={candidate.candidateId}
+                type="button"
+                data-first-impression-choice="true"
+                onClick={() => void handleFirstImpressionSelection(candidate.candidateId)}
+                disabled={!!isCandidatePreviewLoading}
+                className="rounded-3xl border-2 border-violet-100 bg-violet-50/50 p-4 text-left shadow-sm transition hover:border-violet-300 hover:bg-violet-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-200 disabled:cursor-wait disabled:opacity-60 sm:p-5"
+              >
+                <span className="text-xs font-black text-violet-500">歌 {index + 1}</span>
+                <span className="mt-1 block text-xl font-black text-gray-800">{candidate.title}</span>
+                <span className="mt-4 block space-y-2">
+                  {candidate.lines.map((line, lineIndex) => (
+                    <span key={`${candidate.candidateId}-${lineIndex}`} className="block rounded-xl border border-violet-100 bg-white px-3 py-2 text-sm font-bold leading-relaxed text-gray-700">
+                      {line}
+                    </span>
+                  ))}
+                </span>
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleFirstImpressionSelection("neither")}
+            disabled={!!isCandidatePreviewLoading}
+            className="mt-4 flex min-h-12 w-full items-center justify-center rounded-2xl border-2 border-gray-200 bg-white px-4 py-3 text-sm font-black text-gray-700 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-gray-200 disabled:cursor-wait disabled:opacity-60"
+          >
+            どちらも違う
+          </button>
+          <p className="mt-3 text-center text-xs font-bold text-violet-700">選んだ第一印象は評価として確定し、このブラウザ内の下書きに保存されます。</p>
+        </section>
+      </div>
     );
   };
 
@@ -2120,6 +2234,16 @@ const App: React.FC = () => {
           </section>
         </div>
       )}
+
+      {renderFirstImpressionModal()}
+
+      <EvaluationConsentModal
+        open={isEvaluationConsentOpen && !!evaluationReceipt && !!evaluationReceiptExpiresAt}
+        consent={centralConsent}
+        pending={isEvaluationSubmissionPending}
+        onAccept={() => void handleEvaluationCentralConsent("accepted")}
+        onDecline={() => void handleEvaluationCentralConsent("declined")}
+      />
 
       {isRecordConsentOpen && (
         <div
@@ -2939,7 +3063,7 @@ const App: React.FC = () => {
                       className="mt-2"
                       showKanaLines
                     />
-                    {renderCandidateComparison()}
+                    {renderAlternativeCandidateButton()}
                     <div className="mt-6 rounded-2xl border-2 border-orange-100 bg-orange-50/60 p-4">
                       <p className="mb-2 text-sm font-black text-gray-700">描く順番</p>
                       <div className="space-y-2 text-sm font-semibold text-gray-600">
@@ -3033,6 +3157,8 @@ const App: React.FC = () => {
                       compact={isCompactMakerLayout}
                     />
 
+                    {renderAlternativeCandidateButton()}
+
                     <div className={`mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5 ${isCompactMakerLayout ? "mobile-playback-player" : ""}`}>
                       <div className="mb-4 flex justify-end">
                         <div className="flex rounded-full bg-white p-1 shadow-sm">
@@ -3081,7 +3207,7 @@ const App: React.FC = () => {
                       </p>
                     )}
 
-                    {renderCandidateComparison()}
+                    {renderAlternativeCandidateButton()}
                     {renderModelInfo()}
                   </>
                 ) : null}

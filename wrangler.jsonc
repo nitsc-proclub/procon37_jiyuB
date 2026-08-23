@@ -10,7 +10,9 @@
     "LYRICS_BASE_MODEL": "gemini-3.5-flash",
     "LYRICS_CANDIDATE_COUNT": "2",
     "DRAWING_ANALYSIS_SCHEMA_VERSION": "1",
-    "LYRICS_PROMPT_VERSION": "1"
+    "LYRICS_PROMPT_VERSION": "1",
+    "EVALUATION_CENTRAL_STORAGE_ENABLED": "false",
+    "EVALUATION_RECEIPT_TTL_SECONDS": "21600"
   },
   "assets": {
     "directory": "./dist",

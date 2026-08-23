@@ -7,6 +7,11 @@ type GenerateEkakiUtaErrorResponse = {
 };
 
 type GenerateEkakiUtaResponse = LyricsResponse | Phase1LyricsResponse | GenerateEkakiUtaErrorResponse;
+type GenerationReceiptMetadata = {
+  generationId?: unknown;
+  evaluationReceipt?: unknown;
+  evaluationReceiptExpiresAt?: unknown;
+};
 
 const isSafeDiagnosticValue = (value: unknown): value is string =>
   typeof value === "string" && /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(value);
@@ -54,13 +59,23 @@ const parseErrorResponse = async (response: Response) => {
   }
 };
 
-export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?: string): Promise<GeneratedEkakiUtaResult> => {
+const readReceiptMetadata = (value: unknown) => {
+  if (!value || typeof value !== "object") return {};
+  const metadata = value as GenerationReceiptMetadata;
+  return {
+    ...(typeof metadata.generationId === "string" ? { generationId: metadata.generationId } : {}),
+    ...(typeof metadata.evaluationReceipt === "string" ? { evaluationReceipt: metadata.evaluationReceipt } : {}),
+    ...(typeof metadata.evaluationReceiptExpiresAt === "string" ? { evaluationReceiptExpiresAt: metadata.evaluationReceiptExpiresAt } : {}),
+  };
+};
+
+export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?: string, generationId?: string): Promise<GeneratedEkakiUtaResult> => {
   const response = await fetch("/api/gemini/generate-ekaki-uta", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ drawingData, ...(turnstileToken ? { turnstileToken } : {}) }),
+    body: JSON.stringify({ drawingData, ...(turnstileToken ? { turnstileToken } : {}), ...(generationId ? { generationId } : {}) }),
   });
 
   if (!response.ok) {
@@ -80,7 +95,7 @@ export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?
     if (!selected) {
       throw new GenerateEkakiUtaError("絵かき歌の生成に失敗しました。もう一度試してください。", response.status, null, null);
     }
-    return { lyrics: selected, candidates: result.candidates, drawingAnalysis: result.drawingAnalysis, modelInfo: result.modelInfo };
+    return { lyrics: selected, candidates: result.candidates, drawingAnalysis: result.drawingAnalysis, modelInfo: result.modelInfo, ...readReceiptMetadata(result) };
   }
 
   if (!isLyricsResponse(result)) {
@@ -92,5 +107,5 @@ export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?
     );
   }
 
-  return { lyrics: result, candidates: null, drawingAnalysis: null, modelInfo: null };
+  return { lyrics: result, candidates: null, drawingAnalysis: null, modelInfo: null, ...readReceiptMetadata(result) };
 };

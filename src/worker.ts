@@ -12,6 +12,16 @@ import {
   parseInlineImage,
   resolveDrawingAnalysisSchemaVersion,
 } from "../services/lyricsPipeline";
+import {
+  createEvaluationReceipt,
+  DEFAULT_EVALUATION_RECEIPT_TTL_SECONDS,
+  EVALUATION_SUBMISSION_MAX_BYTES,
+  EvaluationDatabase,
+  EvaluationSubmissionError,
+  saveEvaluationIdempotently,
+  validateEvaluationSubmission,
+  verifyEvaluationReceipt,
+} from "../services/evaluationSubmissionService";
 
 type Env = {
   ASSETS: { fetch(request: Request): Promise<Response> };
@@ -27,6 +37,10 @@ type Env = {
   LYRICS_PROMPT_VERSION?: string;
   TURNSTILE_SECRET?: string;
   TURNSTILE_EXPECTED_HOSTNAME?: string;
+  EVALUATIONS_DB?: EvaluationDatabase;
+  EVALUATION_CENTRAL_STORAGE_ENABLED?: string;
+  EVALUATION_RECEIPT_SECRET?: string;
+  EVALUATION_RECEIPT_TTL_SECONDS?: string;
 };
 
 type ErrorStage = "request" | "config" | "turnstile" | "gemini";
@@ -47,6 +61,7 @@ const DEFAULT_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_VISION_MODEL = "gemini-3.7-flash";
 const DEFAULT_LYRICS_BASE_MODEL = "gemini-3.5-flash";
 const DEFAULT_SCHEMA_VERSION = "1";
+const GENERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let modelListCache: { expiresAt: number; names: string[] } | null = null;
 
 const json = (value: unknown, status = 200) =>
@@ -359,15 +374,31 @@ const handleGemini = async (request: Request, env: Env) => {
   try {
     const body = await request.arrayBuffer();
     if (body.byteLength > MAX_REQUEST_BYTES) return json({ error: "描画データが大きすぎます。" }, 413);
-    let payload: { drawingData?: unknown; turnstileToken?: unknown };
+    let payload: { drawingData?: unknown; turnstileToken?: unknown; generationId?: unknown };
     try {
-      payload = JSON.parse(new TextDecoder().decode(body)) as { drawingData?: unknown; turnstileToken?: unknown };
+      payload = JSON.parse(new TextDecoder().decode(body)) as { drawingData?: unknown; turnstileToken?: unknown; generationId?: unknown };
     } catch {
       throw httpError("リクエストの形式が正しくありません。", 400);
     }
     const drawingData = assertDrawingData(payload.drawingData);
+    if (payload.generationId !== undefined && (typeof payload.generationId !== "string" || !GENERATION_ID_PATTERN.test(payload.generationId))) {
+      throw httpError("評価用の生成識別子が正しくありません。", 400, "invalid-generation-id", "request");
+    }
     await verifyTurnstile(request, assertTurnstileToken(payload.turnstileToken), env);
-    return json(await generateEkakiUta(drawingData, env));
+    const result = await generateEkakiUta(drawingData, env);
+    const centralStorageEnabled = env.EVALUATION_CENTRAL_STORAGE_ENABLED?.trim().toLowerCase() === "true";
+    if (centralStorageEnabled && result && "pipelineMode" in result && result.pipelineMode === "phase1" && payload.generationId && env.EVALUATION_RECEIPT_SECRET) {
+      try {
+        const configuredTtl = Number(env.EVALUATION_RECEIPT_TTL_SECONDS);
+        const ttlSeconds = Number.isFinite(configuredTtl) ? configuredTtl : DEFAULT_EVALUATION_RECEIPT_TTL_SECONDS;
+        const receipt = await createEvaluationReceipt(payload.generationId as string, result, env.EVALUATION_RECEIPT_SECRET, Date.now(), ttlSeconds);
+        return json({ ...result, generationId: payload.generationId, evaluationReceipt: receipt.value, evaluationReceiptExpiresAt: receipt.expiresAt });
+      } catch {
+        // A central-storage configuration error must not discard valid lyrics.
+        console.warn("Evaluation receipt was not issued", { code: "evaluation-receipt-unavailable" });
+      }
+    }
+    return json(result);
   } catch (error) {
     const httpFailure =
       typeof error === "object" && error !== null && "status" in error && typeof error.status === "number"
@@ -388,10 +419,40 @@ const handleGemini = async (request: Request, env: Env) => {
   }
 };
 
+const evaluationJson = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
+  status,
+  headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+});
+
+const handleEvaluation = async (request: Request, env: Env) => {
+  if (request.method !== "POST") return evaluationJson({ error: "Method not allowed" }, 405);
+  if (request.headers.get("Origin") !== new URL(request.url).origin) return evaluationJson({ error: "同じサイトからのみ保存できます。", code: "invalid-origin" }, 403);
+  if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) return evaluationJson({ error: "Content-Type must be application/json" }, 415);
+  if (env.EVALUATION_CENTRAL_STORAGE_ENABLED?.trim().toLowerCase() !== "true" || !env.EVALUATIONS_DB || !env.EVALUATION_RECEIPT_SECRET || env.EVALUATION_RECEIPT_SECRET.length < 32) {
+    return evaluationJson({ error: "評価の中央保存はまだ利用できません。", code: "evaluation-unavailable" }, 503);
+  }
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > EVALUATION_SUBMISSION_MAX_BYTES) return evaluationJson({ error: "評価データが大きすぎます。", code: "evaluation-too-large" }, 413);
+  try {
+    const body = await request.arrayBuffer();
+    if (body.byteLength > EVALUATION_SUBMISSION_MAX_BYTES) return evaluationJson({ error: "評価データが大きすぎます。", code: "evaluation-too-large" }, 413);
+    const payload = validateEvaluationSubmission(JSON.parse(new TextDecoder().decode(body)));
+    if (!await verifyEvaluationReceipt(payload.evaluationReceipt, payload.generationId, payload, env.EVALUATION_RECEIPT_SECRET)) {
+      return evaluationJson({ error: "保存用情報の期限が切れているか、内容が一致しません。", code: "invalid-evaluation-receipt" }, 403);
+    }
+    const saved = await saveEvaluationIdempotently(env.EVALUATIONS_DB, payload);
+    return evaluationJson({ saved: true, duplicate: saved.duplicate, generationId: payload.generationId });
+  } catch (error) {
+    if (error instanceof EvaluationSubmissionError) return evaluationJson({ error: error.message, code: error.code }, error.status);
+    return evaluationJson({ error: "評価を保存できませんでした。", code: "evaluation-save-failed" }, 500);
+  }
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname === "/api/gemini/generate-ekaki-uta") return handleGemini(request, env);
+    if (pathname === "/api/evaluations") return handleEvaluation(request, env);
     return env.ASSETS.fetch(request);
   },
 };
