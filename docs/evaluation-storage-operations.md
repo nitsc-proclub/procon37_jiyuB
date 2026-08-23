@@ -2,6 +2,14 @@
 
 この文書は、Step 5の評価データ中央保存をCloudflare Worker + D1で有効化するときの運用手順である。現時点では中央送信を有効にせず、`wrangler.jsonc`の機能フラグは`false`のままにする。
 
+## 現在の設定状態（2026-08-23）
+
+- 本番D1とPreview専用D1を作成し、`EVALUATIONS_DB`の`database_id` / `preview_database_id`を`wrangler.jsonc`へ設定済み。
+- `0001_evaluation_records.sql`をローカル・Preview D1・本番D1へ適用し、両remote DBが0件であることを確認済み。
+- `EVALUATION_RECEIPT_SECRET`をWorker Secretへ登録済み。値は端末・文書・Gitへ保存していない。
+- Cloudflare Version Previewへ一時的に中央保存ONの版をアップロードし、同一Origin・`no-store`・payload検証・Secret認識を確認した。ただしVersion Previewは`preview_database_id`へ自動切替されず本番D1 bindingだった。送信は無効payloadだけで本番D1は0件のまま。公開aliasは中央保存OFFの安全な版へ差し替え済み。
+- 本番の`EVALUATION_CENTRAL_STORAGE_ENABLED`は引き続き`false`。本番ONの前に、Turnstileを含む実ブラウザの生成・同意・拒否・保存確認が必要。
+
 ## 保存境界
 
 中央保存するのは、利用者が毎回同意した最小限の評価メタデータだけとする。
@@ -124,7 +132,7 @@ npx.cmd wrangler types --check
 7. approvedレコードが再送で上書きされないことを確認する。
 8. 同意拒否時に生成・再生が継続し、中央APIへ送信しないことを確認する。
 9. 公開版の横画面・スマホ縦画面で、毎回の同意ポップアップが表示されることを確認する。
-10. 確認後にだけ、機能フラグを`true`へ変更してPreview Workerで送信を確認する。
+10. 正常保存を本番前に確認する場合は、別Worker名またはstaging環境を作り、`database_id`自体をPreview D1のUUIDへ向けた専用configを使う。`preview_database_id`だけでは`wrangler versions upload`のbindingは切り替わらない。通常の`wrangler deploy`は本番Workerを更新するためPreview確認には使わない。
 
 評価APIは同一Originだけを受け付け、レスポンスに`Cache-Control: no-store`を付ける。IPベースのレート制限は共有ネットワークへの影響があるため、既定では追加しない。Turnstileの生成トークンを評価APIで再利用しない。
 

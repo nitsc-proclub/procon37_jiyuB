@@ -1,6 +1,6 @@
 # 適応型・絵描き歌生成 第一段階 設計メモ
 
-> 状態: Step 1〜4実装済み。Step 5はアプリ・Worker・migration・運用CLIまで実装済みだが、Cloudflare側は未接続・既定OFF。Step 6は未着手。
+> 状態: Step 1〜4実装済み。Step 5はD1・Secret・Preview API検証まで完了、本番中央保存は既定OFF。Step 6は未着手。
 > 確認日: 2026-08-23
 > 対象: Gemini 3.7 Flash による描画理解と、Gemini 3.5 Flash 基礎モデルによる歌詞生成。SFT + Continuous Tuning は後続段階。
 > 将来候補: 同じ実証データを利用した Gemini 3.5 Flash の RLFT
@@ -274,15 +274,16 @@ Step 4の現行実装では、二候補が有効な`phase1`生成だけに表示
 | Step 1〜3 | 実装済み | 二段生成、3.7描画理解、3.5候補A/B、旧経路への切戻し |
 | Step 4 現行 | 実装済み | A/Bランダム表示、候補ごとの試聴、好み選択、「どちらも違う」、端末内評価下書き |
 | Step 4 改善 | 実装済み | 生成直後の歌詞第一印象ポップアップ、最初の選択を即 preference 確定、任意のもう一方確認 |
-| Step 5 | コード実装済み・Cloudflare未接続 | 毎回同意UI、署名receipt、Worker評価API、migration、冪等保存、承認・除外、approved-only JSONL。D1作成・binding・secret・migration適用・本番有効化は手動作業 |
+| Step 5 | 基盤設定・API境界検証済み、本番OFF | 毎回同意UI、署名receipt、Worker評価API、D1 migration、冪等保存、承認・除外、approved-only JSONL。残りはstaging環境または実ブラウザの生成・同意・保存確認と本番有効化 |
 | Step 6 | 未着手 | 承認済みJSONLのGCS連携、SFT、固定評価、モデル版比較・切替、Continuous Tuning |
 
-Step 5のリポジトリ内実装は完了した。中央保存は既定OFFで、D1 binding・secret・migration適用がそろうまでWorkerはreceiptを発行せず、ブラウザも同意UIや中央送信を開始しない。次は`docs/evaluation-storage-operations.md`に従ってCloudflareを手動設定し、Previewで横画面・スマホ縦画面・拒否・再送・競合を確認してから本番有効化する。その後、評価尺度を決めて認識訂正と詳細4項目評価を追加し、最後にStep 6のSFT・固定評価・モデル切替へ進む。
+Step 5のコード、D1 binding、Secret、ローカル・Preview・本番migration、Version PreviewでのAPI安全境界検証まで完了した。Version Previewが本番D1 bindingを使うことも実測し、中央保存ONのaliasはOFF版へ差し替えた。中央保存は既定OFFのままである。次は`docs/evaluation-storage-operations.md`に従い、Preview D1を`database_id`へ明示したstaging環境または管理下の実ブラウザで、横画面・スマホ縦画面・拒否・正常保存を確認してから本番有効化する。
 
-### Step 5: 収集・書き出しを追加（コード実装済み・Cloudflare未接続）
+### Step 5: 収集・書き出しを追加（基盤設定済み・本番OFF）
 
 - **コード実装済み:** クライアントの`generationId`送信、毎回同意UI、payloadの厳格なwhitelist/group参照検証、Workerの署名receipt、`POST /api/evaluations`のsame-origin・`no-store`・256KiB制限、D1 migration、`generation_id` + `payload_hash`の冪等保存と409競合、承認済みレコードを上書きしない承認・除外CLI、approved-only JSONL export。
-- **Cloudflare側で未接続:** D1 database作成とbindingのdatabase UUID、Preview用database、migration適用、`EVALUATION_RECEIPT_SECRET`登録、Preview確認、本番feature flag有効化。これらが終わるまでは`EVALUATION_CENTRAL_STORAGE_ENABLED=false`を維持する。
+- **Cloudflare側で完了:** 本番・Preview D1作成、binding、全migration適用、`EVALUATION_RECEIPT_SECRET`登録、Version Previewでのsame-origin・`no-store`・payload検証・Secret認識。Version Previewは本番D1 bindingになるため、無効payloadだけで確認してOFF版へ差し替えた。
+- **本番ON前の残件:** Turnstileを含む実生成からreceipt発行、同意拒否時の非送信、同意時の正常保存、横画面・スマホ縦画面を確認する。それまでは`EVALUATION_CENTRAL_STORAGE_ENABLED=false`を維持する。
 - ローカル起動時は既存のIndexedDBだけを使い、中央送信はしない。公開版で同意を得た最小データだけをWorkerの評価API経由でD1へ保存する。画像、音声、raw strokes、氏名、年齢、自由記述は中央保存しない。
 - 認識訂正と詳細4項目評価は、保存API接続後に端末内下書きから追加する。評価尺度、必須／任意、除外基準、承認者はユーザーの研究・運用判断が必要である。
 - Cloudflare R2は、将来のJSONLバックアップや明示的に同意を得た添付データの保管が必要になった場合だけ追加する。R2を公開バケットにせず、評価データの主DBにはしない。
@@ -303,6 +304,7 @@ Step 5のリポジトリ内実装は完了した。中央保存は既定OFFで�
 - **2026-08-22: Step 4改善方針を決定** — 歌詞だけの第一印象で最初に試す候補を選び、その選択を即時 preference として確定する。もう一方は小さな確認ボタンから任意に見る／聞く方式へ変更する。
 - **2026-08-23: Step 4改善を実装** — 生成直後の第一印象モーダル、候補選択の固定、表示先頭へ進む「どちらも違う」、通常結果の小さな代替候補ボタン、端末内下書き項目を追加した。中央保存はreceipt・機能フラグがそろった場合だけ同意UIを表示できる準備に留め、送信は行わない。
 - **2026-08-23: Step 5のコード実装を完了** — 毎回同意UI、評価payloadの厳格検証、署名receipt/fingerprint、Worker評価route、D1 migrationと冪等保存、承認・除外、approved-only exportを追加した。CloudflareのD1作成・binding・secret・migration適用・本番有効化は未実施である。
+- **2026-08-23: Cloudflare基盤を設定** — 本番・Preview D1、binding、migration、Worker Secret、生成型を設定し、Version Previewで評価APIの安全境界を確認した。本番中央保存は実ブラウザ確認までOFFを維持する。
 - **2026-08-22: 将来の保存同意方針を決定** — Step 5の中央保存時は毎回確認ポップアップを出し、横画面・スマホ縦画面の双方で利用できるようにする。拒否しても生成・再生は可能とする。
 
 ## 8. 設定項目案

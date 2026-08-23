@@ -18,5 +18,14 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "run_worker_first": ["/api/*"]
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "EVALUATIONS_DB",
+      "database_name": "cho-ekaki-uta-evaluations",
+      "database_id": "c305d19d-2119-4eb4-8e82-f941e8f57414",
+      "preview_database_id": "0f5b9857-6c4a-415b-a0c9-325c490bf31c",
+      "migrations_dir": "migrations"
+    }
+  ]
 }
