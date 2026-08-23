@@ -20,6 +20,10 @@
     "react": "^19.2.3",
     "@google/genai": "^1.35.0"
   },
+  "overrides": {
+    "protobufjs": "7.6.5",
+    "ws": "8.21.3"
+  },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
