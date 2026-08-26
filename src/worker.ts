@@ -1,4 +1,5 @@
-import type { DrawingData, LyricsResponse, Phase1LyricsResponse, StrokeGroup } from "../types";
+import type { DrawingData, LyricsCandidate, LyricsResponse, Phase1LyricsResponse, SingingScore, StrokeGroup } from "../types";
+import { createCloudRunIdToken } from "./cloudRunIdToken";
 import {
   buildDrawingAnalysisPrompt,
   buildLegacyLyricsPrompt,
@@ -47,6 +48,8 @@ type Env = {
   EVALUATION_CENTRAL_STORAGE_ENABLED?: string;
   EVALUATION_RECEIPT_SECRET?: string;
   EVALUATION_RECEIPT_TTL_SECONDS?: string;
+  VOICEVOX_CLOUD_RUN_URL?: string;
+  VOICEVOX_GCP_SERVICE_ACCOUNT_JSON?: string;
 };
 
 type ErrorStage = "request" | "config" | "turnstile" | "gemini";
@@ -68,12 +71,18 @@ const DEFAULT_VISION_MODEL = "gemini-3.7-flash";
 const DEFAULT_LYRICS_BASE_MODEL = "gemini-3.5-flash";
 const DEFAULT_LYRICS_PROMPT_VERSION = "3";
 const GENERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const VOICE_GRANT_TTL_MS = 5 * 60 * 1_000;
+const VOICE_GRANT_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const VOICEVOX_REQUEST_MAX_BYTES = 256 * 1024;
+const VOICEVOX_QUERY_MAX_BYTES = 1024 * 1024;
+const VOICEVOX_MAX_NOTES = 512;
+const VOICEVOX_MAX_TOTAL_FRAMES = 36_000;
 let modelListCache: { expiresAt: number; names: string[] } | null = null;
 
 const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
   });
 
 const httpError = (message: string, status: number, code?: string, stage?: ErrorStage): HttpError =>
@@ -372,6 +381,147 @@ const generateEkakiUta = async (drawingData: DrawingData, env: Env): Promise<Lyr
   }
 };
 
+type VoiceGrant = { value: string; expiresAt: string };
+
+const bytesToBase64Url = (bytes: Uint8Array) => {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+};
+
+const sha256Hex = async (value: string) => {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
+const issueVoiceGrant = async (env: Env, generationId: string, candidateId?: LyricsCandidate["candidateId"]): Promise<VoiceGrant | null> => {
+  if (!env.EVALUATIONS_DB || !env.VOICEVOX_CLOUD_RUN_URL || !env.VOICEVOX_GCP_SERVICE_ACCOUNT_JSON) return null;
+  const raw = crypto.getRandomValues(new Uint8Array(32));
+  const value = bytesToBase64Url(raw);
+  const now = Date.now();
+  const expiresAt = now + VOICE_GRANT_TTL_MS;
+  await env.EVALUATIONS_DB.prepare(
+    "INSERT INTO voicevox_grants (grant_hash, generation_id, candidate_id, issued_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+  ).bind(await sha256Hex(value), generationId, candidateId ?? null, now, expiresAt).run();
+  return { value, expiresAt: new Date(expiresAt).toISOString() };
+};
+
+const issueVoiceGrants = async (env: Env, generationId: string, result: LyricsResponse | Phase1LyricsResponse) => {
+  try {
+    if ("pipelineMode" in result && result.pipelineMode === "phase1") {
+      const entries = await Promise.all(result.candidates.map(async (candidate) => [candidate.candidateId, await issueVoiceGrant(env, generationId, candidate.candidateId)] as const));
+      const voiceGrants = Object.fromEntries(
+        entries
+          .filter((entry): entry is [LyricsCandidate["candidateId"], VoiceGrant] => entry[1] !== null)
+          .map(([candidateId, grant]) => [candidateId, grant.value]),
+      );
+      return Object.keys(voiceGrants).length > 0 ? { voiceGrants } : {};
+    }
+    const voiceGrant = await issueVoiceGrant(env, generationId);
+    return voiceGrant ? { voiceGrant: voiceGrant.value } : {};
+  } catch {
+    // Lyrics remain usable when a secondary voice grant cannot be issued.
+    console.warn("Voice grant was not issued", { code: "voice-grant-unavailable" });
+    return {};
+  }
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+
+const parseSingingScore = (value: unknown): SingingScore => {
+  if (!isRecord(value) || !Array.isArray(value.notes) || value.notes.length === 0 || value.notes.length > VOICEVOX_MAX_NOTES) {
+    throw httpError("歌声データの形式が正しくありません。", 400, "invalid-voice-score", "request");
+  }
+  let totalFrames = 0;
+  const notes = value.notes.map((note) => {
+    if (!isRecord(note) || Object.keys(note).length !== 3 || typeof note.lyric !== "string" || note.lyric.length > 128 ||
+      !(note.key === null || (typeof note.key === "number" && Number.isInteger(note.key) && note.key >= 0 && note.key <= 127)) ||
+      typeof note.frame_length !== "number" || !Number.isInteger(note.frame_length) || note.frame_length < 1 || note.frame_length > VOICEVOX_MAX_TOTAL_FRAMES) {
+      throw httpError("歌声データの形式が正しくありません。", 400, "invalid-voice-score", "request");
+    }
+    totalFrames += note.frame_length;
+    return { lyric: note.lyric, key: note.key as number | null, frame_length: note.frame_length };
+  });
+  if (totalFrames > VOICEVOX_MAX_TOTAL_FRAMES) throw httpError("歌声が長すぎます。", 413, "voice-score-too-long", "request");
+  return { notes };
+};
+
+const getCloudRunUrl = (env: Env) => {
+  const value = env.VOICEVOX_CLOUD_RUN_URL?.trim();
+  if (!value || !/^https:\/\/[a-z0-9-]+\.run\.app$/i.test(value)) {
+    throw httpError("歌声サーバーの設定がまだ完了していません。", 503, "voice-server-config", "config");
+  }
+  return value;
+};
+
+const fetchCloudRun = async (env: Env, path: string, body: string, timeoutMs: number) => {
+  if (!env.VOICEVOX_GCP_SERVICE_ACCOUNT_JSON) throw httpError("歌声サーバーの設定がまだ完了していません。", 503, "voice-server-config", "config");
+  const serviceUrl = getCloudRunUrl(env);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const idToken = await createCloudRunIdToken(env.VOICEVOX_GCP_SERVICE_ACCOUNT_JSON, serviceUrl);
+    return await fetch(new URL(path, `${serviceUrl}/`), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+      body,
+      signal: controller.signal,
+    });
+  } catch {
+    throw httpError("歌声サーバーを利用できません。しばらくしてからもう一度お試しください。", 503, "voice-server-unavailable", "config");
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const handleVoicevoxSynthesis = async (request: Request, env: Env) => {
+  if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  if (request.headers.get("Origin") !== new URL(request.url).origin) return json({ error: "同じサイトからのみ利用できます。", code: "invalid-origin" }, 403);
+  if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) return json({ error: "Content-Type must be application/json" }, 415);
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > VOICEVOX_REQUEST_MAX_BYTES) return json({ error: "歌声データが大きすぎます。", code: "voice-request-too-large" }, 413);
+  if (!env.EVALUATIONS_DB) return json({ error: "歌声機能はまだ利用できません。", code: "voice-unavailable" }, 503);
+
+  try {
+    const body = await request.arrayBuffer();
+    if (body.byteLength > VOICEVOX_REQUEST_MAX_BYTES) return json({ error: "歌声データが大きすぎます。", code: "voice-request-too-large" }, 413);
+    const payload = JSON.parse(new TextDecoder().decode(body)) as unknown;
+    if (!isRecord(payload) || Object.keys(payload).length !== 2 || typeof payload.voiceGrant !== "string" || !VOICE_GRANT_PATTERN.test(payload.voiceGrant)) {
+      return json({ error: "音声チケットを確認できません。新しい歌を作ってください。", code: "invalid-or-expired-voice-grant" }, 403);
+    }
+    const voiceGrant = payload.voiceGrant as string;
+    const score = parseSingingScore(payload.score);
+    const consumed = await env.EVALUATIONS_DB.prepare(
+      "UPDATE voicevox_grants SET consumed_at = ?, score_hash = ? WHERE grant_hash = ? AND expires_at > ? AND consumed_at IS NULL",
+    ).bind(Date.now(), await sha256Hex(JSON.stringify(score)), await sha256Hex(voiceGrant), Date.now()).run();
+    if (consumed.meta?.changes !== 1) return json({ error: "音声チケットを確認できません。新しい歌を作ってください。", code: "invalid-or-expired-voice-grant" }, 403);
+
+    const queryResponse = await fetchCloudRun(env, "/sing_frame_audio_query?speaker=6000", JSON.stringify(score), 45_000);
+    if (!queryResponse.ok) return json({ error: "歌声の準備に失敗しました。", code: "voice-query-failed" }, 502);
+    const queryLength = Number(queryResponse.headers.get("content-length"));
+    if (Number.isFinite(queryLength) && queryLength > VOICEVOX_QUERY_MAX_BYTES) return json({ error: "歌声の準備に失敗しました。", code: "voice-query-too-large" }, 502);
+    const queryBytes = await queryResponse.arrayBuffer();
+    if (queryBytes.byteLength > VOICEVOX_QUERY_MAX_BYTES) return json({ error: "歌声の準備に失敗しました。", code: "voice-query-too-large" }, 502);
+    let query: unknown;
+    try { query = JSON.parse(new TextDecoder().decode(queryBytes)); } catch { return json({ error: "歌声の準備に失敗しました。", code: "voice-query-invalid" }, 502); }
+    if (!isRecord(query)) return json({ error: "歌声の準備に失敗しました。", code: "voice-query-invalid" }, 502);
+
+    const synthesisResponse = await fetchCloudRun(env, "/frame_synthesis?speaker=3003", JSON.stringify(query), 120_000);
+    if (!synthesisResponse.ok || !synthesisResponse.body) return json({ error: "歌声の合成に失敗しました。", code: "voice-synthesis-failed" }, 502);
+    const length = Number(synthesisResponse.headers.get("content-length"));
+    if (Number.isFinite(length) && length > 32 * 1024 * 1024) return json({ error: "歌声データが大きすぎます。", code: "voice-audio-too-large" }, 502);
+    return new Response(synthesisResponse.body, {
+      headers: { "Content-Type": "audio/wav", "Cache-Control": "no-store", ...(Number.isFinite(length) ? { "Content-Length": String(length) } : {}) },
+    });
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "status" in error && typeof error.status === "number") {
+      const failure = error as HttpError;
+      return json({ error: failure.message, code: failure.code ?? "voice-failed" }, failure.status);
+    }
+    return json({ error: "歌声の合成に失敗しました。", code: "voice-failed" }, 502);
+  }
+};
+
 const handleGemini = async (request: Request, env: Env) => {
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
   if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) return json({ error: "Content-Type must be application/json" }, 415);
@@ -391,21 +541,23 @@ const handleGemini = async (request: Request, env: Env) => {
     if (payload.generationId !== undefined && (typeof payload.generationId !== "string" || !GENERATION_ID_PATTERN.test(payload.generationId))) {
       throw httpError("評価用の生成識別子が正しくありません。", 400, "invalid-generation-id", "request");
     }
+    const generationId = typeof payload.generationId === "string" ? payload.generationId : null;
     await verifyTurnstile(request, assertTurnstileToken(payload.turnstileToken), env);
     const result = await generateEkakiUta(drawingData, env);
+    const voiceMetadata = generationId ? await issueVoiceGrants(env, generationId, result) : {};
     const centralStorageEnabled = env.EVALUATION_CENTRAL_STORAGE_ENABLED?.trim().toLowerCase() === "true";
-    if (centralStorageEnabled && result && "pipelineMode" in result && result.pipelineMode === "phase1" && payload.generationId && env.EVALUATION_RECEIPT_SECRET) {
+    if (centralStorageEnabled && result && "pipelineMode" in result && result.pipelineMode === "phase1" && generationId && env.EVALUATION_RECEIPT_SECRET) {
       try {
         const configuredTtl = Number(env.EVALUATION_RECEIPT_TTL_SECONDS);
         const ttlSeconds = Number.isFinite(configuredTtl) ? configuredTtl : DEFAULT_EVALUATION_RECEIPT_TTL_SECONDS;
-        const receipt = await createEvaluationReceipt(payload.generationId as string, result, env.EVALUATION_RECEIPT_SECRET, Date.now(), ttlSeconds);
-        return json({ ...result, generationId: payload.generationId, evaluationReceipt: receipt.value, evaluationReceiptExpiresAt: receipt.expiresAt });
+        const receipt = await createEvaluationReceipt(generationId, result, env.EVALUATION_RECEIPT_SECRET, Date.now(), ttlSeconds);
+        return json({ ...result, ...voiceMetadata, generationId, evaluationReceipt: receipt.value, evaluationReceiptExpiresAt: receipt.expiresAt });
       } catch {
         // A central-storage configuration error must not discard valid lyrics.
         console.warn("Evaluation receipt was not issued", { code: "evaluation-receipt-unavailable" });
       }
     }
-    return json(result);
+    return json({ ...result, ...voiceMetadata });
   } catch (error) {
     const httpFailure =
       typeof error === "object" && error !== null && "status" in error && typeof error.status === "number"
@@ -484,6 +636,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname === "/api/gemini/generate-ekaki-uta") return handleGemini(request, env);
+    if (pathname === "/api/voicevox/synthesize") return handleVoicevoxSynthesis(request, env);
     if (pathname === "/api/evaluations") return handleEvaluation(request, env);
     if (pathname === "/api/evaluations/follow-up") return handleEvaluationFollowUp(request, env);
     return env.ASSETS.fetch(request);

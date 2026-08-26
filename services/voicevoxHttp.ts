@@ -1,4 +1,5 @@
 const DEV_VOICEVOX_BASE_URL = "/voicevox";
+const WORKER_VOICEVOX_BASE_URL = "/api/voicevox";
 
 // Keep automatic probing on loopback. A visitor may explicitly select a
 // VOICEVOX Engine on the same private IPv4 network via the settings UI.
@@ -28,7 +29,7 @@ type VoicevoxFetchOptions = {
   failureMessage?: string;
 };
 
-const isDevelopmentProxy = () => import.meta.env.DEV;
+export const isDevelopmentVoicevox = () => import.meta.env.DEV;
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
@@ -123,11 +124,11 @@ const fetchWithTimeout = async (
  * probes only the two explicitly allowed loopback endpoints.
  */
 export const probeVoicevox = async (): Promise<string> => {
-  if (isDevelopmentProxy() && developmentProxyVerified) {
+  if (isDevelopmentVoicevox() && developmentProxyVerified) {
     return DEV_VOICEVOX_BASE_URL;
   }
 
-  if (!isDevelopmentProxy() && resolvedDirectBaseUrl) {
+  if (!isDevelopmentVoicevox() && resolvedDirectBaseUrl) {
     return resolvedDirectBaseUrl;
   }
 
@@ -136,7 +137,7 @@ export const probeVoicevox = async (): Promise<string> => {
   }
 
   probeInFlight = (async () => {
-    if (isDevelopmentProxy()) {
+    if (isDevelopmentVoicevox()) {
       const response = await fetchWithTimeout(`${DEV_VOICEVOX_BASE_URL}/version`, { cache: "no-store" }, {
         timeoutMs: PROBE_TIMEOUT_MS,
         failureMessage: "VOICEVOX Engine に接続できませんでした。Vite サーバーと VOICEVOX Engine が起動しているか確認してください。",
@@ -146,28 +147,10 @@ export const probeVoicevox = async (): Promise<string> => {
       return DEV_VOICEVOX_BASE_URL;
     }
 
-    const baseUrls = configuredDirectBaseUrl
-      ? [configuredDirectBaseUrl]
-      : DIRECT_VOICEVOX_BASE_URLS;
-
-    for (const baseUrl of baseUrls) {
-      try {
-        const response = await fetchWithTimeout(`${baseUrl}/version`, { cache: "no-store" }, {
-          timeoutMs: PROBE_TIMEOUT_MS,
-        });
-        if (!response.ok) {
-          continue;
-        }
-        resolvedDirectBaseUrl = baseUrl;
-        return baseUrl;
-      } catch (error) {
-        if (!(error instanceof VoicevoxConnectionError)) {
-          throw error;
-        }
-      }
-    }
-
-    throw new VoicevoxConnectionError(describeDirectConnectionProblem());
+    // Production never probes a visitor's computer. A Worker-issued voice
+    // grant is required for the fixed Worker API, so callers use fetchVoicevox
+    // after a successful lyric generation instead.
+    throw new VoicevoxConnectionError("歌声の準備には、歌詞生成後の音声チケットが必要です。");
   })();
 
   try {
@@ -184,17 +167,25 @@ export const resetVoicevoxConnection = () => {
 };
 
 /**
- * Uses the Vite proxy in development and a previously probed loopback Engine
- * elsewhere. The probe also gives a single, actionable error for unavailable
- * Engine/CORS/Local Network Access cases instead of exposing fetch internals.
+ * Development uses the existing Vite proxy and local Engine. Built apps call
+ * only the Worker's fixed VOICEVOX routes; browsers never receive the Cloud
+ * Run URL or credentials. The one-time voice grant travels only inside the
+ * fixed synthesis request body, not as a reusable authorization header.
  */
 export const fetchVoicevox = async (
   path: string,
   init: RequestInit,
   options?: VoicevoxFetchOptions,
 ) => {
-  const baseUrl = await probeVoicevox();
-  return fetchWithTimeout(`${baseUrl}${path}`, init, options);
+  if (isDevelopmentVoicevox()) {
+    const baseUrl = await probeVoicevox();
+    return fetchWithTimeout(`${baseUrl}${path}`, init, options);
+  }
+
+  return fetchWithTimeout(`${WORKER_VOICEVOX_BASE_URL}${path}`, init, {
+    ...options,
+    failureMessage: options?.failureMessage ?? "歌声のサーバーに接続できませんでした。少し待ってから、もう一度試してください。",
+  });
 };
 
 const readErrorText = async (response: Response) => {

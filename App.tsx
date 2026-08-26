@@ -24,6 +24,7 @@ import { groupStrokes } from "./services/strokeGroupingService";
 import { analyzeAccentLines } from "./services/voicevoxAccentService";
 import {
   getDirectVoicevoxBaseUrl,
+  isDevelopmentVoicevox,
   probeVoicevox,
   resetVoicevoxConnection,
   setDirectVoicevoxBaseUrl,
@@ -498,6 +499,9 @@ const App: React.FC = () => {
   const sceneTurnTimerRef = useRef<number | null>(null);
   const candidatePlaybackCacheRef = useRef(new Map<LyricsCandidate["candidateId"], CandidatePlaybackCache>());
   const candidateActivationSequenceRef = useRef(0);
+  // Kept only for the current generated song. These short-lived grants are
+  // never written to localStorage, IndexedDB, demo records, or debug exports.
+  const voicevoxGrantsRef = useRef<Partial<Record<LyricsCandidate["candidateId"], string>>>({});
   const evaluationDraftWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Vite's development middleware is the only intentionally local API path.
   // Every built app can be served by the Worker, whose Gemini route validates
@@ -775,7 +779,7 @@ const App: React.FC = () => {
       }
 
       if (key === "2") {
-        if (!appFeatures.voicevox) return;
+        if (!appFeatures.voicevox || !isDevelopmentVoicevox()) return;
         event.preventDefault();
         setAppView("melodyExperiment");
         setIsShortcutHelpOpen(false);
@@ -922,6 +926,7 @@ const App: React.FC = () => {
 
     try {
       const demoRecord = await getDemoRecord(recordId);
+      voicevoxGrantsRef.current = {};
       let nextAudioUrl = demoRecord.audioUrl;
 
       if (demoRecord.audioUrl) {
@@ -1063,6 +1068,7 @@ const App: React.FC = () => {
     };
     const playbackAudioBlob = artifacts.voiceAudioBlob ?? (manifest.singingScore ? createSilentPlaybackAudio(manifest.singingScore) : null);
 
+    voicevoxGrantsRef.current = {};
     stopAudioPlayback();
     replaceAudioUrl(playbackAudioBlob ? URL.createObjectURL(playbackAudioBlob) : null);
     setPlaybackKind(artifacts.voiceAudioBlob ? "voice" : "animation-only");
@@ -1333,8 +1339,13 @@ const App: React.FC = () => {
     try {
       let playback = candidatePlaybackCacheRef.current.get(candidateId);
       if (!playback) {
-        const canUseVoicevox = appFeatures.localVoicevox && voicevoxConnectionStatus === "connected";
-        const accentLineHints = canUseVoicevox ? await analyzeLyricsAccents(candidate) : undefined;
+        const voiceGrant = voicevoxGrantsRef.current[candidateId];
+        const canUseVoicevox = isDevelopmentVoicevox()
+          ? appFeatures.localVoicevox && voicevoxConnectionStatus === "connected"
+          : appFeatures.voicevox && !!voiceGrant;
+        const accentLineHints = isDevelopmentVoicevox() && canUseVoicevox
+          ? await analyzeLyricsAccents(candidate)
+          : undefined;
         if (candidateActivationSequenceRef.current !== activationSequence) return;
 
         const score = buildSingingScore(candidate, createSingingSeed(candidate, 0), accentLineHints);
@@ -1344,7 +1355,7 @@ const App: React.FC = () => {
 
         if (canUseVoicevox) {
           try {
-            audioBlob = await synthesizeSingingVoice(score);
+            audioBlob = await synthesizeSingingVoice(score, undefined, voiceGrant);
             playbackKind = "voice";
           } catch (voiceError) {
             nextVoicevoxWarning = voiceError instanceof Error ? voiceError.message : "VOICEVOXで歌声を作れませんでした。";
@@ -1383,6 +1394,10 @@ const App: React.FC = () => {
   };
 
   const handleGenerateExperimentVoice = async () => {
+    if (!isDevelopmentVoicevox()) {
+      setExperimentError("実験用の歌声生成は開発時のローカルVOICEVOXでのみ利用できます。");
+      return;
+    }
     const nextVariant = experimentVariant + 1;
 
     setExperimentVariant(nextVariant);
@@ -1539,6 +1554,7 @@ const App: React.FC = () => {
         });
     }
     setIsGenerating(true);
+    voicevoxGrantsRef.current = {};
     setLyrics(null);
     clearPhase1Generation();
     setError(null);
@@ -1573,13 +1589,16 @@ const App: React.FC = () => {
       updateProgress("絵をじっくり見ているよ");
       // Start the loopback request directly from the user's generate action so
       // Chromium can show its Local Network Access prompt while Gemini runs.
-      const localVoicevoxProbe = appFeatures.localVoicevox
+      // Built apps never probe a visitor's device; their Worker response
+      // contains a short-lived, per-candidate synthesis grant instead.
+      const localVoicevoxProbe = isDevelopmentVoicevox() && appFeatures.localVoicevox
         ? checkVoicevoxConnection(true)
         : Promise.resolve(false);
       const requestedGenerationId = createGenerationId();
       const generationResult = await generateEkakiUta(groupedDrawingData, turnstileTokenForRequest, requestedGenerationId ?? undefined);
       generatedLyrics = generationResult.lyrics;
       generatedCandidates = generationResult.candidates;
+      voicevoxGrantsRef.current = generationResult.voiceGrants ?? {};
       setEvaluationReceipt(generationResult.evaluationReceipt ?? null);
       setEvaluationReceiptExpiresAt(generationResult.evaluationReceiptExpiresAt ?? null);
       setGeneratedLyricsCandidates(generationResult.candidates);
@@ -1619,15 +1638,25 @@ const App: React.FC = () => {
       completeTimingPhase("gemini");
 
       const canUseLocalVoicevox = await localVoicevoxProbe;
-      if (appFeatures.localVoicevox && !canUseLocalVoicevox) {
+      const initialCandidateId = isComparableCandidateSet(generatedCandidates)
+        ? (generatedLyrics as LyricsCandidate).candidateId
+        : null;
+      const voiceGrant = initialCandidateId ? voicevoxGrantsRef.current[initialCandidateId] : generationResult.voiceGrant;
+      const canUseVoicevox = isDevelopmentVoicevox()
+        ? canUseLocalVoicevox
+        : appFeatures.voicevox && !!voiceGrant;
+      if (isDevelopmentVoicevox() && appFeatures.localVoicevox && !canUseLocalVoicevox) {
         voicevoxStatus = "unavailable";
         setVoicevoxWarning(
           "VOICEVOX Engineを起動し、本番OriginのCORS許可とブラウザのローカルネットワークアクセス許可を確認してください。",
         );
+      } else if (!isDevelopmentVoicevox() && appFeatures.voicevox && !voiceGrant) {
+        voicevoxStatus = "unavailable";
+        setVoicevoxWarning("歌声の準備に必要な音声チケットを受け取れませんでした。歌詞とアニメーションは再生できます。");
       }
 
       let accentLineHints;
-      if (canUseLocalVoicevox) {
+      if (isDevelopmentVoicevox() && canUseLocalVoicevox) {
         beginTimingPhase("accent");
         accentLineHints = await analyzeLyricsAccents(generatedLyrics);
         completeTimingPhase("accent");
@@ -1647,7 +1676,7 @@ const App: React.FC = () => {
       replaceAudioUrl(URL.createObjectURL(generatedAudioBlob));
       setPlaybackKind("animation-only");
 
-      if (!canUseLocalVoicevox) {
+      if (!canUseVoicevox) {
         beginTimingPhase("finalize");
         updateProgress("絵描き歌のアニメーションができたよ");
         await finishProgress("絵描き歌のアニメーションができたよ");
@@ -1664,7 +1693,7 @@ const App: React.FC = () => {
             beginTimingPhase("voicevoxSynthesis");
           }
           handleVoicevoxProgress(stage);
-        });
+        }, voiceGrant);
         completeTimingPhase("voicevoxSynthesis");
         generatedVoiceAudioBlob = generatedAudioBlob;
         voicevoxStatus = "voice";
@@ -1895,6 +1924,7 @@ const App: React.FC = () => {
   };
 
   const handleClear = () => {
+    voicevoxGrantsRef.current = {};
     setLyrics(null);
     clearPhase1Generation();
     setError(null);
@@ -1924,6 +1954,7 @@ const App: React.FC = () => {
 
   const handleDrawingEditStart = () => {
     if (!lyrics) return;
+    voicevoxGrantsRef.current = {};
     setLyrics(null);
     clearPhase1Generation();
     setError(null);
@@ -2501,7 +2532,7 @@ const App: React.FC = () => {
       )}
 
       <header className={`magic-header mb-6 text-center ${appView === "maker" && isCompactMakerLayout ? "hidden" : ""}`}>
-        {appConfig.isDeploymentPreview && appFeatures.localVoicevox && (
+        {appConfig.isDeploymentPreview && appFeatures.localVoicevox && isDevelopmentVoicevox() && (
           <aside className="fixed right-4 top-4 z-[80] w-[min(18rem,calc(100vw-2rem))] text-left">
             <details className="max-h-[calc(100svh-2rem)] overflow-y-auto rounded-2xl border border-orange-200 bg-white/95 shadow-lg backdrop-blur-md">
               <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-black text-gray-700 [&::-webkit-details-marker]:hidden">
@@ -2597,7 +2628,7 @@ const App: React.FC = () => {
           >
             メーカー
           </button>
-          {appFeatures.voicevox && <button
+          {appFeatures.voicevox && isDevelopmentVoicevox() && <button
             type="button"
             onClick={() => setAppView("melodyExperiment")}
             title="実験 (Ctrl+2 / Cmd+2)"

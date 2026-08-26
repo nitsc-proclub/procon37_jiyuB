@@ -1,4 +1,4 @@
-import { DrawingData, GeneratedEkakiUtaResult, LyricsResponse, Phase1LyricsResponse } from "../types";
+import { DrawingData, GeneratedEkakiUtaResult, LyricsCandidate, LyricsResponse, Phase1LyricsResponse } from "../types";
 
 type GenerateEkakiUtaErrorResponse = {
   error?: unknown;
@@ -11,6 +11,8 @@ type GenerationReceiptMetadata = {
   generationId?: unknown;
   evaluationReceipt?: unknown;
   evaluationReceiptExpiresAt?: unknown;
+  voiceGrant?: unknown;
+  voiceGrants?: unknown;
 };
 
 const isSafeDiagnosticValue = (value: unknown): value is string =>
@@ -65,10 +67,21 @@ const parseErrorResponse = async (response: Response) => {
 const readReceiptMetadata = (value: unknown) => {
   if (!value || typeof value !== "object") return {};
   const metadata = value as GenerationReceiptMetadata;
+  const voiceGrants = metadata.voiceGrants && typeof metadata.voiceGrants === "object"
+    ? Object.fromEntries(
+      (["candidate-a", "candidate-b"] as LyricsCandidate["candidateId"][])
+        .flatMap((candidateId) => {
+          const grant = (metadata.voiceGrants as Record<string, unknown>)[candidateId];
+          return typeof grant === "string" && grant.trim().length > 0 ? [[candidateId, grant] as const] : [];
+        }),
+    ) as Partial<Record<LyricsCandidate["candidateId"], string>>
+    : undefined;
   return {
     ...(typeof metadata.generationId === "string" ? { generationId: metadata.generationId } : {}),
     ...(typeof metadata.evaluationReceipt === "string" ? { evaluationReceipt: metadata.evaluationReceipt } : {}),
     ...(typeof metadata.evaluationReceiptExpiresAt === "string" ? { evaluationReceiptExpiresAt: metadata.evaluationReceiptExpiresAt } : {}),
+    ...(typeof metadata.voiceGrant === "string" && metadata.voiceGrant.trim().length > 0 ? { voiceGrant: metadata.voiceGrant } : {}),
+    ...(voiceGrants && Object.keys(voiceGrants).length > 0 ? { voiceGrants } : {}),
   };
 };
 

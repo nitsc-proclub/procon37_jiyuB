@@ -13,13 +13,15 @@
     "DRAWING_ANALYSIS_SCHEMA_VERSION": "1",
     "LYRICS_PROMPT_VERSION": "3",
     "EVALUATION_CENTRAL_STORAGE_ENABLED": "true",
-    "EVALUATION_RECEIPT_TTL_SECONDS": "21600"
+    "EVALUATION_RECEIPT_TTL_SECONDS": "21600",
+    "VOICEVOX_CLOUD_RUN_URL": "https://voicevox-engine-1023600737600.asia-northeast1.run.app"
   },
   "secrets": {
     "required": [
       "GEMINI_API_KEY",
       "TURNSTILE_SECRET",
-      "EVALUATION_RECEIPT_SECRET"
+      "EVALUATION_RECEIPT_SECRET",
+      "VOICEVOX_GCP_SERVICE_ACCOUNT_JSON"
     ]
   },
   "assets": {

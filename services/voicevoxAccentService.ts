@@ -1,5 +1,5 @@
 import type { MelodyAccentLineHint, MelodyAccentLevel } from "./melodyService";
-import { ensureVoicevoxOk, fetchVoicevox } from "./voicevoxHttp";
+import { ensureVoicevoxOk, fetchVoicevox, isDevelopmentVoicevox } from "./voicevoxHttp";
 
 const TALK_ACCENT_SPEAKER = 3;
 
@@ -60,6 +60,10 @@ const buildLineHint = (phrases: VoicevoxAccentPhrase[]): MelodyAccentLineHint =>
 };
 
 const analyzeAccentLine = async (line: string) => {
+  if (!isDevelopmentVoicevox()) {
+    throw new Error("アクセント解析は開発時のローカルVOICEVOXでのみ利用できます。");
+  }
+
   const query = new URLSearchParams({
     speaker: String(TALK_ACCENT_SPEAKER),
     text: line,

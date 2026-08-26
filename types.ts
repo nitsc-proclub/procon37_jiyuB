@@ -98,6 +98,10 @@ export interface Phase1LyricsResponse {
   generationId?: string;
   evaluationReceipt?: string;
   evaluationReceiptExpiresAt?: string;
+  /** Short-lived Worker grant for this generation's VOICEVOX requests. */
+  voiceGrant?: string;
+  /** One short-lived synthesis grant per selectable Phase 1 candidate. */
+  voiceGrants?: Partial<Record<LyricsCandidate["candidateId"], string>>;
 }
 
 export interface GeneratedEkakiUtaResult {
@@ -111,6 +115,10 @@ export interface GeneratedEkakiUtaResult {
   generationId?: string;
   evaluationReceipt?: string;
   evaluationReceiptExpiresAt?: string;
+  /** Short-lived Worker grant for this generation's VOICEVOX requests. */
+  voiceGrant?: string;
+  /** One short-lived synthesis grant per selectable Phase 1 candidate. */
+  voiceGrants?: Partial<Record<LyricsCandidate["candidateId"], string>>;
 }
 
 /** A browser-only, unsent preference draft for one Phase 1 generation. */
