@@ -448,10 +448,29 @@ const parseSingingScore = (value: unknown): SingingScore => {
 
 const getCloudRunUrl = (env: Env) => {
   const value = env.VOICEVOX_CLOUD_RUN_URL?.trim();
-  if (!value || !/^https:\/\/[a-z0-9-]+\.run\.app$/i.test(value)) {
+  let url: URL | null = null;
+  try {
+    url = value ? new URL(value) : null;
+  } catch {
+    url = null;
+  }
+  const isCloudRunHost = url
+    ? /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+run\.app$/i.test(url.hostname)
+    : false;
+  if (
+    !url ||
+    url.protocol !== "https:" ||
+    !isCloudRunHost ||
+    url.port ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash ||
+    url.username ||
+    url.password
+  ) {
     throw httpError("歌声サーバーの設定がまだ完了していません。", 503, "voice-server-config", "config");
   }
-  return value;
+  return url.origin;
 };
 
 const fetchCloudRun = async (env: Env, path: string, body: string, timeoutMs: number) => {
