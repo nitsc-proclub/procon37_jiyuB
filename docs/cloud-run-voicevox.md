@@ -8,7 +8,7 @@
 2. Cloud Run API と Artifact Registry API を有効にする。
 3. Cloud Runのコンテナポートを `50021` に設定する。
 4. 初期値は CPU 1、同時実行数 1、最大インスタンス数を小さく設定して、音声生成時間とメモリを実測する。
-5. `cpu-ubuntu24.04-latest` は初回検証後、成功したイメージdigestに固定する。
+5. 初回検証で解決されたVOICEVOX Engine imageをDockerfileにdigest固定する。更新時は新しいdigestを単体検証してから差し替える。
 
 ## 公開・連携の境界
 
