@@ -107,6 +107,7 @@ npm run dev
 - [描画軌跡の同期再生](docs/drawing-playback-sync.md)
 - [運用・トラブルシュート](docs/operations.md)
 - [Cloudflare Pages 公開確認版のデプロイ](docs/cloudflare-deployment.md)
+- [Cloud Run VOICEVOX（準備段階）](docs/cloud-run-voicevox.md)
 
 ## 注意点
 

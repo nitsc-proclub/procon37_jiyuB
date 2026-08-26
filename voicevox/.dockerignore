@@ -1,0 +1,3 @@
+# This image intentionally builds only from the official VOICEVOX Engine image.
+# Keeping the context empty prevents accidental inclusion of application files.
+**
