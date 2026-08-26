@@ -1,4 +1,5 @@
 const isDeploymentPreview = import.meta.env.VITE_APP_MODE === "deployment-preview";
+const isProductionBuild = import.meta.env.PROD;
 
 export const appConfig = {
   mode: isDeploymentPreview ? "deployment-preview" : "full",
@@ -12,9 +13,13 @@ export const appFeatures = {
   // loopback interface. This is separate from the local-only experiment UI.
   localVoicevox: true,
   voicevox: !isDeploymentPreview,
-  demoRecords: !isDeploymentPreview,
-  dataSaving: !isDeploymentPreview,
-  generationTelemetry: !isDeploymentPreview,
-  // Public debug records stay entirely in the visitor's IndexedDB.
-  debugHistory: isDeploymentPreview,
+  // The legacy demo-records API is a Vite-only local middleware. Public
+  // Worker builds must not expose its consent UI or call the missing route.
+  demoRecords: !isDeploymentPreview && !isProductionBuild,
+  dataSaving: !isDeploymentPreview && !isProductionBuild,
+  generationTelemetry: !isDeploymentPreview && !isProductionBuild,
+  // Public debug records stay entirely in the visitor's IndexedDB. The
+  // deployment-preview flag remains useful for a built local confirmation
+  // version, while production builds use the same browser-only boundary.
+  debugHistory: isDeploymentPreview || isProductionBuild,
 } as const;
