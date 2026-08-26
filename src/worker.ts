@@ -1,5 +1,4 @@
 import type { DrawingData, LyricsCandidate, LyricsResponse, Phase1LyricsResponse, SingingScore, StrokeGroup } from "../types";
-import { createCloudRunIdToken } from "./cloudRunIdToken";
 import {
   buildDrawingAnalysisPrompt,
   buildLegacyLyricsPrompt,
@@ -48,8 +47,7 @@ type Env = {
   EVALUATION_CENTRAL_STORAGE_ENABLED?: string;
   EVALUATION_RECEIPT_SECRET?: string;
   EVALUATION_RECEIPT_TTL_SECONDS?: string;
-  VOICEVOX_CLOUD_RUN_URL?: string;
-  VOICEVOX_GCP_SERVICE_ACCOUNT_JSON?: string;
+  VOICEVOX?: { fetch(resource: string | URL | Request, init?: RequestInit): Promise<Response> };
 };
 
 type ErrorStage = "request" | "config" | "turnstile" | "gemini";
@@ -73,6 +71,7 @@ const DEFAULT_LYRICS_PROMPT_VERSION = "3";
 const GENERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const VOICE_GRANT_TTL_MS = 5 * 60 * 1_000;
 const VOICE_GRANT_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const VOICEVOX_VPC_ORIGIN = "http://localhost:50021";
 const VOICEVOX_REQUEST_MAX_BYTES = 256 * 1024;
 const VOICEVOX_QUERY_MAX_BYTES = 1024 * 1024;
 const VOICEVOX_MAX_NOTES = 512;
@@ -395,7 +394,7 @@ const sha256Hex = async (value: string) => {
 };
 
 const issueVoiceGrant = async (env: Env, generationId: string, candidateId?: LyricsCandidate["candidateId"]): Promise<VoiceGrant | null> => {
-  if (!env.EVALUATIONS_DB || !env.VOICEVOX_CLOUD_RUN_URL || !env.VOICEVOX_GCP_SERVICE_ACCOUNT_JSON) return null;
+  if (!env.EVALUATIONS_DB || !env.VOICEVOX) return null;
   const raw = crypto.getRandomValues(new Uint8Array(32));
   const value = bytesToBase64Url(raw);
   const now = Date.now();
@@ -446,43 +445,14 @@ const parseSingingScore = (value: unknown): SingingScore => {
   return { notes };
 };
 
-const getCloudRunUrl = (env: Env) => {
-  const value = env.VOICEVOX_CLOUD_RUN_URL?.trim();
-  let url: URL | null = null;
-  try {
-    url = value ? new URL(value) : null;
-  } catch {
-    url = null;
-  }
-  const isCloudRunHost = url
-    ? /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+run\.app$/i.test(url.hostname)
-    : false;
-  if (
-    !url ||
-    url.protocol !== "https:" ||
-    !isCloudRunHost ||
-    url.port ||
-    url.pathname !== "/" ||
-    url.search ||
-    url.hash ||
-    url.username ||
-    url.password
-  ) {
-    throw httpError("歌声サーバーの設定がまだ完了していません。", 503, "voice-server-config", "config");
-  }
-  return url.origin;
-};
-
-const fetchCloudRun = async (env: Env, path: string, body: string, timeoutMs: number) => {
-  if (!env.VOICEVOX_GCP_SERVICE_ACCOUNT_JSON) throw httpError("歌声サーバーの設定がまだ完了していません。", 503, "voice-server-config", "config");
-  const serviceUrl = getCloudRunUrl(env);
+const fetchVoicevox = async (env: Env, path: string, body: string, timeoutMs: number) => {
+  if (!env.VOICEVOX) throw httpError("歌声サーバーの設定がまだ完了していません。", 503, "voice-server-config", "config");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const idToken = await createCloudRunIdToken(env.VOICEVOX_GCP_SERVICE_ACCOUNT_JSON, serviceUrl);
-    return await fetch(new URL(path, `${serviceUrl}/`), {
+    return await env.VOICEVOX.fetch(new URL(path, `${VOICEVOX_VPC_ORIGIN}/`), {
       method: "POST",
-      headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body,
       signal: controller.signal,
     });
@@ -515,7 +485,7 @@ const handleVoicevoxSynthesis = async (request: Request, env: Env) => {
     ).bind(Date.now(), await sha256Hex(JSON.stringify(score)), await sha256Hex(voiceGrant), Date.now()).run();
     if (consumed.meta?.changes !== 1) return json({ error: "音声チケットを確認できません。新しい歌を作ってください。", code: "invalid-or-expired-voice-grant" }, 403);
 
-    const queryResponse = await fetchCloudRun(env, "/sing_frame_audio_query?speaker=6000", JSON.stringify(score), 45_000);
+    const queryResponse = await fetchVoicevox(env, "/sing_frame_audio_query?speaker=6000", JSON.stringify(score), 45_000);
     if (!queryResponse.ok) return json({ error: "歌声の準備に失敗しました。", code: "voice-query-failed" }, 502);
     const queryLength = Number(queryResponse.headers.get("content-length"));
     if (Number.isFinite(queryLength) && queryLength > VOICEVOX_QUERY_MAX_BYTES) return json({ error: "歌声の準備に失敗しました。", code: "voice-query-too-large" }, 502);
@@ -525,7 +495,7 @@ const handleVoicevoxSynthesis = async (request: Request, env: Env) => {
     try { query = JSON.parse(new TextDecoder().decode(queryBytes)); } catch { return json({ error: "歌声の準備に失敗しました。", code: "voice-query-invalid" }, 502); }
     if (!isRecord(query)) return json({ error: "歌声の準備に失敗しました。", code: "voice-query-invalid" }, 502);
 
-    const synthesisResponse = await fetchCloudRun(env, "/frame_synthesis?speaker=3003", JSON.stringify(query), 120_000);
+    const synthesisResponse = await fetchVoicevox(env, "/frame_synthesis?speaker=3003", JSON.stringify(query), 120_000);
     if (!synthesisResponse.ok || !synthesisResponse.body) return json({ error: "歌声の合成に失敗しました。", code: "voice-synthesis-failed" }, 502);
     const length = Number(synthesisResponse.headers.get("content-length"));
     if (Number.isFinite(length) && length > 32 * 1024 * 1024) return json({ error: "歌声データが大きすぎます。", code: "voice-audio-too-large" }, 502);
