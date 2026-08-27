@@ -120,8 +120,9 @@ const fetchWithTimeout = async (
  * Finds a VOICEVOX Engine running on the computer that opened the page.
  *
  * During Vite development requests continue through the existing /voicevox
- * proxy, so the pre-existing local workflow is unchanged. In built apps this
- * probes only the two explicitly allowed loopback endpoints.
+ * proxy, so the pre-existing local workflow is unchanged. Built apps may
+ * explicitly opt into this local probe from the server selector; no probe is
+ * started by this module on its own.
  */
 export const probeVoicevox = async (): Promise<string> => {
   if (isDevelopmentVoicevox() && developmentProxyVerified) {
@@ -147,10 +148,28 @@ export const probeVoicevox = async (): Promise<string> => {
       return DEV_VOICEVOX_BASE_URL;
     }
 
-    // Production never probes a visitor's computer. A Worker-issued voice
-    // grant is required for the fixed Worker API, so callers use fetchVoicevox
-    // after a successful lyric generation instead.
-    throw new VoicevoxConnectionError("歌声の準備には、歌詞生成後の音声チケットが必要です。");
+    const candidates = configuredDirectBaseUrl
+      ? [configuredDirectBaseUrl]
+      : [...DIRECT_VOICEVOX_BASE_URLS];
+    let lastError: unknown = null;
+
+    for (const baseUrl of candidates) {
+      try {
+        const response = await fetchWithTimeout(`${baseUrl}/version`, { cache: "no-store" }, {
+          timeoutMs: PROBE_TIMEOUT_MS,
+          failureMessage: "このパソコンのVOICEVOX Engineに接続できませんでした。",
+        });
+        await ensureVoicevoxOk(response, "このパソコンのVOICEVOX Engineの状態を確認できませんでした。");
+        resolvedDirectBaseUrl = baseUrl;
+        return baseUrl;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new VoicevoxConnectionError("このパソコンのVOICEVOX Engineに接続できませんでした。");
   })();
 
   try {
@@ -185,6 +204,22 @@ export const fetchVoicevox = async (
   return fetchWithTimeout(`${WORKER_VOICEVOX_BASE_URL}${path}`, init, {
     ...options,
     failureMessage: options?.failureMessage ?? "歌声のサーバーに接続できませんでした。少し待ってから、もう一度試してください。",
+  });
+};
+
+/**
+ * Calls the visitor's explicitly selected local Engine. This is separate from
+ * fetchVoicevox so production never silently bypasses the Worker route.
+ */
+export const fetchLocalVoicevox = async (
+  path: string,
+  init: RequestInit,
+  options?: VoicevoxFetchOptions,
+) => {
+  const baseUrl = await probeVoicevox();
+  return fetchWithTimeout(`${baseUrl}${path}`, init, {
+    ...options,
+    failureMessage: options?.failureMessage ?? describeDirectConnectionProblem(),
   });
 };
 

@@ -8,6 +8,7 @@ import DebugExportDialog from "./components/DebugExportDialog";
 import EvaluationConsentModal from "./components/EvaluationConsentModal";
 import EvaluationFollowUpModal, { EvaluationFollowUpAnswers } from "./components/EvaluationFollowUpModal";
 import DebugHistoryView from "./components/DebugHistoryView";
+import VoicevoxServerSelector from "./components/VoicevoxServerSelector";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
 import { appBuildId } from "./config/buildInfo";
@@ -29,6 +30,15 @@ import {
   resetVoicevoxConnection,
   setDirectVoicevoxBaseUrl,
 } from "./services/voicevoxHttp";
+import { checkVoicevoxServerVersion } from "./services/voicevoxHealthService";
+import {
+  getVoicevoxServerLabel,
+  normalizeVoicevoxServerId,
+  VOICEVOX_SERVER_SELECTION_STORAGE_KEY,
+  VoicevoxResolvedServerId,
+  VoicevoxServerHealth,
+  VoicevoxServerId,
+} from "./services/voicevoxRouting";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
 import { DemoRecordSummary, DrawingAnalysis, DrawingData, DrawingSubjectFeedbackChoice, EvaluationCentralConsent, EvaluationDraft, EvaluationSelection, EvaluationStructuredRatings, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsCandidate, LyricsResponse, Phase1ModelInfo, SingingScore, UsageStats } from "./types";
 
@@ -88,6 +98,7 @@ type CandidatePlaybackCache = {
   audioBlob: Blob;
   playbackKind: PlaybackKind;
   voicevoxWarning: string | null;
+  voicevoxServer: VoicevoxResolvedServerId | null;
 };
 
 const COMPACT_MAKER_LAYOUT_QUERIES = [
@@ -169,6 +180,14 @@ const loadVoicevoxBaseUrl = () => {
     return savedBaseUrl ? setDirectVoicevoxBaseUrl(savedBaseUrl) : getDirectVoicevoxBaseUrl();
   } catch {
     return getDirectVoicevoxBaseUrl();
+  }
+};
+
+const loadVoicevoxServerSelection = (): VoicevoxServerId => {
+  try {
+    return normalizeVoicevoxServerId(window.localStorage.getItem(VOICEVOX_SERVER_SELECTION_STORAGE_KEY));
+  } catch {
+    return "auto";
   }
 };
 
@@ -422,6 +441,9 @@ const App: React.FC = () => {
   const [voicevoxConnectionStatus, setVoicevoxConnectionStatus] = useState<VoicevoxConnectionStatus>("idle");
   const [voicevoxConnectionMessage, setVoicevoxConnectionMessage] = useState("歌をつくる時に自動で確認します。");
   const [voicevoxBaseUrl, setVoicevoxBaseUrl] = useState(loadVoicevoxBaseUrl);
+  const [voicevoxServerSelection, setVoicevoxServerSelection] = useState<VoicevoxServerId>(loadVoicevoxServerSelection);
+  const [voicevoxServerHealth, setVoicevoxServerHealth] = useState<Partial<Record<VoicevoxServerId, VoicevoxServerHealth>>>({});
+  const [voicevoxResolvedServer, setVoicevoxResolvedServer] = useState<VoicevoxResolvedServerId | null>(null);
   const [saveToast, setSaveToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [progressLabel, setProgressLabel] = useState("準備中...");
   const [generationTimingEstimate, setGenerationTimingEstimate] = useState<GenerationTimingEstimate | null>(null);
@@ -868,15 +890,29 @@ const App: React.FC = () => {
   };
 
   const renderModelInfo = () => {
+    const voicevoxInfo = voicevoxResolvedServer
+      ? `歌声生成: ${getVoicevoxServerLabel(voicevoxResolvedServer)}`
+      : playbackKind === "animation-only"
+        ? "歌声生成: なし（アニメーションのみ）"
+        : null;
+
     if (generatedPhase1ModelInfo) {
       return (
         <p className="mt-3 text-right text-xs font-bold text-gray-400">
           画像読み込み: {generatedPhase1ModelInfo.drawingAnalysis}<br />
           歌詞生成: {generatedPhase1ModelInfo.lyricsGeneration}
+          {voicevoxInfo && <><br />{voicevoxInfo}</>}
         </p>
       );
     }
-    return lyrics?.modelName ? <p className="mt-3 text-right text-xs font-bold text-gray-400">model: {lyrics.modelName}</p> : null;
+    if (!lyrics?.modelName && !voicevoxInfo) return null;
+    return (
+      <p className="mt-3 text-right text-xs font-bold text-gray-400">
+        {lyrics?.modelName && <>model: {lyrics.modelName}</>}
+        {lyrics?.modelName && voicevoxInfo && <br />}
+        {voicevoxInfo}
+      </p>
+    );
   };
 
   const replaceDebugHistoryDrawing = (drawing: DrawingData, imageBlob: Blob) => {
@@ -946,6 +982,7 @@ const App: React.FC = () => {
       clearPhase1Generation();
       setError(null);
       setVoicevoxWarning(null);
+      setVoicevoxResolvedServer(null);
       setProgressLabel("準備中...");
       setParticipantAge(demoRecord.participantAge);
       clearDebugHistoryDrawing();
@@ -1047,13 +1084,71 @@ const App: React.FC = () => {
       }
       setVoicevoxConnectionStatus("idle");
       setVoicevoxConnectionMessage("URLを適用しました。再確認してください。");
+      setVoicevoxServerHealth((current) => ({
+        ...current,
+        local: { status: "unknown", message: "URLを適用しました。バージョンを確認してください。" },
+      }));
       return true;
     } catch (error) {
       setVoicevoxConnectionStatus("unavailable");
-      setVoicevoxConnectionMessage(
-        error instanceof Error ? error.message : "VOICEVOXのURLを確認してください。",
-      );
+      const message = error instanceof Error ? error.message : "VOICEVOXのURLを確認してください。";
+      setVoicevoxConnectionMessage(message);
+      setVoicevoxServerHealth((current) => ({ ...current, local: { status: "unavailable", message } }));
       return false;
+    }
+  };
+
+  const handleSelectVoicevoxServer = (server: VoicevoxServerId) => {
+    setVoicevoxServerSelection(server);
+    try {
+      window.localStorage.setItem(VOICEVOX_SERVER_SELECTION_STORAGE_KEY, server);
+    } catch {
+      // The selected route remains active for this tab when storage is unavailable.
+    }
+    // A candidate synthesized for another route must never be reused after a
+    // debug override changes. This does not probe any server.
+    candidatePlaybackCacheRef.current.clear();
+    if (server === "local") {
+      setVoicevoxConnectionMessage("このパソコンのVOICEVOXは、生成時にも確認します。");
+    } else {
+      setVoicevoxConnectionMessage("必要なときに「バージョンを確認」を押してください。");
+    }
+    setVoicevoxServerHealth((current) => ({
+      ...current,
+      [server]: current[server] ?? { status: "unknown" },
+    }));
+  };
+
+  const checkVoicevoxServer = async (server: VoicevoxServerId) => {
+    if (server === "local") {
+      await checkVoicevoxConnection(true);
+      return;
+    }
+
+    setVoicevoxServerHealth((current) => ({
+      ...current,
+      [server]: { status: "checking", message: "選択した歌声サーバーを確認しています..." },
+    }));
+
+    try {
+      const result = await checkVoicevoxServerVersion(server);
+      const resolvedLabel = result.server ? `（${getVoicevoxServerLabel(result.server)}）` : "";
+      setVoicevoxServerHealth((current) => ({
+        ...current,
+        [server]: {
+          status: "connected",
+          version: result.version,
+          message: `接続できました${resolvedLabel}`,
+        },
+      }));
+    } catch (error) {
+      setVoicevoxServerHealth((current) => ({
+        ...current,
+        [server]: {
+          status: "unavailable",
+          message: error instanceof Error ? error.message : "接続できませんでした。",
+        },
+      }));
     }
   };
 
@@ -1076,6 +1171,7 @@ const App: React.FC = () => {
     clearPhase1Generation();
     setError(manifest.outcome.error);
     setVoicevoxWarning(manifest.generation.voicevoxIssue);
+    setVoicevoxResolvedServer(null);
     setProgressLabel("再生できます");
     setParticipantAge(null);
     setSelectedDemoDrawing(null);
@@ -1105,15 +1201,27 @@ const App: React.FC = () => {
 
     setVoicevoxConnectionStatus("checking");
     setVoicevoxConnectionMessage("このパソコンのVOICEVOXを確認しています...");
+    setVoicevoxServerHealth((current) => ({
+      ...current,
+      local: { status: "checking", message: "このパソコンのVOICEVOXを確認しています..." },
+    }));
 
     try {
       const baseUrl = await probeVoicevox();
       setVoicevoxConnectionStatus("connected");
       setVoicevoxConnectionMessage(`接続できました（${baseUrl}）`);
+      setVoicevoxServerHealth((current) => ({
+        ...current,
+        local: { status: "connected", message: `接続できました（${baseUrl}）` },
+      }));
       return true;
     } catch {
       setVoicevoxConnectionStatus("unavailable");
       setVoicevoxConnectionMessage("接続できませんでした。歌声なしのアニメーションで続けられます。");
+      setVoicevoxServerHealth((current) => ({
+        ...current,
+        local: { status: "unavailable", message: "接続できませんでした。歌声なしのアニメーションで続けられます。" },
+      }));
       return false;
     }
   };
@@ -1340,10 +1448,14 @@ const App: React.FC = () => {
       let playback = candidatePlaybackCacheRef.current.get(candidateId);
       if (!playback) {
         const voiceGrant = voicevoxGrantsRef.current[candidateId];
-        const canUseVoicevox = isDevelopmentVoicevox()
-          ? appFeatures.localVoicevox && voicevoxConnectionStatus === "connected"
-          : appFeatures.voicevox && !!voiceGrant;
-        const accentLineHints = isDevelopmentVoicevox() && canUseVoicevox
+        const canUseLocalVoicevox = (voicevoxServerSelection === "auto" || voicevoxServerSelection === "local")
+          && appFeatures.localVoicevox
+          && voicevoxConnectionStatus === "connected";
+        const canUseRemoteVoicevox = voicevoxServerSelection !== "local"
+          && appFeatures.voicevox
+          && !!voiceGrant;
+        const canUseVoicevox = canUseLocalVoicevox || canUseRemoteVoicevox;
+        const accentLineHints = isDevelopmentVoicevox() && canUseLocalVoicevox
           ? await analyzeLyricsAccents(candidate)
           : undefined;
         if (candidateActivationSequenceRef.current !== activationSequence) return;
@@ -1352,10 +1464,17 @@ const App: React.FC = () => {
         let audioBlob = createSilentPlaybackAudio(score);
         let playbackKind: PlaybackKind = "animation-only";
         let nextVoicevoxWarning: string | null = canUseVoicevox ? null : voicevoxWarning;
+        let nextVoicevoxServer: VoicevoxResolvedServerId | null = null;
 
         if (canUseVoicevox) {
           try {
-            audioBlob = await synthesizeSingingVoice(score, undefined, voiceGrant);
+            audioBlob = await synthesizeSingingVoice(score, undefined, voiceGrant, {
+              server: voicevoxServerSelection,
+              onServerResolved: (server) => {
+                nextVoicevoxServer = server;
+                setVoicevoxResolvedServer(server);
+              },
+            });
             playbackKind = "voice";
           } catch (voiceError) {
             nextVoicevoxWarning = voiceError instanceof Error ? voiceError.message : "VOICEVOXで歌声を作れませんでした。";
@@ -1364,7 +1483,13 @@ const App: React.FC = () => {
           }
         }
         if (candidateActivationSequenceRef.current !== activationSequence) return;
-        playback = { score, audioBlob, playbackKind, voicevoxWarning: nextVoicevoxWarning };
+        playback = {
+          score,
+          audioBlob,
+          playbackKind,
+          voicevoxWarning: nextVoicevoxWarning,
+          voicevoxServer: nextVoicevoxServer,
+        };
         candidatePlaybackCacheRef.current.set(candidateId, playback);
       }
 
@@ -1374,6 +1499,7 @@ const App: React.FC = () => {
       replaceAudioUrl(URL.createObjectURL(playback.audioBlob));
       setPlaybackKind(playback.playbackKind);
       setVoicevoxWarning(playback.voicevoxWarning);
+      setVoicevoxResolvedServer(playback.voicevoxServer);
       setPreviewCandidateId(candidateId);
       const alternativeWasPreviewed = evaluationSelection !== null;
       if (alternativeWasPreviewed) setHasAlternativePreviewed(true);
@@ -1492,6 +1618,7 @@ const App: React.FC = () => {
     // Keep this token intact until Siteverify has received it. Resetting the
     // widget before fetch can invalidate it and reject every generation.
 
+    const selectedVoicevoxServer = voicevoxServerSelection;
     const groupedDrawingData = {
       ...data,
       strokeGroups: groupStrokes(data.strokes),
@@ -1505,6 +1632,7 @@ const App: React.FC = () => {
     let generatedScore: SingingScore | null = null;
     let generatedAudioBlob: Blob | null = null;
     let generatedVoiceAudioBlob: Blob | null = null;
+    let generatedVoicevoxServer: VoicevoxResolvedServerId | null = null;
     let generationErrorMessage: string | null = null;
     let voicevoxIssue: string | null = null;
     let voicevoxStatus: DebugBundleSource["voicevoxStatus"] = "not-attempted";
@@ -1560,6 +1688,7 @@ const App: React.FC = () => {
     setError(null);
     setGenerationFailureDisplay(null);
     setVoicevoxWarning(null);
+    setVoicevoxResolvedServer(null);
     setSaveToast(null);
     setSelectedDemoRecordId(null);
     setSelectedDemoDrawing(null);
@@ -1587,11 +1716,10 @@ const App: React.FC = () => {
 
     try {
       updateProgress("絵をじっくり見ているよ");
-      // Start the loopback request directly from the user's generate action so
-      // Chromium can show its Local Network Access prompt while Gemini runs.
-      // Built apps never probe a visitor's device; their Worker response
-      // contains a short-lived, per-candidate synthesis grant instead.
-      const localVoicevoxProbe = isDevelopmentVoicevox() && appFeatures.localVoicevox
+      // In auto/local mode this starts the loopback request from the user's
+      // generate action so Chromium can show its Local Network Access prompt
+      // while Gemini runs. Remote-only debug modes do not probe local audio.
+      const localVoicevoxProbe = appFeatures.localVoicevox && (selectedVoicevoxServer === "auto" || selectedVoicevoxServer === "local")
         ? checkVoicevoxConnection(true)
         : Promise.resolve(false);
       const requestedGenerationId = createGenerationId();
@@ -1642,15 +1770,14 @@ const App: React.FC = () => {
         ? (generatedLyrics as LyricsCandidate).candidateId
         : null;
       const voiceGrant = initialCandidateId ? voicevoxGrantsRef.current[initialCandidateId] : generationResult.voiceGrant;
-      const canUseVoicevox = isDevelopmentVoicevox()
-        ? canUseLocalVoicevox
-        : appFeatures.voicevox && !!voiceGrant;
-      if (isDevelopmentVoicevox() && appFeatures.localVoicevox && !canUseLocalVoicevox) {
+      const canUseRemoteVoicevox = selectedVoicevoxServer !== "local" && appFeatures.voicevox && !!voiceGrant;
+      const canUseVoicevox = canUseLocalVoicevox || canUseRemoteVoicevox;
+      if (selectedVoicevoxServer === "local" && appFeatures.localVoicevox && !canUseLocalVoicevox) {
         voicevoxStatus = "unavailable";
         setVoicevoxWarning(
           "VOICEVOX Engineを起動し、本番OriginのCORS許可とブラウザのローカルネットワークアクセス許可を確認してください。",
         );
-      } else if (!isDevelopmentVoicevox() && appFeatures.voicevox && !voiceGrant) {
+      } else if (!canUseVoicevox && appFeatures.voicevox && !voiceGrant) {
         voicevoxStatus = "unavailable";
         setVoicevoxWarning("歌声の準備に必要な音声チケットを受け取れませんでした。歌詞とアニメーションは再生できます。");
       }
@@ -1693,7 +1820,13 @@ const App: React.FC = () => {
             beginTimingPhase("voicevoxSynthesis");
           }
           handleVoicevoxProgress(stage);
-        }, voiceGrant);
+        }, voiceGrant, {
+          server: selectedVoicevoxServer,
+          onServerResolved: (server) => {
+            generatedVoicevoxServer = server;
+            setVoicevoxResolvedServer(server);
+          },
+        });
         completeTimingPhase("voicevoxSynthesis");
         generatedVoiceAudioBlob = generatedAudioBlob;
         voicevoxStatus = "voice";
@@ -1811,6 +1944,7 @@ const App: React.FC = () => {
           score: generatedScore,
           audioBlob: generatedAudioBlob,
           playbackKind: generatedVoiceAudioBlob ? "voice" : "animation-only",
+          voicevoxServer: generatedVoicevoxServer,
           voicevoxWarning: voicevoxIssue ?? (voicevoxStatus === "unavailable" ? "VOICEVOX Engineに接続できなかったため、歌声なしで再生します。" : null),
         });
       }
@@ -1959,6 +2093,7 @@ const App: React.FC = () => {
     clearPhase1Generation();
     setError(null);
     setVoicevoxWarning(null);
+    setVoicevoxResolvedServer(null);
     setSelectedDemoRecordId(null);
     clearDebugHistoryDrawing();
     setPlaybackScore(null);
@@ -2532,82 +2667,16 @@ const App: React.FC = () => {
       )}
 
       <header className={`magic-header mb-6 text-center ${appView === "maker" && isCompactMakerLayout ? "hidden" : ""}`}>
-        {appConfig.isDeploymentPreview && appFeatures.localVoicevox && isDevelopmentVoicevox() && (
-          <aside className="fixed right-4 top-4 z-[80] w-[min(18rem,calc(100vw-2rem))] text-left">
-            <details className="max-h-[calc(100svh-2rem)] overflow-y-auto rounded-2xl border border-orange-200 bg-white/95 shadow-lg backdrop-blur-md">
-              <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-black text-gray-700 [&::-webkit-details-marker]:hidden">
-                <span
-                  className={`h-2.5 w-2.5 shrink-0 rounded-full ${voicevoxConnectionStatus === "connected"
-                    ? "bg-emerald-500"
-                    : voicevoxConnectionStatus === "checking"
-                      ? "animate-pulse bg-orange-400"
-                      : voicevoxConnectionStatus === "unavailable"
-                        ? "bg-amber-500"
-                        : "bg-gray-300"
-                    }`}
-                  aria-hidden="true"
-                />
-                <span>公開版・VOICEVOX</span>
-                <span className="ml-auto text-[11px] text-gray-500">
-                  {voicevoxConnectionStatus === "connected"
-                    ? "接続済み"
-                    : voicevoxConnectionStatus === "checking"
-                      ? "確認中"
-                      : voicevoxConnectionStatus === "unavailable"
-                        ? "未接続"
-                        : "未確認"}
-                </span>
-                <span className="text-gray-400" aria-hidden="true">⌄</span>
-              </summary>
-
-              <div className="space-y-3 border-t border-orange-100 px-3 py-3 text-xs text-gray-600">
-                <p className={`font-bold ${voicevoxConnectionStatus === "connected" ? "text-emerald-700" : voicevoxConnectionStatus === "unavailable" ? "text-amber-700" : "text-gray-600"}`} aria-live="polite">
-                  {voicevoxConnectionMessage}
-                </p>
-
-                <label className="block font-bold text-gray-700">
-                  VOICEVOX URL
-                  <input
-                    type="url"
-                    value={voicevoxBaseUrl}
-                    onChange={(event) => setVoicevoxBaseUrl(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        void checkVoicevoxConnection(true);
-                      }
-                    }}
-                    disabled={isGenerating || voicevoxConnectionStatus === "checking"}
-                    spellCheck={false}
-                    className="mt-1 block w-full rounded-lg border border-orange-200 bg-white px-2.5 py-2 font-mono text-[11px] text-gray-700 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 disabled:cursor-wait disabled:opacity-60"
-                    aria-describedby="voicevox-url-help"
-                  />
-                </label>
-                <p id="voicevox-url-help" className="leading-relaxed text-gray-500">
-                  この端末の <code className="font-mono">localhost</code>、または同じネットワーク内のPCの <code className="font-mono">http://192.168.x.x:50021</code> を指定できます。
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() => void checkVoicevoxConnection(true)}
-                  disabled={isGenerating || voicevoxConnectionStatus === "checking"}
-                  className="w-full rounded-full bg-orange-500 px-3 py-2 text-xs font-black text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-wait disabled:opacity-60"
-                >
-                  {voicevoxConnectionStatus === "checking" ? "確認中..." : "VOICEVOXを再確認"}
-                </button>
-
-                <div className="rounded-xl bg-orange-50 p-2.5 leading-relaxed text-orange-900">
-                  <p className="font-black">接続できないとき</p>
-                  <ol className="mt-1 list-inside list-decimal space-y-1">
-                    <li>VOICEVOX Engineを起動する</li>
-                    <li>CORS許可Originに <code className="break-all font-mono">https://cho-ekaki-uta.nitsc-proclub.workers.dev</code> を追加する</li>
-                    <li>ブラウザのローカルネットワークアクセスを許可する</li>
-                  </ol>
-                  <p className="mt-2">接続できなくても、歌声なしでアニメーションを再生できます。</p>
-                </div>
-              </div>
-            </details>
-          </aside>
+        {!isCompactMakerLayout && (appFeatures.localVoicevox || appFeatures.voicevox) && (
+          <VoicevoxServerSelector
+            selectedServer={voicevoxServerSelection}
+            localBaseUrl={voicevoxBaseUrl}
+            healthByServer={voicevoxServerHealth}
+            onSelectServer={handleSelectVoicevoxServer}
+            onLocalBaseUrlChange={setVoicevoxBaseUrl}
+            onCheckServer={(server) => void checkVoicevoxServer(server)}
+            disabled={isGenerating}
+          />
         )}
         <p className="mb-2 text-xs font-black uppercase tracking-[0.24em] text-orange-600">絵が、魔法で歌になる！</p>
         <h1 className="mx-auto mb-1 w-fit">
