@@ -1329,15 +1329,49 @@ const App: React.FC = () => {
     activation: Promise<DebugExportSource | null> | null,
     sourceAtConsent: DebugExportSource | null,
   ) => {
-    const source = activation ? await activation : sourceAtConsent;
-    if (!appFeatures.debugHistory || !source) return;
-    const artifacts = await buildDebugBundleArtifacts({
-      source,
-      buildId: appBuildId,
-      mode: appConfig.mode,
-      origin: window.location.origin,
-    });
-    await saveDebugHistoryRecord(artifacts);
+    if (!appFeatures.debugHistory || !sourceAtConsent) return;
+    const saveSource = async (source: DebugExportSource) => {
+      const artifacts = await buildDebugBundleArtifacts({
+        source,
+        buildId: appBuildId,
+        mode: appConfig.mode,
+        origin: window.location.origin,
+      });
+      await saveDebugHistoryRecord(artifacts);
+    };
+
+    // Save a complete animation-only version immediately. If VOICEVOX is still
+    // preparing the selected candidate, replace the same record with its voice
+    // once ready. Closing the tab or starting a new song cannot lose the first
+    // browser save, and neither action can redirect it to another generation.
+    await saveSource(sourceAtConsent);
+    if (activation) {
+      void activation
+        .then((readySource) => readySource ? saveSource(readySource) : undefined)
+        .catch(() => undefined);
+    }
+  };
+
+  const browserSaveSourceForSelection = (
+    source: DebugExportSource | null,
+    draft: EvaluationDraft | null,
+  ): DebugExportSource | null => {
+    if (!source || !draft?.activeCandidateId) return source;
+    const selectedCandidate = draft.candidates.find((candidate) => candidate.candidateId === draft.activeCandidateId);
+    if (!selectedCandidate) return source;
+    if ("candidateId" in (source.lyrics ?? {}) && (source.lyrics as LyricsCandidate).candidateId === selectedCandidate.candidateId) {
+      return source;
+    }
+    const score = buildSingingScore(selectedCandidate, createSingingSeed(selectedCandidate, 0));
+    return {
+      ...source,
+      lyrics: selectedCandidate,
+      singingScore: score,
+      voiceAudioBlob: null,
+      playbackKind: "animation-only",
+      voicevoxStatus: "not-attempted",
+      voicevoxIssue: null,
+    };
   };
 
   const handleEvaluationCentralConsent = async (nextConsent: Exclude<EvaluationCentralConsent, "not-asked">) => {
@@ -1364,7 +1398,7 @@ const App: React.FC = () => {
     evaluationSaveSequenceRef.current = saveSequence;
     const consentGenerationId = nextDraft?.generationId ?? null;
     const activationAtConsent = candidateActivationPromiseRef.current;
-    const debugSourceAtConsent = debugExportSourceRef.current;
+    const debugSourceAtConsent = browserSaveSourceForSelection(debugExportSourceRef.current, nextDraft);
     setIsEvaluationConsentOpen(false);
     if (isCandidatePreviewLoading) {
       showPlaybackWhenCandidateReadyRef.current = true;
