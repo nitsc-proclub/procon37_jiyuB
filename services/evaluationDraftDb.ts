@@ -233,6 +233,28 @@ export type EvaluationDraftStatePatch = {
   followUpCentralConsent?: EvaluationCentralConsent;
 };
 
+/** Applies the allowlisted state changes without touching browser storage. */
+export const withEvaluationDraftState = (
+  draft: EvaluationDraft,
+  patch: EvaluationDraftStatePatch,
+  updatedAt: string,
+): EvaluationDraft => {
+  const nextFirstImpressionSelection = patch.firstImpressionSelection ?? draft.firstImpressionSelection ?? draft.selection;
+  const nextFinalPreferenceSelection = patch.finalPreferenceSelection !== undefined
+    ? patch.finalPreferenceSelection
+    : draft.finalPreferenceSelection ?? nextFirstImpressionSelection;
+  return {
+    ...draft,
+    ...patch,
+    // Keep the old `selection` field as a compatibility mirror. It is
+    // intentionally never changed by later alternative previews.
+    selection: nextFirstImpressionSelection,
+    firstImpressionSelection: nextFirstImpressionSelection,
+    finalPreferenceSelection: nextFinalPreferenceSelection,
+    updatedAt,
+  };
+};
+
 /** Updates only the whitelisted local evaluation state; no drawing or media can enter the draft. */
 export const updateEvaluationDraftState = async (
   generationId: string,
@@ -245,20 +267,7 @@ export const updateEvaluationDraftState = async (
     const store = transaction.objectStore(DRAFTS_STORE);
     const existing = await requestResult(store.get(generationId) as IDBRequest<EvaluationDraft | undefined>);
     if (existing) {
-      const nextFirstImpressionSelection = patch.firstImpressionSelection ?? existing.firstImpressionSelection ?? existing.selection;
-      const nextFinalPreferenceSelection = patch.finalPreferenceSelection !== undefined
-        ? patch.finalPreferenceSelection
-        : existing.finalPreferenceSelection ?? nextFirstImpressionSelection;
-      store.put({
-        ...existing,
-        ...patch,
-        // Keep the old `selection` field as a compatibility mirror. It is
-        // intentionally never changed by later alternative previews.
-        selection: nextFirstImpressionSelection,
-        firstImpressionSelection: nextFirstImpressionSelection,
-        finalPreferenceSelection: nextFinalPreferenceSelection,
-        updatedAt,
-      });
+      store.put(withEvaluationDraftState(existing, patch, updatedAt));
     }
     await transactionDone(transaction);
     return !!existing;

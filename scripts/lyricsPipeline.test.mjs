@@ -257,6 +257,16 @@ test("evaluation draft builder whitelists fields and selection keeps its generat
   const attemptedLaterSelection = evaluationDraftDb.withEvaluationDraftSelection(selected, "candidate-a", "2026-08-22T00:02:00.000Z");
   assert.equal(attemptedLaterSelection.selection, "neither");
   assert.equal(attemptedLaterSelection.firstImpressionSelection, "neither");
+  const consented = evaluationDraftDb.withEvaluationDraftState(attemptedLaterSelection, {
+    centralConsent: "accepted",
+    activeCandidateId: "candidate-a",
+    alternativePreviewed: true,
+  }, "2026-08-22T00:03:00.000Z");
+  assert.equal(consented.centralConsent, "accepted");
+  assert.equal(consented.activeCandidateId, "candidate-a");
+  assert.equal(consented.alternativePreviewed, true);
+  assert.equal(consented.firstImpressionSelection, "neither");
+  assert.equal(attemptedLaterSelection.centralConsent, "not-asked");
   assert.equal(selected.updatedAt, "2026-08-22T00:01:00.000Z");
   assert.equal(draft.selection, null);
 });

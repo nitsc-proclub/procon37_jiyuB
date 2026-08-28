@@ -19,9 +19,6 @@ import { createSilentPlaybackAudio } from "../services/silentPlaybackService";
 import { DrawingData } from "../types";
 
 interface DebugHistoryViewProps {
-  autoSaveEnabled: boolean;
-  onEnableAutoSave: () => void;
-  onDisableAutoSave: () => void;
   /** Opens a replayable, saved record in the maker. Imported ZIP previews stay here. */
   onOpenRecord: (record: DebugHistoryRecord) => void;
   onBack: () => void;
@@ -41,7 +38,7 @@ const outcomeLabel = (status: DebugHistoryRecordSummary["manifest"]["outcome"]["
 const outcomeClass = (status: DebugHistoryRecordSummary["manifest"]["outcome"]["status"]) =>
   status === "success" ? "bg-emerald-100 text-emerald-700" : status === "partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
 
-const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ autoSaveEnabled, onEnableAutoSave, onDisableAutoSave, onOpenRecord, onBack, onToast }) => {
+const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ onOpenRecord, onBack, onToast }) => {
   const [records, setRecords] = useState<DebugHistoryRecordSummary[]>([]);
   const [stats, setStats] = useState<DebugHistoryStats | null>(null);
   const [selected, setSelected] = useState<DebugHistoryRecord | null>(null);
@@ -312,19 +309,9 @@ const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ autoSaveEnabled, on
         </section>
         <p className="sr-only" aria-live="polite">{importMessage ?? ""}</p>
 
-        {!autoSaveEnabled && (
-          <div className="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-4 text-sm font-semibold leading-relaxed text-violet-900">
-            <p className="font-black">自動保存はオフです</p>
-            <p className="mt-1">次回から生成・失敗時の情報をこのブラウザに保存できます。画像・歌詞・楽譜・生成時刻だけを保存し、APIキーや個人情報は保存しません。</p>
-            <button type="button" onClick={onEnableAutoSave} className="mt-3 rounded-full bg-violet-600 px-4 py-2 text-xs font-black text-white shadow-sm transition hover:bg-violet-700">自動保存を有効にする</button>
-          </div>
-        )}
-        {autoSaveEnabled && (
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-900">
-            <p><span className="font-black">自動保存はオンです。</span> 次の生成からこのブラウザの履歴へ保存します。</p>
-            <button type="button" onClick={onDisableAutoSave} className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-xs font-black text-emerald-700 transition hover:bg-emerald-100">自動保存をオフにする</button>
-          </div>
-        )}
+        <p className="mb-5 rounded-2xl border border-violet-200 bg-violet-50 p-4 text-sm font-semibold leading-relaxed text-violet-900">
+          保存するかは、歌ができるたびに確認します。
+        </p>
 
         {stats && (
           <div className="mb-5 grid gap-3 sm:grid-cols-3">

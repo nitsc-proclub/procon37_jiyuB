@@ -15,8 +15,8 @@ import { appBuildId } from "./config/buildInfo";
 import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, getUsageStats, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
 import { GenerateEkakiUtaError, generateEkakiUta } from "./services/geminiService";
 import { buildDebugBundleArtifacts, createDebugBundle, createDebugBundleFromArtifacts, createDebugRecordId, DebugBundleArtifacts, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
-import { DebugHistoryRecord, isDebugHistoryError, saveDebugHistoryRecord } from "./services/debugHistoryDb";
-import { createEvaluationDraft, createGenerationId, getEvaluationDraft, getInitialPreviewCandidate, isComparableCandidateSet, saveEvaluationDraft, shuffleCandidateIds, updateEvaluationDraftState } from "./services/evaluationDraftDb";
+import { DebugHistoryRecord, saveDebugHistoryRecord } from "./services/debugHistoryDb";
+import { createEvaluationDraft, createGenerationId, getInitialPreviewCandidate, isComparableCandidateSet, saveEvaluationDraft, shuffleCandidateIds, withEvaluationDraftState } from "./services/evaluationDraftDb";
 import { buildEvaluationSubmission, submitEvaluation } from "./services/evaluationSubmissionService";
 import { buildEvaluationFollowUpSubmission, submitEvaluationFollowUp } from "./services/evaluationFollowUpService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
@@ -106,8 +106,6 @@ const COMPACT_MAKER_LAYOUT_QUERIES = [
   "(max-width: 1023px) and (max-height: 600px)",
 ];
 const COMPACT_PORTRAIT_LAYOUT_QUERIES = ["(max-width: 1023px) and (orientation: portrait)"];
-const isCompactMakerLayoutNow = () =>
-  typeof window !== "undefined" && COMPACT_MAKER_LAYOUT_QUERIES.some((query) => window.matchMedia(query).matches);
 const getGenerationFailureDisplay = (error: unknown): GenerationFailureDisplay => {
   if (error instanceof GenerateEkakiUtaError) {
     const isTurnstileStage = error.stage === "turnstile" || error.code?.startsWith("turnstile-");
@@ -168,11 +166,9 @@ const getUsageStatsCoverage = (date: string) => {
 };
 
 const VOICEVOX_BASE_URL_STORAGE_KEY = "ekaki-uta:voicevox-base-url";
-const DEBUG_HISTORY_CONSENT_STORAGE_KEY = "ekaki-uta:debug-history-autosave-v1";
 const TURNSTILE_ACTION = "generate-ekaki-uta";
 const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY?.trim() ?? "";
 const EVALUATION_EXPERIMENT_ROUND_ID = import.meta.env.VITE_EVALUATION_EXPERIMENT_ROUND_ID?.trim() || null;
-type DebugHistoryConsent = "unknown" | "enabled" | "disabled";
 
 const loadVoicevoxBaseUrl = () => {
   try {
@@ -191,21 +187,6 @@ const loadVoicevoxServerSelection = (): VoicevoxServerId => {
   }
 };
 
-const loadDebugHistoryConsent = (): DebugHistoryConsent => {
-  try {
-    const saved = window.localStorage.getItem(DEBUG_HISTORY_CONSENT_STORAGE_KEY);
-    return saved === "enabled" || saved === "disabled" ? saved : "unknown";
-  } catch {
-    return "unknown";
-  }
-};
-
-// A compact-first visit should not interrupt drawing with a debug-history
-// decision. This is deliberately an in-memory default: resizing this tab from
-// desktop keeps its existing choice, while a later desktop visit can still ask.
-const loadInitialDebugHistoryConsent = (): DebugHistoryConsent => {
-  return isCompactMakerLayoutNow() ? "disabled" : loadDebugHistoryConsent();
-};
 type GenerationCompletionWaiter = {
   runKey: number;
   resolve: () => void;
@@ -411,7 +392,6 @@ const App: React.FC = () => {
   const [previewCandidateId, setPreviewCandidateId] = useState<LyricsCandidate["candidateId"] | null>(null);
   const [evaluationSelection, setEvaluationSelection] = useState<EvaluationSelection>(null);
   const [isFirstImpressionOpen, setIsFirstImpressionOpen] = useState(false);
-  const [centralConsent, setCentralConsent] = useState<EvaluationCentralConsent>("not-asked");
   const [isEvaluationConsentOpen, setIsEvaluationConsentOpen] = useState(false);
   const [evaluationGenerationId, setEvaluationGenerationId] = useState<string | null>(null);
   const [evaluationReceipt, setEvaluationReceipt] = useState<string | null>(null);
@@ -477,9 +457,6 @@ const App: React.FC = () => {
   const [debugReporterNote, setDebugReporterNote] = useState("");
   const [isDebugBundleDownloading, setIsDebugBundleDownloading] = useState(false);
   const [debugBundleError, setDebugBundleError] = useState<string | null>(null);
-  const [debugHistoryConsent, setDebugHistoryConsent] = useState<DebugHistoryConsent>(loadInitialDebugHistoryConsent);
-  const [isDebugHistoryConsentOpen, setIsDebugHistoryConsentOpen] = useState(false);
-  const [pendingDebugHistoryGeneration, setPendingDebugHistoryGeneration] = useState<DrawingData | null>(null);
   const [experimentVariant, setExperimentVariant] = useState(0);
   const [experimentLyricsSource, setExperimentLyricsSource] = useState("fixed");
   const [experimentLyrics, setExperimentLyrics] = useState<LyricsResponse>(EXPERIMENT_LYRICS);
@@ -521,9 +498,15 @@ const App: React.FC = () => {
   const sceneTurnTimerRef = useRef<number | null>(null);
   const candidatePlaybackCacheRef = useRef(new Map<LyricsCandidate["candidateId"], CandidatePlaybackCache>());
   const candidateActivationSequenceRef = useRef(0);
+  const candidateActivationPromiseRef = useRef<Promise<DebugExportSource | null> | null>(null);
+  const showPlaybackWhenCandidateReadyRef = useRef(false);
+  const debugExportSourceRef = useRef<DebugExportSource | null>(null);
   // Kept only for the current generated song. These short-lived grants are
   // never written to localStorage, IndexedDB, demo records, or debug exports.
   const voicevoxGrantsRef = useRef<Partial<Record<LyricsCandidate["candidateId"], string>>>({});
+  const evaluationDraftRef = useRef<EvaluationDraft | null>(null);
+  const evaluationStorageConsentRef = useRef<EvaluationCentralConsent>("not-asked");
+  const evaluationSaveSequenceRef = useRef(0);
   const evaluationDraftWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Vite's development middleware is the only intentionally local API path.
   // Every built app can be served by the Worker, whose Gemini route validates
@@ -846,6 +829,11 @@ const App: React.FC = () => {
     setAudioUrl(nextUrl);
   };
 
+  const replaceDebugExportSource = (nextSource: DebugExportSource | null) => {
+    debugExportSourceRef.current = nextSource;
+    setDebugExportSource(nextSource);
+  };
+
   const clearDebugHistoryDrawing = () => {
     if (isBlobUrl(debugHistoryImageUrlRef.current)) {
       URL.revokeObjectURL(debugHistoryImageUrlRef.current);
@@ -859,12 +847,16 @@ const App: React.FC = () => {
     // cleanup; object URLs are created only for the active player and revoked
     // by replaceAudioUrl/resetAudioState.
     candidateActivationSequenceRef.current += 1;
+    candidateActivationPromiseRef.current = null;
+    showPlaybackWhenCandidateReadyRef.current = false;
     candidatePlaybackCacheRef.current.clear();
     setCandidateDisplayOrder([]);
     setPreviewCandidateId(null);
     setEvaluationSelection(null);
     setIsFirstImpressionOpen(false);
-    setCentralConsent("not-asked");
+    evaluationStorageConsentRef.current = "not-asked";
+    evaluationSaveSequenceRef.current += 1;
+    evaluationDraftRef.current = null;
     setIsEvaluationConsentOpen(false);
     setEvaluationGenerationId(null);
     setEvaluationReceipt(null);
@@ -990,7 +982,7 @@ const App: React.FC = () => {
       setSelectedDemoRecordId(demoRecord.recordId);
       setGeneratedDrawing(null);
       setPlaybackScore(demoRecord.singingScore);
-      setDebugExportSource(null);
+      replaceDebugExportSource(null);
       setDebugExportArtifacts(null);
       setDrawingDisplayMode("animated");
       setIsInitialPlaybackPromptVisible(false);
@@ -1179,7 +1171,7 @@ const App: React.FC = () => {
     replaceDebugHistoryDrawing(drawingData, artifacts.imageBlob);
     setGeneratedDrawing(null);
     setPlaybackScore(manifest.singingScore);
-    setDebugExportSource(null);
+    replaceDebugExportSource(null);
     setDebugExportArtifacts(artifacts);
     setIsDebugExportOpen(false);
     setDebugReporterNote("");
@@ -1263,33 +1255,25 @@ const App: React.FC = () => {
     }
   };
 
-  const saveEvaluationDraftBestEffort = (draft: EvaluationDraft) => {
-    const write = () => saveEvaluationDraft(draft);
+  const updateEvaluationDraftStateBestEffort = (
+    patch: Parameters<typeof withEvaluationDraftState>[1],
+  ) => {
+    const currentDraft = evaluationDraftRef.current;
+    if (!currentDraft) return;
+    const nextDraft = withEvaluationDraftState(currentDraft, patch, new Date().toISOString());
+    evaluationDraftRef.current = nextDraft;
+
+    // Before the combined consent, the evaluation exists only in memory.
+    // Once accepted, later bounded changes are kept in the browser draft too.
+    if (evaluationStorageConsentRef.current !== "accepted") return;
+    const write = () => saveEvaluationDraft(nextDraft);
     const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
     evaluationDraftWriteQueueRef.current = queuedWrite.catch(() => undefined);
     void queuedWrite.catch(() => {
       if (isMountedRef.current) {
-        setSaveToast({ message: "このブラウザへの評価下書き保存に失敗しました", tone: "error" });
+        setSaveToast({ message: "このブラウザに保存できませんでした", tone: "error" });
       }
     });
-  };
-
-  const updateEvaluationDraftStateBestEffort = (patch: Parameters<typeof updateEvaluationDraftState>[1]) => {
-    if (!evaluationGenerationId) return;
-    const write = () => updateEvaluationDraftState(evaluationGenerationId, patch, new Date().toISOString());
-    const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
-    evaluationDraftWriteQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
-    void queuedWrite
-      .then((wasUpdated) => {
-        if (!wasUpdated && isMountedRef.current) {
-          setSaveToast({ message: "評価下書きが見つからないため、この変更は保存されませんでした", tone: "error" });
-        }
-      })
-      .catch(() => {
-        if (isMountedRef.current) {
-          setSaveToast({ message: "このブラウザへの評価下書き保存に失敗しました", tone: "error" });
-        }
-      });
   };
 
   const handleFirstImpressionSelection = async (selection: EvaluationSelection) => {
@@ -1310,60 +1294,115 @@ const App: React.FC = () => {
     });
 
     setIsFirstImpressionOpen(false);
-    if (evaluationReceipt && evaluationReceiptExpiresAt && Date.parse(evaluationReceiptExpiresAt) > Date.now()) {
-      setCentralConsent("not-asked");
+    const canSaveToCloud = !!evaluationReceipt
+      && !!evaluationReceiptExpiresAt
+      && Date.parse(evaluationReceiptExpiresAt) > Date.now();
+    const canSaveInBrowser = appFeatures.debugHistory && !!debugExportSource;
+    const needsCandidateActivation = previewCandidateId !== targetCandidateId;
+    if (canSaveInBrowser || canSaveToCloud) {
       setIsEvaluationConsentOpen(true);
       setIsInitialPlaybackPromptVisible(false);
     } else {
-      setIsInitialPlaybackPromptVisible(true);
+      if (needsCandidateActivation) {
+        showPlaybackWhenCandidateReadyRef.current = true;
+      } else {
+        setIsInitialPlaybackPromptVisible(true);
+      }
     }
 
     // The choice is complete as soon as the participant presses it. Preparing
     // the other candidate's VOICEVOX audio can take several seconds, so it must
     // not keep either dialog on screen. Candidate activation remains guarded by
     // candidateActivationSequenceRef and updates the playback state atomically.
-    if (previewCandidateId !== targetCandidateId) {
-      void activateLyricsCandidate(targetCandidateId, null);
+    if (needsCandidateActivation) {
+      const activation = activateLyricsCandidate(targetCandidateId, null);
+      candidateActivationPromiseRef.current = activation;
+      void activation.finally(() => {
+        if (candidateActivationPromiseRef.current === activation) {
+          candidateActivationPromiseRef.current = null;
+        }
+      });
     }
+  };
+
+  const saveCurrentResultInBrowser = async (
+    activation: Promise<DebugExportSource | null> | null,
+    sourceAtConsent: DebugExportSource | null,
+  ) => {
+    const source = activation ? await activation : sourceAtConsent;
+    if (!appFeatures.debugHistory || !source) return;
+    const artifacts = await buildDebugBundleArtifacts({
+      source,
+      buildId: appBuildId,
+      mode: appConfig.mode,
+      origin: window.location.origin,
+    });
+    await saveDebugHistoryRecord(artifacts);
   };
 
   const handleEvaluationCentralConsent = async (nextConsent: Exclude<EvaluationCentralConsent, "not-asked">) => {
     if (isEvaluationSubmissionPending) return;
-    setCentralConsent(nextConsent);
-    if (!evaluationGenerationId) {
-      setIsEvaluationCentrallySaved(false);
-      setIsEvaluationConsentOpen(false);
-      setIsInitialPlaybackPromptVisible(true);
-      return;
-    }
+    evaluationStorageConsentRef.current = nextConsent;
     const updatedAt = new Date().toISOString();
-    const write = () => updateEvaluationDraftState(evaluationGenerationId, { centralConsent: nextConsent }, updatedAt);
-    const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
-    evaluationDraftWriteQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
+    const currentDraft = evaluationDraftRef.current;
+    const nextDraft = currentDraft
+      ? withEvaluationDraftState(currentDraft, { centralConsent: nextConsent }, updatedAt)
+      : null;
+    evaluationDraftRef.current = nextDraft;
     if (nextConsent === "declined") {
       setIsEvaluationCentrallySaved(false);
-      void queuedWrite.catch(() => setSaveToast({ message: "このブラウザへの同意結果の保存に失敗しました", tone: "error" }));
       setIsEvaluationConsentOpen(false);
-      setIsInitialPlaybackPromptVisible(true);
+      if (isCandidatePreviewLoading) {
+        showPlaybackWhenCandidateReadyRef.current = true;
+      } else {
+        setIsInitialPlaybackPromptVisible(true);
+      }
       return;
     }
     setIsEvaluationSubmissionPending(true);
+    const saveSequence = evaluationSaveSequenceRef.current + 1;
+    evaluationSaveSequenceRef.current = saveSequence;
+    const consentGenerationId = nextDraft?.generationId ?? null;
+    const activationAtConsent = candidateActivationPromiseRef.current;
+    const debugSourceAtConsent = debugExportSourceRef.current;
+    setIsEvaluationConsentOpen(false);
+    if (isCandidatePreviewLoading) {
+      showPlaybackWhenCandidateReadyRef.current = true;
+    } else {
+      setIsInitialPlaybackPromptVisible(true);
+    }
     try {
-      await queuedWrite;
-      const draft = await getEvaluationDraft(evaluationGenerationId);
-      if (!draft || !evaluationReceipt) throw new Error("評価下書きまたは保存用情報が見つかりません。");
-      const payload = buildEvaluationSubmission(draft, evaluationReceipt, appBuildId, updatedAt, EVALUATION_EXPERIMENT_ROUND_ID);
-      const result = await submitEvaluation(payload);
-      setIsEvaluationCentrallySaved(true);
-      setSaveToast({ message: result.duplicate ? "この結果は保存済みです" : "保存しました。ご協力ありがとう！", tone: "success" });
-    } catch (submissionError) {
-      setIsEvaluationCentrallySaved(false);
-      setSaveToast({ message: submissionError instanceof Error ? submissionError.message : "改善研究のために保存できませんでした", tone: "error" });
+      const browserSave = Promise.all([
+        ...(nextDraft ? [saveEvaluationDraft(nextDraft)] : []),
+        saveCurrentResultInBrowser(activationAtConsent, debugSourceAtConsent),
+      ]);
+      const canSaveToCloud = !!nextDraft
+        && !!evaluationReceipt
+        && !!evaluationReceiptExpiresAt
+        && Date.parse(evaluationReceiptExpiresAt) > Date.now();
+      const cloudSave = canSaveToCloud
+        ? submitEvaluation(buildEvaluationSubmission(nextDraft, evaluationReceipt, appBuildId, updatedAt, EVALUATION_EXPERIMENT_ROUND_ID))
+        : Promise.resolve(null);
+      const [browserResult, cloudResult] = await Promise.allSettled([browserSave, cloudSave]);
+      const savedInBrowser = browserResult.status === "fulfilled";
+      const savedToCloud = cloudResult.status === "fulfilled" && cloudResult.value !== null;
+      const stillShowingConsentedResult = consentGenerationId
+        ? consentGenerationId === evaluationDraftRef.current?.generationId
+        : debugSourceAtConsent?.recordId === debugExportSourceRef.current?.recordId;
+      if (!stillShowingConsentedResult || evaluationSaveSequenceRef.current !== saveSequence) return;
+      setIsEvaluationCentrallySaved(savedToCloud);
+      if (savedInBrowser && (savedToCloud || !canSaveToCloud)) {
+        setSaveToast({ message: "保存しました。ありがとう！", tone: "success" });
+      } else if (savedInBrowser) {
+        setSaveToast({ message: "このブラウザには保存しました。クラウドには送れませんでした", tone: "error" });
+      } else if (savedToCloud) {
+        setSaveToast({ message: "クラウドには保存しました。このブラウザには保存できませんでした", tone: "error" });
+      } else {
+        setSaveToast({ message: "保存できませんでした。歌はそのまま使えます", tone: "error" });
+      }
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && evaluationSaveSequenceRef.current === saveSequence) {
         setIsEvaluationSubmissionPending(false);
-        setIsEvaluationConsentOpen(false);
-        setIsInitialPlaybackPromptVisible(true);
       }
     }
   };
@@ -1372,24 +1411,24 @@ const App: React.FC = () => {
     answers: EvaluationFollowUpAnswers,
     followUpConsent: EvaluationCentralConsent,
   ): Promise<EvaluationDraft> => {
-    if (!evaluationGenerationId) throw new Error("この回答の保存先が見つかりません。");
+    const currentDraft = evaluationDraftRef.current;
+    if (!currentDraft) throw new Error("この回答の保存先が見つかりません。");
     const updatedAt = new Date().toISOString();
     setFinalPreferenceSelection(answers.finalPreferenceSelection);
     setSubjectFeedbackChoice(answers.subjectFeedbackChoice);
     setEvaluationRatings({ ...answers.ratings });
-    const write = () => updateEvaluationDraftState(evaluationGenerationId, {
+    const nextDraft = withEvaluationDraftState(currentDraft, {
       finalPreferenceSelection: answers.finalPreferenceSelection,
       subjectFeedbackChoice: answers.subjectFeedbackChoice,
       ratings: answers.ratings,
       followUpCentralConsent: followUpConsent,
     }, updatedAt);
+    evaluationDraftRef.current = nextDraft;
+    const write = () => saveEvaluationDraft(nextDraft);
     const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
     evaluationDraftWriteQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
-    const wasUpdated = await queuedWrite;
-    if (!wasUpdated) throw new Error("この回答を端末に保存できませんでした。");
-    const draft = await getEvaluationDraft(evaluationGenerationId);
-    if (!draft) throw new Error("この回答を端末に保存できませんでした。");
-    return draft;
+    await queuedWrite;
+    return nextDraft;
   };
 
   const handleSaveEvaluationFollowUpLocally = async (answers: EvaluationFollowUpAnswers) => {
@@ -1436,10 +1475,10 @@ const App: React.FC = () => {
     setIsEvaluationFollowUpOpen(true);
   };
 
-  const activateLyricsCandidate = async (candidateId: LyricsCandidate["candidateId"], showPlaybackPrompt: boolean | null = true) => {
-    if (!isComparableCandidateSet(generatedLyricsCandidates) || isCandidatePreviewLoading) return;
+  const activateLyricsCandidate = async (candidateId: LyricsCandidate["candidateId"], showPlaybackPrompt: boolean | null = true): Promise<DebugExportSource | null> => {
+    if (!isComparableCandidateSet(generatedLyricsCandidates) || isCandidatePreviewLoading) return null;
     const candidate = generatedLyricsCandidates.find((item) => item.candidateId === candidateId);
-    if (!candidate || previewCandidateId === candidateId) return;
+    if (!candidate || previewCandidateId === candidateId) return null;
 
     const activationSequence = candidateActivationSequenceRef.current + 1;
     candidateActivationSequenceRef.current = activationSequence;
@@ -1447,6 +1486,7 @@ const App: React.FC = () => {
     // Stop and reset first, then make one coherent state update once the next
     // candidate's score and audio are available.
     resetAudioState();
+    let resolvedDebugSource: DebugExportSource | null = null;
 
     try {
       let playback = candidatePlaybackCacheRef.current.get(candidateId);
@@ -1462,7 +1502,7 @@ const App: React.FC = () => {
         const accentLineHints = isDevelopmentVoicevox() && canUseLocalVoicevox
           ? await analyzeLyricsAccents(candidate)
           : undefined;
-        if (candidateActivationSequenceRef.current !== activationSequence) return;
+        if (candidateActivationSequenceRef.current !== activationSequence) return null;
 
         const score = buildSingingScore(candidate, createSingingSeed(candidate, 0), accentLineHints);
         let audioBlob = createSilentPlaybackAudio(score);
@@ -1486,7 +1526,7 @@ const App: React.FC = () => {
             setVoicevoxConnectionMessage("接続は確認できましたが、歌声合成を完了できませんでした。");
           }
         }
-        if (candidateActivationSequenceRef.current !== activationSequence) return;
+        if (candidateActivationSequenceRef.current !== activationSequence) return null;
         playback = {
           score,
           audioBlob,
@@ -1497,7 +1537,7 @@ const App: React.FC = () => {
         candidatePlaybackCacheRef.current.set(candidateId, playback);
       }
 
-      if (candidateActivationSequenceRef.current !== activationSequence || !isMountedRef.current) return;
+      if (candidateActivationSequenceRef.current !== activationSequence || !isMountedRef.current) return null;
       setLyrics(candidate);
       setPlaybackScore(playback.score);
       replaceAudioUrl(URL.createObjectURL(playback.audioBlob));
@@ -1505,6 +1545,19 @@ const App: React.FC = () => {
       setVoicevoxWarning(playback.voicevoxWarning);
       setVoicevoxResolvedServer(playback.voicevoxServer);
       setPreviewCandidateId(candidateId);
+      const debugSource = debugExportSourceRef.current;
+      if (debugSource) {
+        resolvedDebugSource = {
+          ...debugSource,
+          lyrics: candidate,
+          singingScore: playback.score,
+          voiceAudioBlob: playback.playbackKind === "voice" ? playback.audioBlob : null,
+          playbackKind: playback.playbackKind,
+          voicevoxStatus: playback.playbackKind === "voice" ? "voice" : "unavailable",
+          voicevoxIssue: playback.voicevoxWarning,
+        };
+        replaceDebugExportSource(resolvedDebugSource);
+      }
       const alternativeWasPreviewed = evaluationSelection !== null;
       if (alternativeWasPreviewed) setHasAlternativePreviewed(true);
       updateEvaluationDraftStateBestEffort({
@@ -1516,13 +1569,52 @@ const App: React.FC = () => {
       }
     } catch (candidateError) {
       if (candidateActivationSequenceRef.current === activationSequence && isMountedRef.current) {
-        setSaveToast({ message: "この歌の再生準備に失敗しました", tone: "error" });
+        try {
+          const fallbackScore = buildSingingScore(candidate, createSingingSeed(candidate, 0));
+          const fallbackAudio = createSilentPlaybackAudio(fallbackScore);
+          candidatePlaybackCacheRef.current.set(candidateId, {
+            score: fallbackScore,
+            audioBlob: fallbackAudio,
+            playbackKind: "animation-only",
+            voicevoxWarning: "歌声を作れなかったため、絵のアニメーションで再生します。",
+            voicevoxServer: null,
+          });
+          setLyrics(candidate);
+          setPlaybackScore(fallbackScore);
+          replaceAudioUrl(URL.createObjectURL(fallbackAudio));
+          setPlaybackKind("animation-only");
+          setVoicevoxWarning("歌声を作れなかったため、絵のアニメーションで再生します。");
+          setVoicevoxResolvedServer(null);
+          setPreviewCandidateId(candidateId);
+          const debugSource = debugExportSourceRef.current;
+          if (debugSource) {
+            resolvedDebugSource = {
+              ...debugSource,
+              lyrics: candidate,
+              singingScore: fallbackScore,
+              voiceAudioBlob: null,
+              playbackKind: "animation-only",
+              voicevoxStatus: "failed",
+              voicevoxIssue: "歌声を作れなかったため、絵のアニメーションで再生します。",
+            };
+            replaceDebugExportSource(resolvedDebugSource);
+          }
+          updateEvaluationDraftStateBestEffort({ activeCandidateId: candidateId });
+          setSaveToast({ message: "歌声なしで再生できます", tone: "error" });
+        } catch {
+          setSaveToast({ message: "この歌の再生準備に失敗しました", tone: "error" });
+        }
       }
     } finally {
       if (candidateActivationSequenceRef.current === activationSequence && isMountedRef.current) {
         setIsCandidatePreviewLoading(null);
+        if (showPlaybackPrompt === null && showPlaybackWhenCandidateReadyRef.current) {
+          showPlaybackWhenCandidateReadyRef.current = false;
+          setIsInitialPlaybackPromptVisible(true);
+        }
       }
     }
+    return resolvedDebugSource;
   };
 
   const handleGenerateExperimentVoice = async () => {
@@ -1599,7 +1691,7 @@ const App: React.FC = () => {
     }
   };
 
-  const runGeneration = async (data: DrawingData, recordOptions: GenerationRecordOptions, shouldSaveDebugHistory = false) => {
+  const runGeneration = async (data: DrawingData, recordOptions: GenerationRecordOptions) => {
     if (generationRunRef.current) {
       return;
     }
@@ -1701,7 +1793,7 @@ const App: React.FC = () => {
     clearDebugHistoryDrawing();
     setGeneratedDrawing(groupedDrawingData);
     setPlaybackScore(null);
-    setDebugExportSource(null);
+    replaceDebugExportSource(null);
     setDebugExportArtifacts(null);
     setIsDebugExportOpen(false);
     setDebugReporterNote("");
@@ -1765,6 +1857,7 @@ const App: React.FC = () => {
             activeCandidateId: initialPreviewCandidate.candidateId,
             lyricsPromptVersion: generationResult.lyricsPromptVersion,
           });
+          evaluationDraftRef.current = evaluationDraft;
         } else {
           evaluationDraftUnavailable = true;
         }
@@ -1899,8 +1992,6 @@ const App: React.FC = () => {
           }
           setSaveToast({ message: "記録に失敗しました", tone: "error" });
         }
-      } else if (!shouldSaveDebugHistory) {
-        setSaveToast({ message: "絵や歌を記録せずに作成しました", tone: "success" });
       }
 
       completeTimingPhase("finalize");
@@ -1921,29 +2012,7 @@ const App: React.FC = () => {
         error: generationErrorMessage,
         durationsMs: { ...durationsMs },
       };
-      setDebugExportSource(completedDebugSource);
-      if (shouldSaveDebugHistory && appFeatures.debugHistory) {
-        void buildDebugBundleArtifacts({
-          source: completedDebugSource,
-          buildId: appBuildId,
-          mode: appConfig.mode,
-          origin: window.location.origin,
-        })
-          .then(saveDebugHistoryRecord)
-          .then(() => {
-            if (isMountedRef.current) {
-              setSaveToast({ message: "この端末に記録しました", tone: "success" });
-            }
-          })
-          .catch((historyError) => {
-            if (!isMountedRef.current) return;
-            const message = isDebugHistoryError(historyError, "record-limit") || isDebugHistoryError(historyError, "size-limit") || isDebugHistoryError(historyError, "quota") || isDebugHistoryError(historyError, "origin-quota")
-              ? "この端末の記録がいっぱいです。今回の結果は残っており、ZIPにも保存できます。"
-              : "この端末に記録できませんでした。今回の結果は残っており、ZIPにも保存できます。";
-            setSaveToast({ message, tone: "error" });
-          });
-      }
-
+      replaceDebugExportSource(completedDebugSource);
       if (generationErrorMessage === null && isComparableCandidateSet(generatedCandidates) && generatedLyrics && generatedScore && generatedAudioBlob) {
         const candidateId = (generatedLyrics as LyricsCandidate).candidateId;
         candidatePlaybackCacheRef.current.set(candidateId, {
@@ -1953,9 +2022,6 @@ const App: React.FC = () => {
           voicevoxServer: generatedVoicevoxServer,
           voicevoxWarning: voicevoxIssue ?? (voicevoxStatus === "unavailable" ? "VOICEVOX Engineに接続できなかったため、歌声なしで再生します。" : null),
         });
-      }
-      if (generationErrorMessage === null && evaluationDraft) {
-        saveEvaluationDraftBestEffort(evaluationDraft);
       }
       if (generationErrorMessage === null && evaluationDraftUnavailable) {
         setSaveToast({ message: "このブラウザでは評価下書きを保存できません", tone: "error" });
@@ -2004,14 +2070,8 @@ const App: React.FC = () => {
       return;
     }
 
-    if (appFeatures.debugHistory && debugHistoryConsent === "unknown") {
-      setPendingDebugHistoryGeneration(data);
-      setIsDebugHistoryConsentOpen(true);
-      return;
-    }
-
     if (!appFeatures.dataSaving) {
-      await runGeneration(data, { shouldRecord: false, participantAge: null }, debugHistoryConsent === "enabled");
+      await runGeneration(data, { shouldRecord: false, participantAge: null });
       return;
     }
 
@@ -2037,24 +2097,6 @@ const App: React.FC = () => {
     await runGeneration(pendingGenerationData, recordOptions);
   };
 
-  const setDebugHistoryAutoSave = (consent: Exclude<DebugHistoryConsent, "unknown">) => {
-    setDebugHistoryConsent(consent);
-    try {
-      window.localStorage.setItem(DEBUG_HISTORY_CONSENT_STORAGE_KEY, consent);
-    } catch {
-      // The choice remains active for this tab even when preference storage is unavailable.
-    }
-  };
-
-  const startPendingDebugHistoryGeneration = async (consent: Exclude<DebugHistoryConsent, "unknown">) => {
-    const pendingData = pendingDebugHistoryGeneration;
-    setDebugHistoryAutoSave(consent);
-    setIsDebugHistoryConsentOpen(false);
-    setPendingDebugHistoryGeneration(null);
-    if (!pendingData) return;
-    await runGeneration(pendingData, { shouldRecord: false, participantAge: null }, consent === "enabled");
-  };
-
   const handleRecordAndGenerate = async () => {
     await startPendingGeneration({ shouldRecord: true, participantAge });
   };
@@ -2077,7 +2119,7 @@ const App: React.FC = () => {
     clearDebugHistoryDrawing();
     setGeneratedDrawing(null);
     setPlaybackScore(null);
-    setDebugExportSource(null);
+    replaceDebugExportSource(null);
     setDebugExportArtifacts(null);
     setIsDebugExportOpen(false);
     setPendingGenerationData(null);
@@ -2103,7 +2145,7 @@ const App: React.FC = () => {
     setSelectedDemoRecordId(null);
     clearDebugHistoryDrawing();
     setPlaybackScore(null);
-    setDebugExportSource(null);
+    replaceDebugExportSource(null);
     setDebugExportArtifacts(null);
     setIsDebugExportOpen(false);
     resetAudioState();
@@ -2539,27 +2581,13 @@ const App: React.FC = () => {
         />
       )}
 
-      {isDebugHistoryConsentOpen && (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-900/40 px-4 py-6 backdrop-blur-sm" role="presentation">
-          <section className="w-full max-w-lg rounded-3xl border-4 border-violet-100 bg-white p-5 text-left shadow-2xl sm:p-6" role="dialog" aria-modal="true" aria-labelledby="debug-history-consent-title">
-            <p className="text-xs font-black tracking-[0.18em] text-violet-500">この端末だけの記録</p>
-            <h2 id="debug-history-consent-title" className="mt-1 text-2xl font-black text-gray-800">この端末に記録を残しますか？</h2>
-            <p className="mt-3 text-sm font-semibold leading-relaxed text-gray-600">絵、描いた順番、歌詞、楽譜、エラーと、作れた場合は歌声をこのブラウザだけに保存します。あとからZIPにして共有できます。</p>
-            <div className="mt-4 rounded-2xl bg-violet-50 p-4 text-xs font-bold leading-relaxed text-violet-900">APIキー、ログイン情報、メールアドレス、年齢、音声ソフトの接続先は保存しません。サーバーにも送りません。</div>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <button type="button" onClick={() => void startPendingDebugHistoryGeneration("enabled")} className="flex min-h-12 items-center justify-center rounded-2xl bg-violet-600 px-4 py-3 text-sm font-black text-white shadow-md transition hover:bg-violet-700 active:scale-95">保存して作る</button>
-              <button type="button" onClick={() => void startPendingDebugHistoryGeneration("disabled")} className="flex min-h-12 items-center justify-center rounded-2xl bg-gray-200 px-4 py-3 text-sm font-black text-gray-700 shadow-sm transition hover:bg-gray-300 active:scale-95">保存せず作る</button>
-            </div>
-          </section>
-        </div>
-      )}
-
       {renderFirstImpressionModal()}
 
       <EvaluationConsentModal
-        open={isEvaluationConsentOpen && !!evaluationReceipt && !!evaluationReceiptExpiresAt}
-        consent={centralConsent}
+        open={isEvaluationConsentOpen}
         pending={isEvaluationSubmissionPending}
+        savesInBrowser={appFeatures.debugHistory && !!debugExportSource}
+        savesToCloud={!!evaluationReceipt && !!evaluationReceiptExpiresAt && Date.parse(evaluationReceiptExpiresAt) > Date.now()}
         onAccept={() => void handleEvaluationCentralConsent("accepted")}
         onDecline={() => void handleEvaluationCentralConsent("declined")}
       />
@@ -2737,14 +2765,21 @@ const App: React.FC = () => {
         <div className="compact-maker-intro" aria-label="超えかき歌の説明">
           <img src="/logo.png" alt="超えかき歌！" />
           <p>絵を描くと、AI が歌詞を作り、ずんだもん（VOICEVOX）が歌ってくれます！</p>
+          {appFeatures.debugHistory && (
+            <button
+              type="button"
+              onClick={() => setAppView("debugHistory")}
+              className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-2 text-xs font-black text-violet-700 shadow-sm"
+              aria-label="保存した歌を開く"
+            >
+              🎵 保存した歌
+            </button>
+          )}
         </div>
       )}
 
-      {appView === "debugHistory" && appFeatures.debugHistory && !isCompactMakerLayout ? (
+      {appView === "debugHistory" && appFeatures.debugHistory ? (
         <DebugHistoryView
-          autoSaveEnabled={debugHistoryConsent === "enabled"}
-          onEnableAutoSave={() => setDebugHistoryAutoSave("enabled")}
-          onDisableAutoSave={() => setDebugHistoryAutoSave("disabled")}
           onOpenRecord={handleOpenDebugHistoryRecord}
           onBack={() => setAppView("maker")}
           onToast={setSaveToast}
