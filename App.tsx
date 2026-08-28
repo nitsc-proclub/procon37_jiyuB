@@ -1309,17 +1309,21 @@ const App: React.FC = () => {
       centralConsent: "not-asked",
     });
 
-    if (previewCandidateId !== targetCandidateId) {
-      await activateLyricsCandidate(targetCandidateId, false);
-    }
-
-    if (!isMountedRef.current) return;
     setIsFirstImpressionOpen(false);
-    setIsInitialPlaybackPromptVisible(true);
     if (evaluationReceipt && evaluationReceiptExpiresAt && Date.parse(evaluationReceiptExpiresAt) > Date.now()) {
       setCentralConsent("not-asked");
       setIsEvaluationConsentOpen(true);
       setIsInitialPlaybackPromptVisible(false);
+    } else {
+      setIsInitialPlaybackPromptVisible(true);
+    }
+
+    // The choice is complete as soon as the participant presses it. Preparing
+    // the other candidate's VOICEVOX audio can take several seconds, so it must
+    // not keep either dialog on screen. Candidate activation remains guarded by
+    // candidateActivationSequenceRef and updates the playback state atomically.
+    if (previewCandidateId !== targetCandidateId) {
+      void activateLyricsCandidate(targetCandidateId, null);
     }
   };
 
@@ -1432,7 +1436,7 @@ const App: React.FC = () => {
     setIsEvaluationFollowUpOpen(true);
   };
 
-  const activateLyricsCandidate = async (candidateId: LyricsCandidate["candidateId"], showPlaybackPrompt = true) => {
+  const activateLyricsCandidate = async (candidateId: LyricsCandidate["candidateId"], showPlaybackPrompt: boolean | null = true) => {
     if (!isComparableCandidateSet(generatedLyricsCandidates) || isCandidatePreviewLoading) return;
     const candidate = generatedLyricsCandidates.find((item) => item.candidateId === candidateId);
     if (!candidate || previewCandidateId === candidateId) return;
@@ -1507,7 +1511,9 @@ const App: React.FC = () => {
         activeCandidateId: candidateId,
         ...(alternativeWasPreviewed ? { alternativePreviewed: true } : {}),
       });
-      setIsInitialPlaybackPromptVisible(showPlaybackPrompt);
+      if (showPlaybackPrompt !== null) {
+        setIsInitialPlaybackPromptVisible(showPlaybackPrompt);
+      }
     } catch (candidateError) {
       if (candidateActivationSequenceRef.current === activationSequence && isMountedRef.current) {
         setSaveToast({ message: "この歌の再生準備に失敗しました", tone: "error" });
