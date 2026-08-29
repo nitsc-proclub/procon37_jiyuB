@@ -14,11 +14,6 @@ type GenerationJourneyProps = {
   onCompletionDisplayComplete?: (runKey: number) => void;
 };
 
-const JOURNEY_STEPS = [
-  "絵をじっくり見ているよ",
-  "歌声に魔法をかけているよ",
-];
-
 const getSourceSize = (drawingData: DrawingData) => {
   if (drawingData.canvasSize?.width && drawingData.canvasSize.height) {
     return drawingData.canvasSize;
@@ -243,8 +238,13 @@ export const GenerationProgressBar: React.FC<GenerationProgressBarProps> = ({ ti
   </div>;
 };
 
-const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, compact = false, inline = false, timingEstimate, progressPhase, runKey, isComplete, onCompletionDisplayComplete }) => (
-  <div className={`generation-journey flex h-full flex-col items-center justify-center text-center ${compact || inline ? "min-h-0" : "min-h-[340px]"}`}>
+const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawingData, compact = false, inline = false, timingEstimate, progressPhase, runKey, isComplete, onCompletionDisplayComplete }) => {
+  const journeySteps = [
+    "絵をじっくり見ているよ",
+    stageLabel === "2つの歌声を準備しているよ" ? stageLabel : "歌声に魔法をかけているよ",
+  ];
+
+  return <div className={`generation-journey flex h-full flex-col items-center justify-center text-center ${compact || inline ? "min-h-0" : "min-h-[340px]"}`}>
     {compact && <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{stageLabel}</p>}
     {drawingData && compact ? (
       <div className={`relative w-full overflow-hidden bg-[#fffdf7] ${compact ? "h-full" : "aspect-square max-w-[21rem] rounded-3xl border-4 border-yellow-200 shadow-lg"}`}>
@@ -270,7 +270,7 @@ const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawi
         {!inline && <p className="mt-5 text-sm font-bold text-slate-500">AIとずんだもんが、順番に歌をつくっています</p>}
         <GenerationProgressBar timingEstimate={timingEstimate} progressPhase={progressPhase} runKey={runKey} isComplete={isComplete} onCompletionDisplayComplete={onCompletionDisplayComplete} />
         {!inline && <div className="mt-4 grid w-full max-w-xl gap-2 sm:grid-cols-2">
-          {JOURNEY_STEPS.map((step) => (
+          {journeySteps.map((step) => (
             <div key={step} className={`rounded-2xl border px-3 py-2 text-sm font-bold ${step === stageLabel ? "border-orange-400 bg-orange-50 text-orange-900 shadow-sm" : "border-orange-100 bg-white/70 text-slate-500"}`}>
               {step === stageLabel ? "✦ " : "○ "}{step}
             </div>
@@ -278,7 +278,7 @@ const GenerationJourney: React.FC<GenerationJourneyProps> = ({ stageLabel, drawi
         </div>}
       </>
     )}
-  </div>
-);
+  </div>;
+};
 
 export default GenerationJourney;

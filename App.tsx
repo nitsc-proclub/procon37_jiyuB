@@ -486,6 +486,7 @@ const App: React.FC = () => {
   const recordConsentDialogRef = useRef<HTMLElement>(null);
   const recordConsentPrimaryButtonRef = useRef<HTMLButtonElement>(null);
   const generationRunRef = useRef(false);
+  const generationSequenceRef = useRef(0);
   const generationTimingRunKeyRef = useRef(0);
   const generationCompletionWaiterRef = useRef<GenerationCompletionWaiter | null>(null);
   const turnstileWidgetRef = useRef<TurnstileHandle>(null);
@@ -546,6 +547,7 @@ const App: React.FC = () => {
     return () => {
       isMountedRef.current = false;
       generationRunRef.current = false;
+      generationSequenceRef.current += 1;
       candidateActivationSequenceRef.current += 1;
       candidatePlaybackCacheRef.current.clear();
       const completionWaiter = generationCompletionWaiterRef.current;
@@ -1097,9 +1099,9 @@ const App: React.FC = () => {
     } catch {
       // The selected route remains active for this tab when storage is unavailable.
     }
-    // A candidate synthesized for another route must never be reused after a
-    // debug override changes. This does not probe any server.
-    candidatePlaybackCacheRef.current.clear();
+    // Already-generated candidate audio belongs to the current song and its
+    // one-time grants have been consumed. Preserve that cache; this selection
+    // applies to the next song instead of degrading the current one to silence.
     if (server === "local") {
       setVoicevoxConnectionMessage("このパソコンのVOICEVOXは、生成時にも確認します。");
     } else {
@@ -1310,10 +1312,9 @@ const App: React.FC = () => {
       }
     }
 
-    // The choice is complete as soon as the participant presses it. Preparing
-    // the other candidate's VOICEVOX audio can take several seconds, so it must
-    // not keep either dialog on screen. Candidate activation remains guarded by
-    // candidateActivationSequenceRef and updates the playback state atomically.
+    // Phase 1 normally prepared both candidates before opening this dialog, so
+    // activation is an immediate cache switch. Keep the guarded async path as a
+    // recovery for imported or older results whose cache is incomplete.
     if (needsCandidateActivation) {
       const activation = activateLyricsCandidate(targetCandidateId, null);
       candidateActivationPromiseRef.current = activation;
@@ -1751,6 +1752,9 @@ const App: React.FC = () => {
     // widget before fetch can invalidate it and reject every generation.
 
     const selectedVoicevoxServer = voicevoxServerSelection;
+    const generationSequence = generationSequenceRef.current + 1;
+    generationSequenceRef.current = generationSequence;
+    const isCurrentGeneration = () => isMountedRef.current && generationSequenceRef.current === generationSequence;
     const groupedDrawingData = {
       ...data,
       strokeGroups: groupStrokes(data.strokes),
@@ -1774,18 +1778,17 @@ const App: React.FC = () => {
     const durationsMs: GenerationTimingDurations = {};
     let activeTimingPhase: GenerationTimingPhase = "gemini";
     let failedStage: GenerationTimingPhase | null = null;
-    const beginTimingPhase = (phase: GenerationTimingPhase) => {
-      if (phaseStartedAt.has(activeTimingPhase) && durationsMs[activeTimingPhase] === undefined) {
-        durationsMs[activeTimingPhase] = Math.round(performance.now() - (phaseStartedAt.get(activeTimingPhase) ?? performance.now()));
-      }
+    const completeTimingPhase = (phase = activeTimingPhase) => {
+      const started = phaseStartedAt.get(phase);
+      if (started === undefined) return;
+      durationsMs[phase] = (durationsMs[phase] ?? 0) + Math.round(performance.now() - started);
+      phaseStartedAt.delete(phase);
+    };
+    const beginTimingPhase = (phase: GenerationTimingPhase, updateVisibleProgress = true) => {
+      completeTimingPhase(activeTimingPhase);
       activeTimingPhase = phase;
       phaseStartedAt.set(phase, performance.now());
-      setGenerationProgressPhase(phase);
-    };
-    const completeTimingPhase = (phase = activeTimingPhase) => {
-      if (durationsMs[phase] !== undefined) return;
-      const started = phaseStartedAt.get(phase);
-      if (started !== undefined) durationsMs[phase] = Math.round(performance.now() - started);
+      if (updateVisibleProgress) setGenerationProgressPhase(phase);
     };
 
     generationRunRef.current = true;
@@ -1856,6 +1859,7 @@ const App: React.FC = () => {
         : Promise.resolve(false);
       const requestedGenerationId = createGenerationId();
       const generationResult = await generateEkakiUta(groupedDrawingData, turnstileTokenForRequest, requestedGenerationId ?? undefined);
+      if (!isCurrentGeneration()) return;
       generatedLyrics = generationResult.lyrics;
       generatedCandidates = generationResult.candidates;
       voicevoxGrantsRef.current = generationResult.voiceGrants ?? {};
@@ -1899,90 +1903,177 @@ const App: React.FC = () => {
       completeTimingPhase("gemini");
 
       const canUseLocalVoicevox = await localVoicevoxProbe;
-      const initialCandidateId = isComparableCandidateSet(generatedCandidates)
+      if (!isCurrentGeneration()) return;
+      const comparableCandidates = isComparableCandidateSet(generatedCandidates)
+        ? generatedCandidates
+        : null;
+      const initialCandidateId = comparableCandidates
         ? (generatedLyrics as LyricsCandidate).candidateId
         : null;
-      const voiceGrant = initialCandidateId ? voicevoxGrantsRef.current[initialCandidateId] : generationResult.voiceGrant;
-      const canUseRemoteVoicevox = selectedVoicevoxServer !== "local" && appFeatures.voicevox && !!voiceGrant;
-      const canUseVoicevox = canUseLocalVoicevox || canUseRemoteVoicevox;
+      const candidatesToPrepare: LyricsResponse[] = comparableCandidates
+        ? [
+            generatedLyrics as LyricsCandidate,
+            ...comparableCandidates.filter((candidate) => candidate.candidateId !== initialCandidateId),
+          ]
+        : generatedLyrics
+          ? [generatedLyrics]
+          : [];
+      const initialVoiceGrant = initialCandidateId
+        ? voicevoxGrantsRef.current[initialCandidateId]
+        : generationResult.voiceGrant;
+      const canUseInitialRemoteVoicevox = selectedVoicevoxServer !== "local" && appFeatures.voicevox && !!initialVoiceGrant;
+      const canUseInitialVoicevox = canUseLocalVoicevox || canUseInitialRemoteVoicevox;
       if (selectedVoicevoxServer === "local" && appFeatures.localVoicevox && !canUseLocalVoicevox) {
         voicevoxStatus = "unavailable";
         setVoicevoxWarning(
           "VOICEVOX Engineを起動し、本番OriginのCORS許可とブラウザのローカルネットワークアクセス許可を確認してください。",
         );
-      } else if (!canUseVoicevox && appFeatures.voicevox && !voiceGrant) {
+      } else if (!canUseInitialVoicevox && appFeatures.voicevox && !initialVoiceGrant) {
         voicevoxStatus = "unavailable";
         setVoicevoxWarning("歌声の準備に必要な音声チケットを受け取れませんでした。歌詞とアニメーションは再生できます。");
       }
 
-      let accentLineHints;
-      if (isDevelopmentVoicevox() && canUseLocalVoicevox) {
-        beginTimingPhase("accent");
-        accentLineHints = await analyzeLyricsAccents(generatedLyrics);
-        completeTimingPhase("accent");
+      const preparedCandidates = new Map<LyricsCandidate["candidateId"] | "legacy", CandidatePlaybackCache>();
+      if (comparableCandidates) {
+        updateProgress("2つの歌声を準備しているよ");
       }
 
-      beginTimingPhase("score");
-      const seed = createSingingSeed(generatedLyrics, 0);
-      generatedScore = buildSingingScore(generatedLyrics, seed, accentLineHints);
-      completeTimingPhase("score");
-      setPlaybackScore(generatedScore);
+      // The VPC-backed VOICEVOX Engine shares one inference budget. Prepare
+      // candidates one at a time to avoid a same-user burst; a failed voice is
+      // cached as a seekable silent animation and must not stop the next one.
+      for (const [candidateIndex, candidate] of candidatesToPrepare.entries()) {
+        if (!isCurrentGeneration()) return;
+        const candidateId: LyricsCandidate["candidateId"] | "legacy" = "candidateId" in candidate
+          ? (candidate as LyricsCandidate).candidateId
+          : "legacy";
+        const voiceGrant = candidateId === "legacy"
+          ? generationResult.voiceGrant
+          : voicevoxGrantsRef.current[candidateId];
+        const canUseRemoteVoicevox = selectedVoicevoxServer !== "local" && appFeatures.voicevox && !!voiceGrant;
+        const canUseVoicevox = canUseLocalVoicevox || canUseRemoteVoicevox;
+        let candidateWarning: string | null = canUseVoicevox
+          ? null
+          : selectedVoicevoxServer === "local" && appFeatures.localVoicevox && !canUseLocalVoicevox
+            ? "VOICEVOX Engineに接続できないため、絵のアニメーションで再生します。"
+            : selectedVoicevoxServer !== "local" && appFeatures.voicevox && !voiceGrant
+              ? "音声チケットを受け取れなかったため、絵のアニメーションで再生します。"
+              : null;
+        let candidateServer: VoicevoxResolvedServerId | null = null;
+        let accentLineHints;
 
-      // Use a silent, score-length WAV as a seekable clock when no singing
-      // voice is available. Existing audio-driven drawing and karaoke views
-      // can then keep their usual pause, seek, and end behavior.
-      generatedAudioBlob = createSilentPlaybackAudio(generatedScore);
-      stopAudioPlayback();
-      replaceAudioUrl(URL.createObjectURL(generatedAudioBlob));
-      setPlaybackKind("animation-only");
-
-      if (!canUseVoicevox) {
-        beginTimingPhase("finalize");
-        updateProgress("絵描き歌のアニメーションができたよ");
-        await finishProgress("絵描き歌のアニメーションができたよ");
-        setLyrics(generatedLyrics);
-        return;
-      }
-
-      try {
-        updateProgress("歌声に魔法をかけているよ");
-        beginTimingPhase("voicevoxQuery");
-        generatedAudioBlob = await synthesizeSingingVoice(generatedScore, (stage) => {
-          if (stage === "synthesis_requested") {
-            completeTimingPhase("voicevoxQuery");
-            beginTimingPhase("voicevoxSynthesis");
+        try {
+          if (isDevelopmentVoicevox() && canUseLocalVoicevox) {
+            if (!comparableCandidates || candidateIndex === 0) beginTimingPhase("accent");
+            accentLineHints = await analyzeLyricsAccents(candidate);
+            if (!isCurrentGeneration()) return;
+            if (!comparableCandidates || candidateIndex === 0) completeTimingPhase("accent");
           }
-          handleVoicevoxProgress(stage);
-        }, voiceGrant, {
-          server: selectedVoicevoxServer,
-          onServerResolved: (server) => {
-            generatedVoicevoxServer = server;
-            setVoicevoxResolvedServer(server);
-          },
-        });
-        completeTimingPhase("voicevoxSynthesis");
-        generatedVoiceAudioBlob = generatedAudioBlob;
-        voicevoxStatus = "voice";
 
-        const nextAudioUrl = URL.createObjectURL(generatedAudioBlob);
-        stopAudioPlayback();
-        replaceAudioUrl(nextAudioUrl);
-        setPlaybackKind("voice");
-      } catch (voicevoxError) {
-        completeTimingPhase();
-        voicevoxStatus = "failed";
-        voicevoxFailedStage = activeTimingPhase;
-        voicevoxIssue = voicevoxError instanceof Error ? voicevoxError.message : "VOICEVOXで歌声を作れませんでした。";
-        setVoicevoxConnectionStatus("unavailable");
-        setVoicevoxConnectionMessage("接続は確認できましたが、歌声合成を完了できませんでした。");
-        setVoicevoxWarning(voicevoxIssue);
+          if (!comparableCandidates || candidateIndex === 0) beginTimingPhase("score");
+          const score = buildSingingScore(candidate, createSingingSeed(candidate, 0), accentLineHints);
+          if (!comparableCandidates || candidateIndex === 0) completeTimingPhase("score");
+          let audioBlob = createSilentPlaybackAudio(score);
+          let candidatePlaybackKind: PlaybackKind = "animation-only";
+
+          if (canUseVoicevox) {
+            try {
+              if (comparableCandidates) updateProgress("2つの歌声を準備しているよ");
+              else updateProgress("歌声に魔法をかけているよ");
+              beginTimingPhase("voicevoxQuery", !comparableCandidates || candidateIndex === 0);
+              audioBlob = await synthesizeSingingVoice(score, (stage) => {
+                if (!isCurrentGeneration()) return;
+                if (stage === "synthesis_requested") {
+                  completeTimingPhase("voicevoxQuery");
+                  beginTimingPhase("voicevoxSynthesis", !comparableCandidates || candidateIndex === 1);
+                }
+                if (!comparableCandidates) handleVoicevoxProgress(stage);
+              }, voiceGrant, {
+                server: selectedVoicevoxServer,
+                onServerResolved: (server) => {
+                  candidateServer = server;
+                  if (isCurrentGeneration() && (candidateId === initialCandidateId || candidateId === "legacy")) {
+                    setVoicevoxResolvedServer(server);
+                  }
+                },
+              });
+              if (!isCurrentGeneration()) return;
+              completeTimingPhase("voicevoxSynthesis");
+              candidatePlaybackKind = "voice";
+              candidateWarning = null;
+            } catch (voicevoxError) {
+              if (!isCurrentGeneration()) return;
+              completeTimingPhase();
+              candidateWarning = voicevoxError instanceof Error ? voicevoxError.message : "VOICEVOXで歌声を作れませんでした。";
+              if (candidateId === initialCandidateId || candidateId === "legacy") {
+                setVoicevoxConnectionStatus("unavailable");
+                setVoicevoxConnectionMessage("接続は確認できましたが、歌声合成を完了できませんでした。");
+                voicevoxFailedStage = activeTimingPhase;
+              }
+            }
+          }
+
+          const playback: CandidatePlaybackCache = {
+            score,
+            audioBlob,
+            playbackKind: candidatePlaybackKind,
+            voicevoxWarning: candidateWarning,
+            voicevoxServer: candidateServer,
+          };
+          preparedCandidates.set(candidateId, playback);
+          if (candidateId !== "legacy") {
+            candidatePlaybackCacheRef.current.set(candidateId, playback);
+          }
+        } catch (candidateError) {
+          // Score/accent preparation is also isolated per candidate. Build the
+          // simplest valid fallback so both cards are ready before selection.
+          let fallbackScore: SingingScore;
+          try {
+            fallbackScore = buildSingingScore(candidate, createSingingSeed(candidate, 0));
+          } catch {
+            fallbackScore = { notes: [{ lyric: "", key: null, frame_length: 1 }] };
+          }
+          const fallbackPlayback: CandidatePlaybackCache = {
+            score: fallbackScore,
+            audioBlob: createSilentPlaybackAudio(fallbackScore),
+            playbackKind: "animation-only",
+            voicevoxWarning: candidateError instanceof Error ? candidateError.message : "歌声を作れませんでした。",
+            voicevoxServer: null,
+          };
+          preparedCandidates.set(candidateId, fallbackPlayback);
+          if (candidateId !== "legacy") {
+            candidatePlaybackCacheRef.current.set(candidateId, fallbackPlayback);
+          }
+        }
       }
+
+      const initialPlayback = preparedCandidates.get(initialCandidateId ?? "legacy");
+      if (!initialPlayback) throw new Error("歌の再生準備を完了できませんでした。");
+      generatedScore = initialPlayback.score;
+      generatedAudioBlob = initialPlayback.audioBlob;
+      generatedVoiceAudioBlob = initialPlayback.playbackKind === "voice" ? initialPlayback.audioBlob : null;
+      generatedVoicevoxServer = initialPlayback.voicevoxServer;
+      voicevoxIssue = initialPlayback.voicevoxWarning;
+      voicevoxStatus = initialPlayback.playbackKind === "voice"
+        ? "voice"
+        : canUseInitialVoicevox
+          ? "failed"
+          : appFeatures.voicevox || appFeatures.localVoicevox
+            ? "unavailable"
+            : "not-attempted";
+      setPlaybackScore(initialPlayback.score);
+      stopAudioPlayback();
+      replaceAudioUrl(URL.createObjectURL(initialPlayback.audioBlob));
+      setPlaybackKind(initialPlayback.playbackKind);
+      setVoicevoxWarning(initialPlayback.voicevoxWarning);
+      setVoicevoxResolvedServer(initialPlayback.voicevoxServer);
 
       beginTimingPhase("finalize");
       updateProgress("絵描き歌の準備ができたよ");
       await finishProgress("絵描き歌の準備ができたよ");
+      if (!isCurrentGeneration()) return;
       setLyrics(generatedLyrics);
     } catch (generationError) {
+      if (!isCurrentGeneration()) return;
       failedStage = activeTimingPhase;
       completeTimingPhase();
       generationErrorMessage =
@@ -1998,6 +2089,7 @@ const App: React.FC = () => {
       setError(generationErrorMessage);
       await finishProgress("エラーで終了しました");
     } finally {
+      if (!isCurrentGeneration()) return;
       // Tokens are single-use, so prepare the next one only after this request
       // has completed (whether it succeeded or failed).
       if (isTurnstileRequired) {
@@ -2080,6 +2172,7 @@ const App: React.FC = () => {
       if (generationErrorMessage === null) {
         setIsGenerationProgressComplete(true);
         await generationCompletion;
+        if (!isCurrentGeneration()) return;
       } else if (generationCompletionWaiterRef.current?.runKey === runKey) {
         generationCompletionWaiterRef.current = null;
       }
@@ -2140,6 +2233,18 @@ const App: React.FC = () => {
   };
 
   const handleClear = () => {
+    generationSequenceRef.current += 1;
+    generationRunRef.current = false;
+    setIsGenerating(false);
+    setIsGenerationProgressComplete(false);
+    const completionWaiter = generationCompletionWaiterRef.current;
+    generationCompletionWaiterRef.current = null;
+    completionWaiter?.resolve();
+    if (isTurnstileRequired) {
+      handleTurnstileToken(null);
+      setTurnstileStatus("verifying");
+      turnstileWidgetRef.current?.reset();
+    }
     voicevoxGrantsRef.current = {};
     setLyrics(null);
     clearPhase1Generation();
