@@ -12,17 +12,28 @@
     "deploy:staging": "npm run build:staging && npx wrangler deploy --config wrangler.staging.jsonc",
     "deploy:production:check": "npm run build && npx wrangler deploy --dry-run",
     "preview": "vite preview",
-    "type-check": "tsc --noEmit",
+    "types:workers": "wrangler types --strict-vars=false && wrangler types infra/voicevox/worker-configuration.d.ts --config infra/voicevox/wrangler.jsonc --env-interface InfrastructureEnv --strict-vars=false",
+    "type-check": "npm run types:workers && tsc --noEmit && tsc --noEmit -p infra/voicevox/tsconfig.json",
+    "test:voicevox-backend-pool": "node --test scripts/voicevoxBackendPool.test.mjs",
+    "test": "node --test --test-concurrency=1 scripts/lyricsPipeline.test.mjs scripts/evaluationFollowUp.test.mjs scripts/creationArchive.test.mjs scripts/creationArchiveClient.test.mjs scripts/creationArchiveRuntime.test.mjs scripts/voicevoxJobClient.test.mjs scripts/voicevoxBackend.test.mjs scripts/voicevoxJobState.test.mjs scripts/voicevoxJobRepository.test.mjs scripts/voicevoxBackendPool.test.mjs scripts/voicevoxJobLifecycle.test.mjs scripts/voicevoxJobDispatcher.test.mjs scripts/voicevoxTemporaryAudio.test.mjs scripts/voicevoxJobApi.test.mjs scripts/voicevoxJobRuntime.test.mjs",
+    "test:voicevox-job-lifecycle": "node --test scripts/voicevoxJobLifecycle.test.mjs",
+    "test:voicevox-job-dispatcher": "node --test scripts/voicevoxJobDispatcher.test.mjs",
+    "test:voicevox-temporary-audio": "node --test scripts/voicevoxTemporaryAudio.test.mjs",
+    "deploy:voicevox-infrastructure:check": "wrangler deploy --config infra/voicevox/wrangler.jsonc --dry-run",
+    "deploy:voicevox-infrastructure": "wrangler deploy --config infra/voicevox/wrangler.jsonc",
     "test:lyrics-pipeline": "node --test scripts/lyricsPipeline.test.mjs",
     "test:evaluation-follow-up": "node --test scripts/evaluationFollowUp.test.mjs",
+    "test:voicevox-backend": "node --test scripts/voicevoxBackend.test.mjs",
+    "test:voicevox-job-state": "node --test scripts/voicevoxJobState.test.mjs",
+    "test:voicevox-job-repository": "node --test scripts/voicevoxJobRepository.test.mjs",
     "evaluation:approve": "node scripts/evaluationAdmin.mjs approve",
     "evaluation:exclude": "node scripts/evaluationAdmin.mjs exclude",
     "evaluation:export": "node scripts/exportApprovedEvaluations.mjs"
   },
   "dependencies": {
-    "react-dom": "^19.2.3",
+    "@google/genai": "^1.35.0",
     "react": "^19.2.3",
-    "@google/genai": "^1.35.0"
+    "react-dom": "^19.2.3"
   },
   "overrides": {
     "protobufjs": "7.6.5",
@@ -31,7 +42,10 @@
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "esbuild": "0.28.1",
+    "miniflare": "5.20260825.0-alpha",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "wrangler": "4.126.0"
   }
 }

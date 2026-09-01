@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "types": [], "lib": ["ES2022"] },
+  "include": ["./worker-configuration.d.ts", "../../src/voicevoxBackendPool.ts", "../../src/voicevoxInfrastructureWorker.ts", "../../src/voicevoxJobConsumer.ts", "../../src/voicevoxJobLifecycle.ts", "../../src/voicevoxJobRepository.ts", "../../src/voicevoxTemporaryAudio.ts", "../../src/voicevoxBackend.ts"],
+  "exclude": []
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "cho-ekaki-uta-voicevox-infrastructure",
+  "main": "../../src/voicevoxInfrastructureWorker.ts",
+  "compatibility_date": "2026-08-31",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": {
+    "VPC_CAPACITY": "1",
+    "CLOUD_RUN_CAPACITY": "1"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "VOICEVOX_BACKEND_POOL", "class_name": "VoicevoxBackendPool" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["VoicevoxBackendPool"] }],
+  "queues": {
+    "producers": [
+      { "binding": "VOICEVOX_JOBS", "queue": "cho-ekaki-uta-voicevox-jobs" },
+      { "binding": "VOICEVOX_DLQ", "queue": "cho-ekaki-uta-voicevox-dlq" }
+    ],
+    "consumers": [{ "queue": "cho-ekaki-uta-voicevox-jobs", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3, "dead_letter_queue": "cho-ekaki-uta-voicevox-dlq" }]
+  },
+  "d1_databases": [
+    { "binding": "EVALUATIONS_DB", "database_name": "cho-ekaki-uta-evaluations", "database_id": "c305d19d-2119-4eb4-8e82-f941e8f57414", "migrations_dir": "../../migrations" }
+  ],
+  "r2_buckets": [
+    { "binding": "TEMPORARY_AUDIO", "bucket_name": "cho-ekaki-uta-voicevox-audio" }
+  ],
+  "vpc_services": [
+    { "binding": "VOICEVOX", "service_id": "01a03bc4-ce0b-7783-be2b-3ab77497c41a", "remote": true }
+  ],
+  "triggers": { "crons": ["*/2 * * * *"] }
+}
