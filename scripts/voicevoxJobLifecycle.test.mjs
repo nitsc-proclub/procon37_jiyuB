@@ -96,7 +96,7 @@ const setup = async ({ expiresAt = 1_000_000 } = {}) => {
   for (const candidate of ["candidate-a", "candidate-b"])
     db.database
       .prepare(
-        "INSERT INTO voicevox_jobs (job_id, group_id, generation_id, candidate_id, idempotency_key, status, attempt, max_attempts, created_at, updated_at, expires_at) VALUES (?, 'g', 'gen', ?, ?, 'accepted', 0, 2, 1, 1, ?)",
+        "INSERT INTO voicevox_jobs (job_id, group_id, generation_id, candidate_id, idempotency_key, status, attempt, max_attempts, backend, created_at, updated_at, expires_at) VALUES (?, 'g', 'gen', ?, ?, 'accepted', 0, 2, 'vpc', 1, 1, ?)",
       )
       .run(candidate, candidate, `gen:${candidate}`, expiresAt);
   return db;
@@ -169,7 +169,7 @@ test("retry exhausts attempts, cancellation is terminal, and group status is rec
     jobId: "candidate-a",
     leaseId: "l2",
     attempt: 2,
-    backend: "cloud-run",
+    backend: "vpc",
     now: 20,
     leaseExpiresAt: 100,
   });
@@ -348,9 +348,9 @@ test("real SQLite dispatcher recovers an ambiguous send without allowing mark to
   const first = await dispatcher.dispatchVoicevoxJobs(
     repository,
     {
-      send: async () => {
+      vpc: { send: async () => {
         throw new Error("transport failed");
-      },
+      } }, "cloud-run": { send: async () => {} },
     },
     { limit: 1, now: () => 10, newLeaseId: () => "dispatch-1" },
   );
@@ -371,9 +371,9 @@ test("real SQLite dispatcher recovers an ambiguous send without allowing mark to
   const second = await dispatcher.dispatchVoicevoxJobs(
     repository,
     {
-      send: async (message) => {
+      vpc: { send: async (message) => {
         sent.push(message);
-      },
+      } }, "cloud-run": { send: async () => {} },
     },
     { limit: 1, now: () => 30_011, newLeaseId: () => "dispatch-2" },
   );
@@ -394,9 +394,9 @@ test("real SQLite dispatcher recovers an ambiguous send without allowing mark to
   const third = await dispatcher.dispatchVoicevoxJobs(
     repository,
     {
-      send: async (message) => {
+      vpc: { send: async (message) => {
         sent.push(message);
-      },
+      } }, "cloud-run": { send: async () => {} },
     },
     { limit: 1, now: () => 600_020, newLeaseId: () => "dispatch-3" },
   );

@@ -284,13 +284,14 @@ export const claimVoicevoxJob = async (
   );
   const update = statement(
     database,
-    `/* voicevox-lifecycle:claim */ UPDATE voicevox_jobs SET status='running', attempt=attempt + 1, backend=?, current_lease_id=?, current_lease_expires_at=MIN(?, expires_at), dispatch_lease_id=NULL, dispatch_lease_expires_at=NULL, error_code=NULL, error_retryable=NULL, updated_at=? WHERE job_id=? AND status IN ('accepted','queued') AND expires_at > ? AND attempt + 1 = ? AND attempt < max_attempts AND updated_at <= ?`,
+    `/* voicevox-lifecycle:claim */ UPDATE voicevox_jobs SET status='running', attempt=attempt + 1, backend=?, current_lease_id=?, current_lease_expires_at=MIN(?, expires_at), dispatch_lease_id=NULL, dispatch_lease_expires_at=NULL, error_code=NULL, error_retryable=NULL, updated_at=? WHERE job_id=? AND status IN ('accepted','queued') AND (backend IS NULL OR backend=?) AND expires_at > ? AND attempt + 1 = ? AND attempt < max_attempts AND updated_at <= ?`,
     [
       input.backend,
       input.leaseId,
       input.leaseExpiresAt,
       input.now,
       input.jobId,
+      input.backend,
       input.now,
       input.attempt,
       input.now,

@@ -46,7 +46,13 @@ export default {
     // Wrangler consumer max_concurrency=1 is the primary bound; preserve it
     // here as well by handling one queued job at a time.
     for (const message of batch.messages) {
-      const outcome = await consumeVoicevoxJob(message.body, env);
+      const outcome = await consumeVoicevoxJob(message.body, {
+        ...env,
+        VOICEVOX_BACKEND_POOL: {
+          acquire: (request) => getVoicevoxBackendPool(env, request.backend).acquire(request),
+          release: (request) => getVoicevoxBackendPool(env, request.backend).release(request),
+        },
+      }, "vpc");
       if (outcome === "ack") message.ack();
       else message.retry();
     }
@@ -54,7 +60,10 @@ export default {
   async scheduled(_event: ScheduledEvent, env: InfrastructureEnv, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil((async () => {
       const now = Date.now(); await recoverExpiredVoicevoxJobs(env.EVALUATIONS_DB, { now, limit: 100 });
-      await dispatchVoicevoxJobs(voicevoxDispatchRepository(env.EVALUATIONS_DB), { send: async (message) => { await env.VOICEVOX_JOBS.send(message); } }, { limit: 20 });
+      await dispatchVoicevoxJobs(voicevoxDispatchRepository(env.EVALUATIONS_DB), {
+        vpc: { send: async (message) => { await env.VOICEVOX_JOBS.send(message); } },
+        "cloud-run": { send: async (message) => { await env.VOICEVOX_CLOUD_RUN_JOBS.send(message); } },
+      }, { limit: 20 });
       await purgeExpiredVoicevoxJobPayloads(env.EVALUATIONS_DB, { now, limit: 100 });
       await cleanupExpiredTemporaryVoicevoxAudio(env.TEMPORARY_AUDIO, { now, objectBudget: 100 });
     })());

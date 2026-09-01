@@ -42,7 +42,7 @@ class SqliteD1 {
   }
 
   async migrate() {
-    for (const file of ["0003_voicevox_grants.sql", "0004_voicevox_jobs.sql"]) {
+    for (const file of ["0003_voicevox_grants.sql", "0004_voicevox_jobs.sql", "0007_voicevox_group_backend.sql"]) {
       this.database.exec(await readFile(new URL("../migrations/" + file, import.meta.url), "utf8"));
     }
   }
@@ -158,11 +158,24 @@ test("real SQLite batch registers both candidates, exact payloads, and a matchin
   assert.equal(database.rows("SELECT * FROM voicevox_job_groups").length, 1);
   assert.equal(database.rows("SELECT * FROM voicevox_jobs").length, 2);
   assert.equal(database.rows("SELECT * FROM voicevox_job_payloads").length, 2);
+  assert.deepEqual(database.rows("SELECT preferred_backend FROM voicevox_job_groups"), [{ preferred_backend: "vpc" }]);
+  assert.deepEqual(database.rows("SELECT backend FROM voicevox_jobs ORDER BY candidate_id"), [{ backend: "vpc" }, { backend: "vpc" }]);
   assert.deepEqual(
     database.rows("SELECT candidate_id, consumed_at, score_hash FROM voicevox_grants ORDER BY candidate_id"),
     entry.candidates.map((candidate) => ({ candidate_id: candidate.candidateId, consumed_at: entry.request.now, score_hash: candidate.scoreHash })),
   );
   assert.deepEqual(second.jobs.map(({ scoreJson, scoreHash }) => ({ scoreJson, scoreHash })), entry.candidates.map(({ scoreJson, scoreHash }) => ({ scoreJson, scoreHash })));
+});
+
+test("the third overlapping generation is fixed to cloud-run, while the first two stay on VPC", async () => {
+  const database = await createDatabase();
+  const first = fixture(); const second = fixture(); const third = fixture();
+  for (const entry of [first, second, third]) insertGrants(database, entry);
+  await repository.registerVoicevoxJobs(database, first.request);
+  await repository.registerVoicevoxJobs(database, second.request);
+  const result = await repository.registerVoicevoxJobs(database, third.request);
+  assert.equal(result.group.preferredBackend, "cloud-run");
+  assert.deepEqual(result.jobs.map((job) => job.backend), ["cloud-run", "cloud-run"]);
 });
 
 test("an expired or not-yet-issued grant cannot create a partial group or consume either grant", async () => {

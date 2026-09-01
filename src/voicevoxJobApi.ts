@@ -1,5 +1,6 @@
 import { cancelVoicevoxJob } from "./voicevoxJobLifecycle";
 import { registerVoicevoxJobs, type VoicevoxJobDatabase } from "./voicevoxJobRepository";
+import type { VoicevoxQueueProducers } from "./voicevoxJobDispatcher";
 import { readTemporaryVoicevoxWav, type TemporaryAudioR2Bucket } from "./voicevoxTemporaryAudio";
 import { parseSingingScore } from "./voicevoxBackend";
 
@@ -22,7 +23,7 @@ const verify = async (value: string | null, generationId: string, secret: string
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
 const sameOrigin = (request: Request) => { const origin = request.headers.get("Origin"); if (origin) return origin === new URL(request.url).origin; return request.method === "GET" && request.headers.get("Sec-Fetch-Site") !== "cross-site"; };
 const body = async (request: Request) => { const length = Number(request.headers.get("content-length")); if (Number.isFinite(length) && length > MAX_BODY) throw new Error("too-large"); if (!request.body) throw new Error("invalid"); const reader = request.body.getReader(), chunks: Uint8Array[] = []; let size = 0; try { while (true) { const next = await reader.read(); if (next.done) break; size += next.value.byteLength; if (size > MAX_BODY) { await reader.cancel(); throw new Error("too-large"); } chunks.push(next.value); } } finally { reader.releaseLock(); } const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; } return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>; };
-export type VoicevoxJobApiEnv = { EVALUATIONS_DB: VoicevoxJobDatabase; TEMPORARY_AUDIO: TemporaryAudioR2Bucket; EVALUATION_RECEIPT_SECRET: string; VOICEVOX_JOBS: { send(message: unknown): Promise<void> } };
+export type VoicevoxJobApiEnv = { EVALUATIONS_DB: VoicevoxJobDatabase; TEMPORARY_AUDIO: TemporaryAudioR2Bucket; EVALUATION_RECEIPT_SECRET: string; VOICEVOX_JOB_QUEUES: VoicevoxQueueProducers; CLOUD_RUN_OVERFLOW_GENERATIONS?: string };
 
 /** Mount under `/api/voicevox/jobs`; main Worker owns the route dispatch. */
 export const handleVoicevoxJobApi = async (request: Request, env: VoicevoxJobApiEnv): Promise<Response> => {
@@ -40,9 +41,12 @@ export const handleVoicevoxJobApi = async (request: Request, env: VoicevoxJobApi
         if ((rawCandidateId !== "candidate-a" && rawCandidateId !== "candidate-b") || typeof candidate.voiceGrant !== "string") throw new Error("invalid"); const candidateId: "candidate-a" | "candidate-b" = rawCandidateId;
         return { candidateId, jobId: `${generationId}:${candidateId}`, scoreJson, scoreHash: await hash(scoreJson), grantHash: await hash(candidate.voiceGrant) };
       }));
-      const now = Date.now(); const capabilityExpiry = Number(request.headers.get("X-Voicevox-Capability")?.split(".")[2]); const registered = await registerVoicevoxJobs(env.EVALUATIONS_DB, { groupId: value.groupId, generationId, candidates, now, expiresAt: capabilityExpiry });
+      const now = Date.now(); const capabilityExpiry = Number(request.headers.get("X-Voicevox-Capability")?.split(".")[2]); const overflowGenerations = Number(env.CLOUD_RUN_OVERFLOW_GENERATIONS ?? "2"); const registered = await registerVoicevoxJobs(env.EVALUATIONS_DB, { groupId: value.groupId, generationId, candidates, now, expiresAt: capabilityExpiry, cloudRunOverflowGenerations: overflowGenerations });
       // Registration is durable before delivery; the queue only accelerates the outbox pass.
-      await Promise.all(registered.jobs.map(job => env.VOICEVOX_JOBS.send({ schemaVersion: 1, jobId: job.jobId, generationId, candidateId: job.candidateId }))).catch(() => undefined);
+      await Promise.all(registered.jobs.map(job => {
+        if (job.backend !== "vpc" && job.backend !== "cloud-run") return Promise.reject(new Error("voice job backend is missing"));
+        return env.VOICEVOX_JOB_QUEUES[job.backend].send({ schemaVersion: 1, jobId: job.jobId, generationId, candidateId: job.candidateId });
+      })).catch(() => undefined);
       return json({ groupId: registered.group.groupId, jobs: registered.jobs.map(job => ({ jobId: job.jobId, candidateId: job.candidateId, status: job.status })), duplicate: !registered.created }, 202);
     }
     const rawJobId = suffix.match(/^\/([^/]+)(?:\/(audio|cancel))?$/)?.[1]; const jobId = rawJobId ? decodeURIComponent(rawJobId) : undefined; const action = suffix.match(/^\/[^/]+(?:\/(audio|cancel))?$/)?.[1];

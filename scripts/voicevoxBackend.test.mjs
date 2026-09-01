@@ -192,6 +192,20 @@ test("Worker synthesis and status routes retain same-origin, audio headers, and 
   }), env);
   assert.equal(statusResponse.status, 200);
   assert.equal((await statusResponse.json()).version, "0.24.0");
+  const cloudStatus = await worker.fetch(new Request(`${origin}/api/voicevox/status?backend=cloud-run`, {
+    headers: { Origin: origin },
+  }), {
+    ...env,
+    VOICEVOX_CLOUD_RUN_URL: "https://voicevox.example.run.app",
+    VOICEVOX_GCP_SERVICE_ACCOUNT_JSON: "configured-but-never-read-by-status",
+  });
+  assert.deepEqual(await cloudStatus.json(), {
+    available: true,
+    backend: "cloud-run",
+    version: null,
+    latencyMs: null,
+    liveCheck: false,
+  });
   assert.deepEqual(vpcRequests, [
     "http://localhost:50021/sing_frame_audio_query?speaker=6000",
     "http://localhost:50021/frame_synthesis?speaker=3003",

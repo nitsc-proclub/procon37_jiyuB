@@ -1,4 +1,5 @@
 import type { VoicevoxJobDatabase } from "./voicevoxJobRepository";
+import type { VoicevoxBackend } from "./voicevoxJobState";
 import {
   claimVoicevoxJobDispatch,
   listVoicevoxRedispatchableJobs,
@@ -18,6 +19,7 @@ export type VoicevoxQueueMessage = {
 export type VoicevoxQueueProducer = {
   send(message: VoicevoxQueueMessage): Promise<void>;
 };
+export type VoicevoxQueueProducers = Record<VoicevoxBackend, VoicevoxQueueProducer>;
 export type VoicevoxDispatchRepository = {
   list(input: {
     now: number;
@@ -48,7 +50,7 @@ export const voicevoxDispatchRepository = (
  */
 export const dispatchVoicevoxJobs = async (
   repository: VoicevoxDispatchRepository,
-  queue: VoicevoxQueueProducer,
+  queues: VoicevoxQueueProducers,
   options: {
     limit?: number;
     now?: () => number;
@@ -96,12 +98,13 @@ export const dispatchVoicevoxJobs = async (
         job.dispatchLeaseId !== dispatchLeaseId ||
         !job.dispatchLeaseExpiresAt ||
         job.dispatchLeaseExpiresAt <= sendAt ||
-        (job.status !== "accepted" && job.status !== "queued")
+        (job.status !== "accepted" && job.status !== "queued") ||
+        (job.backend !== "vpc" && job.backend !== "cloud-run")
       ) {
         totals.skipped += 1;
         continue;
       }
-      await queue.send({
+      await queues[job.backend].send({
         schemaVersion: 1,
         jobId: job.jobId,
         generationId: job.generationId,

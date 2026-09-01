@@ -10,6 +10,7 @@
   },
   "vars": {
     "VOICEVOX_JOBS_ENABLED": "true",
+    "CLOUD_RUN_OVERFLOW_GENERATIONS": "2",
     "CREATION_ARCHIVES_ENABLED": "true",
     "TURNSTILE_EXPECTED_HOSTNAME": "cho-ekaki-uta.nitsc-proclub.workers.dev",
     "LYRICS_PIPELINE_MODE": "phase1",
@@ -22,7 +23,14 @@
     "EVALUATION_RECEIPT_TTL_SECONDS": "21600",
     "VOICEVOX_CLOUD_RUN_URL": "https://voicevox-engine-1023600737600.asia-northeast1.run.app"
   },
-  "queues": { "producers": [{ "binding": "VOICEVOX_JOBS", "queue": "cho-ekaki-uta-voicevox-jobs" }] },
+  "queues": {
+    "producers": [
+      { "binding": "VOICEVOX_JOBS", "queue": "cho-ekaki-uta-voicevox-jobs" },
+      { "binding": "VOICEVOX_CLOUD_RUN_JOBS", "queue": "cho-ekaki-uta-voicevox-cloud-run-jobs" }
+    ],
+    "consumers": [{ "queue": "cho-ekaki-uta-voicevox-cloud-run-jobs", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3, "dead_letter_queue": "cho-ekaki-uta-voicevox-dlq" }]
+  },
+  "services": [{ "binding": "VOICEVOX_INFRASTRUCTURE", "service": "cho-ekaki-uta-voicevox-infrastructure", "entrypoint": "VoicevoxInfrastructureWorker" }],
   "r2_buckets": [
     { "binding": "TEMPORARY_AUDIO", "bucket_name": "cho-ekaki-uta-voicevox-audio" },
     { "binding": "CREATION_ARCHIVES", "bucket_name": "cho-ekaki-uta-creation-archives" }

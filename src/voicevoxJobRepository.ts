@@ -49,6 +49,8 @@ export type RegisterVoicevoxJobGroupRequest = {
   now: number;
   expiresAt: number;
   maxAttempts?: number;
+  /** Number of other unfinished generations required before Cloud Run overflow. */
+  cloudRunOverflowGenerations?: number;
 };
 
 export type VoicevoxStoredJob = VoicevoxJob & { scoreJson: string; scoreHash: string };
@@ -74,6 +76,7 @@ type GroupRow = {
   created_at: number;
   updated_at: number;
   expires_at: number;
+  preferred_backend?: "vpc" | "cloud-run";
 };
 
 type JobRow = {
@@ -117,6 +120,7 @@ const snapshotRequest = (request: RegisterVoicevoxJobGroupRequest): RegisterVoic
   now: request.now,
   expiresAt: request.expiresAt,
   ...(request.maxAttempts === undefined ? {} : { maxAttempts: request.maxAttempts }),
+  ...(request.cloudRunOverflowGenerations === undefined ? {} : { cloudRunOverflowGenerations: request.cloudRunOverflowGenerations }),
 });
 
 const sha256Hex = async (value: string) => {
@@ -131,6 +135,8 @@ const validateRequest = async (request: RegisterVoicevoxJobGroupRequest) => {
   assert(Number.isSafeInteger(request.expiresAt) && request.expiresAt > request.now, "invalid-input", "expiresAt must be later than now");
   const maxAttempts = request.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   assert(Number.isInteger(maxAttempts) && maxAttempts >= 1 && maxAttempts <= MAX_VOICEVOX_JOB_ATTEMPTS, "invalid-input", "maxAttempts must be between 1 and 5");
+  const cloudRunOverflowGenerations = request.cloudRunOverflowGenerations ?? 2;
+  assert(Number.isInteger(cloudRunOverflowGenerations) && cloudRunOverflowGenerations >= 1 && cloudRunOverflowGenerations <= 10, "invalid-input", "cloudRunOverflowGenerations must be between 1 and 10");
   assert(request.candidates.length === VOICEVOX_JOB_CANDIDATE_IDS.length, "invalid-input", "both candidates are required");
   const sorted = candidatesInOrder(request.candidates);
   assert(sorted.every((candidate, index) => candidate.candidateId === VOICEVOX_JOB_CANDIDATE_IDS[index]), "invalid-input", "candidate-a and candidate-b are required exactly once");
@@ -142,7 +148,7 @@ const validateRequest = async (request: RegisterVoicevoxJobGroupRequest) => {
     assert(typeof candidate.scoreJson === "string" && candidate.scoreJson.trim().length > 0 && new TextEncoder().encode(candidate.scoreJson).byteLength <= MAX_SCORE_BYTES, "invalid-input", "scoreJson must be a non-empty string within the size limit");
     assert(await sha256Hex(candidate.scoreJson) === candidate.scoreHash, "invalid-input", "scoreHash must match the exact serialized score");
   }
-  return { candidates: sorted, maxAttempts };
+  return { candidates: sorted, maxAttempts, cloudRunOverflowGenerations };
 };
 
 const groupFromRow = (row: GroupRow, jobs: readonly VoicevoxStoredJob[]): VoicevoxJobGroup => ({
@@ -150,6 +156,7 @@ const groupFromRow = (row: GroupRow, jobs: readonly VoicevoxStoredJob[]): Voicev
   generationId: row.generation_id,
   jobIds: [jobs[0].jobId, jobs[1].jobId],
   status: row.status,
+  ...(row.preferred_backend ? { preferredBackend: row.preferred_backend } : {}),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   expiresAt: row.expires_at,
@@ -177,7 +184,7 @@ const jobFromRow = (row: JobRow): VoicevoxStoredJob => ({
 
 const readExisting = async (database: VoicevoxJobDatabase, generationId: string): Promise<{ group: GroupRow | null; jobs: JobRow[] }> => {
   const [groupResult, jobsResult] = await database.batch([
-    database.prepare("/* voicevox-job:group-by-generation */ SELECT group_id, generation_id, status, created_at, updated_at, expires_at FROM voicevox_job_groups WHERE generation_id = ?").bind(generationId),
+    database.prepare("/* voicevox-job:group-by-generation */ SELECT group_id, generation_id, status, created_at, updated_at, expires_at, preferred_backend FROM voicevox_job_groups WHERE generation_id = ?").bind(generationId),
     database.prepare("/* voicevox-job:jobs-by-generation */ SELECT j.job_id, j.group_id, j.generation_id, j.candidate_id, j.idempotency_key, j.status, j.attempt, j.max_attempts, j.backend, j.current_lease_id, j.result_ref, j.error_code, j.error_retryable, j.created_at, j.updated_at, j.expires_at, p.score_json, p.score_hash FROM voicevox_jobs j LEFT JOIN voicevox_job_payloads p ON p.job_id = j.job_id WHERE j.generation_id = ? ORDER BY j.candidate_id ASC").bind(generationId),
   ]) as [VoicevoxJobDatabaseResult<GroupRow>, VoicevoxJobDatabaseResult<JobRow>];
   return { group: groupResult.results[0] ?? null, jobs: jobsResult.results };
@@ -215,15 +222,15 @@ const guardedGroupInsert = (request: RegisterVoicevoxJobGroupRequest, candidates
   const grantPredicate = candidates.map(() => "(SELECT COUNT(*) FROM voicevox_grants WHERE grant_hash = ? AND generation_id = ? AND candidate_id = ? AND issued_at <= ? AND expires_at > ? AND consumed_at IS NULL) = 1").join(" AND ");
   const predicateValues = candidates.flatMap((candidate) => [candidate.grantHash, request.generationId, candidate.candidateId, request.now, request.now]);
   return {
-    query: `/* voicevox-job:guarded-group-insert */ INSERT INTO voicevox_job_groups (group_id, generation_id, status, created_at, updated_at, expires_at) SELECT ?, ?, CASE WHEN ${grantPredicate} THEN 'accepted' ELSE 'invalid-grant-state' END, ?, ?, ?`,
-    values: [request.groupId, request.generationId, ...predicateValues, request.now, request.now, request.expiresAt],
+    query: `/* voicevox-job:guarded-group-insert */ INSERT INTO voicevox_job_groups (group_id, generation_id, status, created_at, updated_at, expires_at, preferred_backend) SELECT ?, ?, CASE WHEN ${grantPredicate} THEN 'accepted' ELSE 'invalid-grant-state' END, ?, ?, ?, CASE WHEN (SELECT COUNT(DISTINCT generation_id) FROM voicevox_jobs WHERE generation_id <> ? AND status IN ('accepted', 'queued', 'running') AND expires_at > ?) >= ? THEN 'cloud-run' ELSE 'vpc' END`,
+    values: [request.groupId, request.generationId, ...predicateValues, request.now, request.now, request.expiresAt, request.generationId, request.now, request.cloudRunOverflowGenerations ?? 2],
   };
 };
 
 const insertJobStatement = (request: RegisterVoicevoxJobGroupRequest, candidate: VoicevoxJobCandidateRegistration, maxAttempts: number) =>
   databaseStatement(
-    "/* voicevox-job:insert-job */ INSERT INTO voicevox_jobs (job_id, group_id, generation_id, candidate_id, idempotency_key, status, attempt, max_attempts, backend, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, 'accepted', 0, ?, NULL, ?, ?, ?) ON CONFLICT(generation_id, candidate_id) DO UPDATE SET attempt = CASE WHEN voicevox_jobs.job_id = excluded.job_id AND voicevox_jobs.group_id = excluded.group_id AND voicevox_jobs.generation_id = excluded.generation_id AND voicevox_jobs.candidate_id = excluded.candidate_id AND voicevox_jobs.idempotency_key = excluded.idempotency_key AND voicevox_jobs.max_attempts = excluded.max_attempts AND voicevox_jobs.expires_at = excluded.expires_at THEN voicevox_jobs.attempt ELSE -1 END",
-    [candidate.jobId, request.groupId, request.generationId, candidate.candidateId, `${request.generationId}:${candidate.candidateId}`, maxAttempts, request.now, request.now, request.expiresAt],
+    "/* voicevox-job:insert-job */ INSERT INTO voicevox_jobs (job_id, group_id, generation_id, candidate_id, idempotency_key, status, attempt, max_attempts, backend, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, 'accepted', 0, ?, (SELECT preferred_backend FROM voicevox_job_groups WHERE group_id = ? AND generation_id = ?), ?, ?, ?) ON CONFLICT(generation_id, candidate_id) DO UPDATE SET attempt = CASE WHEN voicevox_jobs.job_id = excluded.job_id AND voicevox_jobs.group_id = excluded.group_id AND voicevox_jobs.generation_id = excluded.generation_id AND voicevox_jobs.candidate_id = excluded.candidate_id AND voicevox_jobs.idempotency_key = excluded.idempotency_key AND voicevox_jobs.max_attempts = excluded.max_attempts AND voicevox_jobs.expires_at = excluded.expires_at THEN voicevox_jobs.attempt ELSE -1 END",
+    [candidate.jobId, request.groupId, request.generationId, candidate.candidateId, `${request.generationId}:${candidate.candidateId}`, maxAttempts, request.groupId, request.generationId, request.now, request.now, request.expiresAt],
   );
 
 const insertPayloadStatement = (request: RegisterVoicevoxJobGroupRequest, candidate: VoicevoxJobCandidateRegistration) =>
@@ -242,14 +249,14 @@ const databaseStatement = (query: string, values: readonly unknown[]) => ({ quer
  */
 export const registerVoicevoxJobs = async (database: VoicevoxJobDatabase, request: RegisterVoicevoxJobGroupRequest): Promise<VoicevoxJobRegistrationResult> => {
   const snapshot = snapshotRequest(request);
-  const { candidates, maxAttempts } = await validateRequest(snapshot);
+  const { candidates, maxAttempts, cloudRunOverflowGenerations } = await validateRequest(snapshot);
   const existing = matchesExisting(await readExisting(database, snapshot.generationId), snapshot, candidates, maxAttempts);
   if (existing) return existing;
 
   const grantsAvailable = await Promise.all(candidates.map((candidate) => grantIsAvailable(database, snapshot, candidate)));
   if (!grantsAvailable.every(Boolean)) throw new VoicevoxJobRepositoryError("grant-invalid", "one or more voice grants are invalid or expired");
 
-  const groupStatement = guardedGroupInsert(snapshot, candidates);
+  const groupStatement = guardedGroupInsert({ ...snapshot, cloudRunOverflowGenerations }, candidates);
   const statements: VoicevoxJobPreparedStatement[] = [
     database.prepare(groupStatement.query).bind(...groupStatement.values),
     ...candidates.map((candidate) => database.prepare("/* voicevox-job:consume-grant */ UPDATE voicevox_grants SET consumed_at = ?, score_hash = ? WHERE grant_hash = ? AND generation_id = ? AND candidate_id = ? AND issued_at <= ? AND expires_at > ? AND consumed_at IS NULL").bind(snapshot.now, candidate.scoreHash, candidate.grantHash, snapshot.generationId, candidate.candidateId, snapshot.now, snapshot.now)),

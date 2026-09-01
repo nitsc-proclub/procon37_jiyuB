@@ -20,6 +20,7 @@ function fixture(count = 2) {
     jobId: `job-${i}`,
     generationId: "generation",
     candidateId: i % 2 ? "candidate-b" : "candidate-a",
+    backend: "vpc",
     status: "accepted",
     expiresAt: 100_000,
   }));
@@ -51,7 +52,7 @@ function fixture(count = 2) {
   return {
     jobs,
     repository,
-    queue,
+    queues: { vpc: queue, "cloud-run": queue },
     messages,
     events,
     options: { now: () => clock, newLeaseId: () => `lease-${++lease}` },
@@ -64,7 +65,7 @@ function fixture(count = 2) {
 test("outbox sends references only, sequentially, before recording delivery", async () => {
   const f = fixture();
   f.jobs[0].scoreJson = "private lyrics";
-  const result = await dispatchVoicevoxJobs(f.repository, f.queue, f.options);
+  const result = await dispatchVoicevoxJobs(f.repository, f.queues, f.options);
   assert.deepEqual(result, {
     scanned: 2,
     sent: 2,
@@ -90,11 +91,11 @@ test("outbox sends references only, sequentially, before recording delivery", as
 
 test("ambiguous send is not marked, keeps recovery lease, and does not stop next job", async () => {
   const f = fixture();
-  f.queue.send = async (message) => {
+  f.queues.vpc.send = async (message) => {
     if (message.jobId === "job-0") throw new Error("transport failed");
     f.messages.push(message);
   };
-  const result = await dispatchVoicevoxJobs(f.repository, f.queue, f.options);
+  const result = await dispatchVoicevoxJobs(f.repository, f.queues, f.options);
   assert.equal(result.failed, 1);
   assert.equal(result.sent, 1);
   assert.ok(f.jobs[0].dispatchLeaseId);
@@ -106,7 +107,7 @@ test("send success followed by D1 failure leaves recovery to redispatch", async 
   f.repository.mark = async () => {
     throw new Error("D1 unavailable");
   };
-  const result = await dispatchVoicevoxJobs(f.repository, f.queue, f.options);
+  const result = await dispatchVoicevoxJobs(f.repository, f.queues, f.options);
   assert.equal(result.sent, 1);
   assert.equal(result.failed, 1);
   assert.equal(result.marked, 0);
@@ -116,8 +117,8 @@ test("send success followed by D1 failure leaves recovery to redispatch", async 
 test("competing passes dispatch only the lease winner", async () => {
   const f = fixture(1);
   const results = await Promise.all([
-    dispatchVoicevoxJobs(f.repository, f.queue, f.options),
-    dispatchVoicevoxJobs(f.repository, f.queue, f.options),
+    dispatchVoicevoxJobs(f.repository, f.queues, f.options),
+    dispatchVoicevoxJobs(f.repository, f.queues, f.options),
   ]);
   assert.equal(
     results.reduce((n, result) => n + result.sent, 0),
@@ -136,7 +137,7 @@ test("does not send when lease expires while acquiring or observing a duplicate"
       return result;
     };
     assert.equal(
-      (await dispatchVoicevoxJobs(f.repository, f.queue, f.options)).sent,
+      (await dispatchVoicevoxJobs(f.repository, f.queues, f.options)).sent,
       0,
     );
   }
@@ -145,7 +146,7 @@ test("does not send when lease expires while acquiring or observing a duplicate"
 test("bounded scan, input validation, and consumer-before-mark race", async () => {
   const f = fixture(20);
   f.repository.mark = async () => ({ outcome: "stale-consumer" });
-  const result = await dispatchVoicevoxJobs(f.repository, f.queue, {
+  const result = await dispatchVoicevoxJobs(f.repository, f.queues, {
     ...f.options,
     limit: 3,
   });
@@ -153,9 +154,9 @@ test("bounded scan, input validation, and consumer-before-mark race", async () =
   assert.equal(result.sent, 3);
   assert.equal(result.marked, 0);
   await assert.rejects(
-    dispatchVoicevoxJobs(f.repository, f.queue, { limit: 101 }),
+    dispatchVoicevoxJobs(f.repository, f.queues, { limit: 101 }),
   );
   await assert.rejects(
-    dispatchVoicevoxJobs(f.repository, f.queue, { now: () => NaN }),
+    dispatchVoicevoxJobs(f.repository, f.queues, { now: () => NaN }),
   );
 });

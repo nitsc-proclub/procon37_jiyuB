@@ -55,6 +55,8 @@ export type VoicevoxJobGroup = {
   generationId: string;
   jobIds: readonly [string, string];
   status: VoicevoxJobStatus;
+  /** Backend fixed for both candidates when the generation is admitted. */
+  preferredBackend?: VoicevoxBackend;
   createdAt: number;
   updatedAt: number;
   expiresAt: number;

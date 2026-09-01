@@ -44,6 +44,7 @@ import {
   type VoicevoxAttemptError,
 } from "./voicevoxBackend";
 import { createVoicevoxJobCapability, handleVoicevoxJobApi } from "./voicevoxJobApi";
+import { consumeVoicevoxJob, voicevoxPoolRpcFromService, type VoicevoxJobQueueMessage, type VoicevoxPoolServiceRpc } from "./voicevoxJobConsumer";
 import { issueArchiveGenerationTicket } from "./creationArchiveTicket";
 import { handleCreationArchiveRequest, cleanupCreationArchives } from "./creationArchiveApi";
 
@@ -53,6 +54,7 @@ type Env = Pick<Cloudflare.Env, "ASSETS"> & Partial<Omit<Cloudflare.Env, "ASSETS
   GEMINI_MODEL?: string;
   GEMINI_MODEL_CANDIDATES?: string;
   GEMINI_MODEL_SUB?: string;
+  VOICEVOX_INFRASTRUCTURE?: VoicevoxPoolServiceRpc;
 };
 
 type ErrorStage = "request" | "config" | "turnstile" | "gemini";
@@ -432,6 +434,16 @@ const handleVoicevoxStatus = async (request: Request, env: Env) => {
   if (origin && origin !== new URL(request.url).origin) return json({ error: "同じサイトからのみ確認できます。", code: "invalid-origin" }, 403);
   const backend = new URL(request.url).searchParams.get("backend");
   if (backend !== "vpc" && backend !== "cloud-run") return json({ error: "確認する歌声サーバーを指定してください。", code: "invalid-voice-backend" }, 400);
+  // Do not let an unauthenticated status probe start a billed Cloud Run
+  // instance. Real synthesis remains protected by a one-time generation grant.
+  if (backend === "cloud-run") {
+    try {
+      getVoicevoxBackendOrder(env, backend);
+      return json({ available: true, backend, version: null, latencyMs: null, liveCheck: false });
+    } catch {
+      return json({ available: false, backend, version: null, latencyMs: null, liveCheck: false });
+    }
+  }
   const startedAt = Date.now();
   try {
     const response = await fetchVoicevoxBackend(env, backend, "/version", { method: "GET", headers: { Accept: "application/json" } }, VOICEVOX_STATUS_TIMEOUT_MS);
@@ -628,6 +640,25 @@ const handleEvaluationFollowUp = async (request: Request, env: Env) => {
 };
 
 export default {
+  async queue(batch: MessageBatch<VoicevoxJobQueueMessage>, env: Env): Promise<void> {
+    // The Cloud Run credential remains only in this Worker. The internal
+    // service binding is solely the lease authority, and this path is explicit.
+    if (!env.EVALUATIONS_DB || !env.TEMPORARY_AUDIO || !env.VOICEVOX_INFRASTRUCTURE) {
+      for (const message of batch.messages) message.retry();
+      return;
+    }
+    for (const message of batch.messages) {
+      const infrastructure = env.VOICEVOX_INFRASTRUCTURE;
+      const outcome = await consumeVoicevoxJob(message.body, {
+        ...env,
+        EVALUATIONS_DB: env.EVALUATIONS_DB,
+        TEMPORARY_AUDIO: env.TEMPORARY_AUDIO,
+        VOICEVOX_BACKEND_POOL: voicevoxPoolRpcFromService(infrastructure),
+      }, "cloud-run");
+      if (outcome === "ack") message.ack();
+      else message.retry();
+    }
+  },
   async fetch(request: Request, env: Env): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname === "/api/creation-archives" || pathname.startsWith("/api/creation-archives/")) {
@@ -637,8 +668,8 @@ export default {
       return handleCreationArchiveRequest(request, { EVALUATIONS_DB: env.EVALUATIONS_DB, CREATION_ARCHIVES: env.CREATION_ARCHIVES, EVALUATION_RECEIPT_SECRET: env.EVALUATION_RECEIPT_SECRET });
     }
     if (pathname.startsWith("/api/voicevox/jobs/")) {
-      if (env.VOICEVOX_JOBS_ENABLED?.trim() !== "true" || !env.EVALUATIONS_DB || !env.TEMPORARY_AUDIO || !env.VOICEVOX_JOBS || !env.EVALUATION_RECEIPT_SECRET) return evaluationJson({ code: "voice-jobs-unavailable" }, 503);
-      return handleVoicevoxJobApi(request, { EVALUATIONS_DB: env.EVALUATIONS_DB, TEMPORARY_AUDIO: env.TEMPORARY_AUDIO, VOICEVOX_JOBS: { send: async message => { await env.VOICEVOX_JOBS!.send(message); } }, EVALUATION_RECEIPT_SECRET: env.EVALUATION_RECEIPT_SECRET });
+      if (env.VOICEVOX_JOBS_ENABLED?.trim() !== "true" || !env.EVALUATIONS_DB || !env.TEMPORARY_AUDIO || !env.VOICEVOX_JOBS || !env.VOICEVOX_CLOUD_RUN_JOBS || !env.EVALUATION_RECEIPT_SECRET) return evaluationJson({ code: "voice-jobs-unavailable" }, 503);
+      return handleVoicevoxJobApi(request, { EVALUATIONS_DB: env.EVALUATIONS_DB, TEMPORARY_AUDIO: env.TEMPORARY_AUDIO, VOICEVOX_JOB_QUEUES: { vpc: { send: async message => { await env.VOICEVOX_JOBS!.send(message); } }, "cloud-run": { send: async message => { await env.VOICEVOX_CLOUD_RUN_JOBS!.send(message); } } }, EVALUATION_RECEIPT_SECRET: env.EVALUATION_RECEIPT_SECRET, CLOUD_RUN_OVERFLOW_GENERATIONS: env.CLOUD_RUN_OVERFLOW_GENERATIONS });
     }
     if (pathname === "/api/gemini/generate-ekaki-uta") return handleGemini(request, env);
     if (pathname === "/api/voicevox/status") return handleVoicevoxStatus(request, env);
