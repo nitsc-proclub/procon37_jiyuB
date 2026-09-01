@@ -61,7 +61,7 @@ npx.cmd wrangler r2 bucket lifecycle add cho-ekaki-uta-voicevox-audio delete-tem
 
 VPC consumerとCloud Run consumerはいずれもbatch 1・concurrency 1である。異なる未完了generationが2件以上あるとき、新しいgenerationのA/BをまとめてCloud Runへ固定する。1人分のA/Bや最初の2世代はVPCを使う。backendはD1登録時に固定し、再送時も別経路へ切り替えない。
 
-2026-09-01のoverflow公開versionは、内部Worker `23c1d6ba-7176-4bd4-8b10-f23c144be322`、公開Worker `5160243e-f535-42bb-a7d4-93a583f6266c`。本番・Preview D1へ`0007_voicevox_group_backend.sql`を適用済みで、旧jobのNULL backendはVPCへbackfillした。Cloud Runはrevision `voicevox-engine-00003-jjj`、min 0・max 1・concurrency 1である。
+2026-09-01のoverflow公開versionは、内部Worker `23c1d6ba-7176-4bd4-8b10-f23c144be322`、公開Worker `5fcb628e-5c60-4984-805a-fa54d81c8768`。本番・Preview D1へ`0007_voicevox_group_backend.sql`を適用済みで、旧jobのNULL backendはVPCへbackfillした。Cloud Runはrevision `voicevox-engine-00003-jjj`、min 0・max 1・concurrency 1である。
 
 ### 2026-08-31の追加実装（実Workerへ接続済み）
 
