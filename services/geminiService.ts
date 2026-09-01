@@ -8,6 +8,8 @@ type GenerateEkakiUtaErrorResponse = {
 
 type GenerateEkakiUtaResponse = LyricsResponse | Phase1LyricsResponse | GenerateEkakiUtaErrorResponse;
 type GenerationReceiptMetadata = {
+  archiveGenerationTicket?: unknown;
+  voiceJobCapability?: unknown;
   generationId?: unknown;
   evaluationReceipt?: unknown;
   evaluationReceiptExpiresAt?: unknown;
@@ -77,6 +79,8 @@ const readReceiptMetadata = (value: unknown) => {
     ) as Partial<Record<LyricsCandidate["candidateId"], string>>
     : undefined;
   return {
+    ...(typeof metadata.archiveGenerationTicket === "string" ? { archiveGenerationTicket: metadata.archiveGenerationTicket } : {}),
+    ...(typeof metadata.voiceJobCapability === "string" ? { voiceJobCapability: metadata.voiceJobCapability } : {}),
     ...(typeof metadata.generationId === "string" ? { generationId: metadata.generationId } : {}),
     ...(typeof metadata.evaluationReceipt === "string" ? { evaluationReceipt: metadata.evaluationReceipt } : {}),
     ...(typeof metadata.evaluationReceiptExpiresAt === "string" ? { evaluationReceiptExpiresAt: metadata.evaluationReceiptExpiresAt } : {}),

@@ -2,13 +2,15 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "cho-ekaki-uta",
   "main": "src/worker.ts",
-  "compatibility_date": "2026-08-08",
+  "compatibility_date": "2026-08-31",
   "preview_urls": false,
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
   },
   "vars": {
+    "VOICEVOX_JOBS_ENABLED": "true",
+    "CREATION_ARCHIVES_ENABLED": "true",
     "TURNSTILE_EXPECTED_HOSTNAME": "cho-ekaki-uta.nitsc-proclub.workers.dev",
     "LYRICS_PIPELINE_MODE": "phase1",
     "GEMINI_VISION_MODEL": "gemini-3.7-flash",
@@ -20,6 +22,12 @@
     "EVALUATION_RECEIPT_TTL_SECONDS": "21600",
     "VOICEVOX_CLOUD_RUN_URL": "https://voicevox-engine-1023600737600.asia-northeast1.run.app"
   },
+  "queues": { "producers": [{ "binding": "VOICEVOX_JOBS", "queue": "cho-ekaki-uta-voicevox-jobs" }] },
+  "r2_buckets": [
+    { "binding": "TEMPORARY_AUDIO", "bucket_name": "cho-ekaki-uta-voicevox-audio" },
+    { "binding": "CREATION_ARCHIVES", "bucket_name": "cho-ekaki-uta-creation-archives" }
+  ],
+  "triggers": { "crons": ["17 * * * *"] },
   "vpc_services": [
     {
       "binding": "VOICEVOX",

@@ -88,6 +88,8 @@ export interface Phase1ModelInfo {
 }
 
 export interface Phase1LyricsResponse {
+  archiveGenerationTicket?: string;
+  voiceJobCapability?: string;
   pipelineMode: "phase1";
   drawingAnalysis: DrawingAnalysis;
   candidates: LyricsCandidate[];
@@ -105,6 +107,8 @@ export interface Phase1LyricsResponse {
 }
 
 export interface GeneratedEkakiUtaResult {
+  archiveGenerationTicket?: string;
+  voiceJobCapability?: string;
   lyrics: LyricsResponse;
   candidates: LyricsCandidate[] | null;
   drawingAnalysis: DrawingAnalysis | null;

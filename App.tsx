@@ -6,6 +6,7 @@ import GenerationJourney from "./components/GenerationJourney";
 import Turnstile, { TurnstileHandle, TurnstileStatus } from "./components/Turnstile";
 import DebugExportDialog from "./components/DebugExportDialog";
 import EvaluationConsentModal from "./components/EvaluationConsentModal";
+import CreationArchiveManager from "./components/CreationArchiveManager";
 import EvaluationFollowUpModal, { EvaluationFollowUpAnswers } from "./components/EvaluationFollowUpModal";
 import DebugHistoryView from "./components/DebugHistoryView";
 import VoicevoxServerSelector from "./components/VoicevoxServerSelector";
@@ -19,6 +20,7 @@ import { DebugHistoryRecord, saveDebugHistoryRecord } from "./services/debugHist
 import { createEvaluationDraft, createGenerationId, getInitialPreviewCandidate, isComparableCandidateSet, saveEvaluationDraft, shuffleCandidateIds, withEvaluationDraftState } from "./services/evaluationDraftDb";
 import { buildEvaluationSubmission, submitEvaluation } from "./services/evaluationSubmissionService";
 import { buildEvaluationFollowUpSubmission, submitEvaluationFollowUp } from "./services/evaluationFollowUpService";
+import { CREATION_ARCHIVE_CONSENT_VERSION, downloadCreationArchiveDeletionReceiptBlob, startCreationArchive, type CreationArchiveSnapshot } from "./services/creationArchiveService";
 import { buildSingingScore, createSingingSeed } from "./services/melodyService";
 import { createSilentPlaybackAudio } from "./services/silentPlaybackService";
 import { groupStrokes } from "./services/strokeGroupingService";
@@ -40,6 +42,7 @@ import {
   VoicevoxServerId,
 } from "./services/voicevoxRouting";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
+import { registerVoicevoxJobGroup, waitForVoicevoxJobs, voicevoxJobAudioUrl, cancelVoicevoxJobGroup } from "./services/voicevoxJobService";
 import { DemoRecordSummary, DrawingAnalysis, DrawingData, DrawingSubjectFeedbackChoice, EvaluationCentralConsent, EvaluationDraft, EvaluationSelection, EvaluationStructuredRatings, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsCandidate, LyricsResponse, Phase1ModelInfo, SingingScore, UsageStats } from "./types";
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
@@ -404,6 +407,7 @@ const App: React.FC = () => {
   const [followUpPreferencePrefill, setFollowUpPreferencePrefill] = useState<LyricsCandidate["candidateId"] | null>(null);
   const [isEvaluationFollowUpPending, setIsEvaluationFollowUpPending] = useState(false);
   const [isEvaluationCentrallySaved, setIsEvaluationCentrallySaved] = useState(false);
+  const [isCreationArchiveManagerOpen, setIsCreationArchiveManagerOpen] = useState(false);
   const [hasAlternativePreviewed, setHasAlternativePreviewed] = useState(false);
   const [hasPlaybackStartedForGeneration, setHasPlaybackStartedForGeneration] = useState(false);
   const [isCandidatePreviewLoading, setIsCandidatePreviewLoading] = useState<LyricsCandidate["candidateId"] | null>(null);
@@ -487,6 +491,7 @@ const App: React.FC = () => {
   const recordConsentPrimaryButtonRef = useRef<HTMLButtonElement>(null);
   const generationRunRef = useRef(false);
   const generationSequenceRef = useRef(0);
+  const voiceJobAbortRef = useRef<AbortController | null>(null);
   const generationTimingRunKeyRef = useRef(0);
   const generationCompletionWaiterRef = useRef<GenerationCompletionWaiter | null>(null);
   const turnstileWidgetRef = useRef<TurnstileHandle>(null);
@@ -509,6 +514,10 @@ const App: React.FC = () => {
   const evaluationStorageConsentRef = useRef<EvaluationCentralConsent>("not-asked");
   const evaluationSaveSequenceRef = useRef(0);
   const evaluationDraftWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // The ticket is held only for this newly-generated result and is never put
+  // into debug exports, browser history, or archive assets.
+  const archiveGenerationTicketRef = useRef<string | null>(null);
+  const creationArchiveSnapshotRef = useRef<CreationArchiveSnapshot | null>(null);
   // Vite's development middleware is the only intentionally local API path.
   // Every built app can be served by the Worker, whose Gemini route validates
   // Turnstile regardless of VITE_APP_MODE, so it must provide a token.
@@ -548,6 +557,7 @@ const App: React.FC = () => {
       isMountedRef.current = false;
       generationRunRef.current = false;
       generationSequenceRef.current += 1;
+      voiceJobAbortRef.current?.abort();
       candidateActivationSequenceRef.current += 1;
       candidatePlaybackCacheRef.current.clear();
       const completionWaiter = generationCompletionWaiterRef.current;
@@ -859,10 +869,12 @@ const App: React.FC = () => {
     evaluationStorageConsentRef.current = "not-asked";
     evaluationSaveSequenceRef.current += 1;
     evaluationDraftRef.current = null;
+    archiveGenerationTicketRef.current = null;
+    creationArchiveSnapshotRef.current = null;
     setIsEvaluationConsentOpen(false);
     setEvaluationGenerationId(null);
     setEvaluationReceipt(null);
-    setEvaluationReceiptExpiresAt(null);
+      setEvaluationReceiptExpiresAt(null);
     setIsEvaluationSubmissionPending(false);
     setFinalPreferenceSelection(null);
     setSubjectFeedbackChoice(null);
@@ -877,6 +889,8 @@ const App: React.FC = () => {
   };
 
   const clearPhase1Generation = () => {
+    voiceJobAbortRef.current?.abort();
+    voiceJobAbortRef.current = null;
     setGeneratedLyricsCandidates(null);
     setGeneratedDrawingAnalysis(null);
     setGeneratedPhase1ModelInfo(null);
@@ -1267,7 +1281,7 @@ const App: React.FC = () => {
 
     // Before the combined consent, the evaluation exists only in memory.
     // Once accepted, later bounded changes are kept in the browser draft too.
-    if (evaluationStorageConsentRef.current !== "accepted") return;
+    if (evaluationStorageConsentRef.current !== "accepted" || !appFeatures.debugHistory) return;
     const write = () => saveEvaluationDraft(nextDraft);
     const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
     evaluationDraftWriteQueueRef.current = queuedWrite.catch(() => undefined);
@@ -1400,6 +1414,10 @@ const App: React.FC = () => {
     const consentGenerationId = nextDraft?.generationId ?? null;
     const activationAtConsent = candidateActivationPromiseRef.current;
     const debugSourceAtConsent = browserSaveSourceForSelection(debugExportSourceRef.current, nextDraft);
+    // Capture all archive inputs at the consent boundary. This makes a later
+    // "new song" reset harmless while the independent upload is in flight.
+    const archiveSnapshotAtConsent = creationArchiveSnapshotRef.current;
+    const archiveTicketAtConsent = archiveGenerationTicketRef.current;
     setIsEvaluationConsentOpen(false);
     if (isCandidatePreviewLoading) {
       showPlaybackWhenCandidateReadyRef.current = true;
@@ -1408,17 +1426,33 @@ const App: React.FC = () => {
     }
     try {
       const browserSave = Promise.all([
-        ...(nextDraft ? [saveEvaluationDraft(nextDraft)] : []),
+        ...(nextDraft && appFeatures.debugHistory ? [saveEvaluationDraft(nextDraft)] : []),
         saveCurrentResultInBrowser(activationAtConsent, debugSourceAtConsent),
       ]);
       const canSaveToCloud = !!nextDraft
         && !!evaluationReceipt
         && !!evaluationReceiptExpiresAt
         && Date.parse(evaluationReceiptExpiresAt) > Date.now();
-      const cloudSave = canSaveToCloud
-        ? submitEvaluation(buildEvaluationSubmission(nextDraft, evaluationReceipt, appBuildId, updatedAt, EVALUATION_EXPERIMENT_ROUND_ID))
+      const evaluationPayload = canSaveToCloud
+        ? buildEvaluationSubmission(nextDraft, evaluationReceipt, appBuildId, updatedAt, EVALUATION_EXPERIMENT_ROUND_ID)
+        : null;
+      const fullArchiveRequested = !!evaluationPayload && !!archiveSnapshotAtConsent && !!archiveTicketAtConsent;
+      const archiveSave = fullArchiveRequested && evaluationPayload && archiveSnapshotAtConsent && archiveTicketAtConsent
+        ? startCreationArchive({
+            evaluation: evaluationPayload,
+            generationTicket: archiveTicketAtConsent,
+            consentVersion: CREATION_ARCHIVE_CONSENT_VERSION,
+            snapshot: archiveSnapshotAtConsent,
+          })
         : Promise.resolve(null);
-      const [browserResult, cloudResult] = await Promise.allSettled([browserSave, cloudSave]);
+      // A full archive keeps evaluation and material under the same retention
+      // lifecycle. Legacy metadata-only saves retain the existing parallel path.
+      const cloudSave = fullArchiveRequested
+        ? archiveSave.then((archive) => archive.archiveId ? submitEvaluation(evaluationPayload!) : null)
+        : evaluationPayload
+          ? submitEvaluation(evaluationPayload)
+          : Promise.resolve(null);
+      const [browserResult, cloudResult, archiveResult] = await Promise.allSettled([browserSave, cloudSave, archiveSave]);
       const savedInBrowser = browserResult.status === "fulfilled";
       const savedToCloud = cloudResult.status === "fulfilled" && cloudResult.value !== null;
       const stillShowingConsentedResult = consentGenerationId
@@ -1426,8 +1460,19 @@ const App: React.FC = () => {
         : debugSourceAtConsent?.recordId === debugExportSourceRef.current?.recordId;
       if (!stillShowingConsentedResult || evaluationSaveSequenceRef.current !== saveSequence) return;
       setIsEvaluationCentrallySaved(savedToCloud);
-      if (savedInBrowser && (savedToCloud || !canSaveToCloud)) {
-        setSaveToast({ message: "保存しました。ありがとう！", tone: "success" });
+      const archive = archiveResult.status === "fulfilled" ? archiveResult.value : null;
+      const archiveSaved = archive?.status === "complete";
+      const archivePartial = archive?.status === "partial";
+      const archiveRequestFailed = archiveResult.status === "rejected" || archive?.status === "failed";
+      if (archive?.status === "failed" && archive.archiveId && archive.deletionReceipt) {
+        downloadCreationArchiveDeletionReceiptBlob(archive.archiveId, archive.deletionReceipt);
+      }
+      if (archiveRequestFailed) {
+        setSaveToast({ message: archive?.deletionReceipt ? "作品データは送らず、削除レシートをダウンロードしました" : archive?.error ?? "作品データを保存できませんでした。歌はそのまま使えます", tone: "error" });
+      } else if (savedInBrowser && (savedToCloud || !canSaveToCloud) && (!archive || archiveSaved)) {
+        setSaveToast({ message: archiveSaved ? "作品を1年間、非公開で保存しました" : "保存しました。ありがとう！", tone: "success" });
+      } else if (archivePartial) {
+        setSaveToast({ message: "回答は保存しましたが、作品データの一部を保存できませんでした", tone: "error" });
       } else if (savedInBrowser) {
         setSaveToast({ message: "このブラウザには保存しました。クラウドには送れませんでした", tone: "error" });
       } else if (savedToCloud) {
@@ -1459,6 +1504,7 @@ const App: React.FC = () => {
       followUpCentralConsent: followUpConsent,
     }, updatedAt);
     evaluationDraftRef.current = nextDraft;
+    if (!appFeatures.debugHistory) return nextDraft;
     const write = () => saveEvaluationDraft(nextDraft);
     const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
     evaluationDraftWriteQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
@@ -1863,6 +1909,7 @@ const App: React.FC = () => {
       generatedLyrics = generationResult.lyrics;
       generatedCandidates = generationResult.candidates;
       voicevoxGrantsRef.current = generationResult.voiceGrants ?? {};
+      archiveGenerationTicketRef.current = generationResult.archiveGenerationTicket ?? null;
       setEvaluationReceipt(generationResult.evaluationReceipt ?? null);
       setEvaluationReceiptExpiresAt(generationResult.evaluationReceiptExpiresAt ?? null);
       setGeneratedLyricsCandidates(generationResult.candidates);
@@ -1938,11 +1985,49 @@ const App: React.FC = () => {
         updateProgress("2つの歌声を準備しているよ");
       }
 
+      // Public A/B requests enter one bounded queue. Both results (including a
+      // per-candidate animation fallback) are ready before asking for a choice.
+      const queuedVoice = !!generationResult.voiceJobCapability && !!generationResult.generationId
+        && !!comparableCandidates && !canUseLocalVoicevox && appFeatures.voicevox
+        && !!voicevoxGrantsRef.current["candidate-a"] && !!voicevoxGrantsRef.current["candidate-b"]
+        && selectedVoicevoxServer !== "local" && selectedVoicevoxServer !== "google-cloud-run";
+      if (queuedVoice && comparableCandidates) {
+        const abort = new AbortController();
+        voiceJobAbortRef.current = abort;
+        const cancelPending = () => { void cancelVoicevoxJobGroup(comparableCandidates.map(candidate => ({ jobId: `${generationResult.generationId}:${candidate.candidateId}` })), generationResult.voiceJobCapability!); };
+        abort.signal.addEventListener("abort", cancelPending, { once: true });
+        const inputs = comparableCandidates.map(candidate => {
+          const score = buildSingingScore(candidate, createSingingSeed(candidate, 0));
+          preparedCandidates.set(candidate.candidateId, { score, audioBlob: createSilentPlaybackAudio(score), playbackKind: "animation-only", voicevoxWarning: "歌声を用意できませんでした。絵のアニメーションで再生します。", voicevoxServer: null });
+          return { candidateId: candidate.candidateId, voiceGrant: voicevoxGrantsRef.current[candidate.candidateId] ?? "", score };
+        });
+        try {
+          beginTimingPhase("voicevoxSynthesis");
+          const registration = await registerVoicevoxJobGroup({ generationId: generationResult.generationId!, groupId: generationResult.generationId!, capability: generationResult.voiceJobCapability!, candidates: inputs, signal: abort.signal });
+          const states = await waitForVoicevoxJobs(registration.jobs, generationResult.voiceJobCapability!, { signal: abort.signal });
+          for (const job of registration.jobs) {
+            if (!states.find(state => state.jobId === job.jobId)?.audioReady) continue;
+            try {
+              const response = await fetch(voicevoxJobAudioUrl(job.jobId), { headers: { "X-Voicevox-Capability": generationResult.voiceJobCapability! }, signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60_000)]) });
+              if (!response.ok) continue;
+              const audioBlob = await response.blob();
+              if (!audioBlob.size) continue;
+              const previous = preparedCandidates.get(job.candidateId)!;
+              preparedCandidates.set(job.candidateId, { ...previous, audioBlob, playbackKind: "voice", voicevoxWarning: null, voicevoxServer: "cloudflare-vpc" });
+            } catch { /* Preserve this candidate's animation if downloading fails. */ }
+          }
+        } catch { /* Registered grants must not be reused through the old route. */ }
+        finally { abort.signal.removeEventListener("abort", cancelPending); completeTimingPhase(); }
+        if (!isCurrentGeneration()) return;
+        for (const [id, playback] of preparedCandidates) if (id !== "legacy") candidatePlaybackCacheRef.current.set(id, playback);
+      }
+
       // The VPC-backed VOICEVOX Engine shares one inference budget. Prepare
       // candidates one at a time to avoid a same-user burst; a failed voice is
       // cached as a seekable silent animation and must not stop the next one.
       for (const [candidateIndex, candidate] of candidatesToPrepare.entries()) {
         if (!isCurrentGeneration()) return;
+        if (queuedVoice) break;
         const candidateId: LyricsCandidate["candidateId"] | "legacy" = "candidateId" in candidate
           ? (candidate as LyricsCandidate).candidateId
           : "legacy";
@@ -2066,6 +2151,42 @@ const App: React.FC = () => {
       setPlaybackKind(initialPlayback.playbackKind);
       setVoicevoxWarning(initialPlayback.voicevoxWarning);
       setVoicevoxResolvedServer(initialPlayback.voicevoxServer);
+
+      // Freeze the original drawing and both prepared candidates before a
+      // choice can change the active UI. Do not reconstruct this from state
+      // later: a new song must never redirect an already-consented archive.
+      if (comparableCandidates && evaluationDraft && generationResult.drawingAnalysis && generationResult.modelInfo) {
+        const archivedCandidates = comparableCandidates
+          .map((candidate) => {
+            const prepared = preparedCandidates.get(candidate.candidateId);
+            if (!prepared) return null;
+            const isRealVoice = prepared.playbackKind === "voice";
+            return {
+              candidate: structuredClone(candidate),
+              score: structuredClone(prepared.score),
+              voiceAudioBlob: isRealVoice ? prepared.audioBlob : null,
+              voiceStatus: isRealVoice ? "voice" as const : (appFeatures.voicevox || appFeatures.localVoicevox ? "failed" as const : "not-attempted" as const),
+              voicevoxIssue: prepared.voicevoxWarning,
+              voicevoxServer: prepared.voicevoxServer,
+            };
+          });
+        if (archivedCandidates.every((item): item is NonNullable<typeof item> => !!item)) {
+          const byId = new Map(archivedCandidates.map((item) => [item.candidate.candidateId, item]));
+          const a = byId.get("candidate-a"), b = byId.get("candidate-b");
+          if (a && b) creationArchiveSnapshotRef.current = {
+            drawingData: structuredClone(groupedDrawingData),
+            drawingAnalysis: structuredClone(generationResult.drawingAnalysis),
+            candidates: [a, b],
+            displayOrder: [...evaluationDraft.displayOrder] as [LyricsCandidate["candidateId"], LyricsCandidate["candidateId"]],
+            activeCandidateId: evaluationDraft.activeCandidateId,
+            buildId: appBuildId,
+            mode: appConfig.mode,
+            createdAt: new Date().toISOString(),
+            modelInfo: structuredClone(generationResult.modelInfo),
+            lyricsPromptVersion: generationResult.lyricsPromptVersion,
+          };
+        }
+      }
 
       beginTimingPhase("finalize");
       updateProgress("絵描き歌の準備ができたよ");
@@ -2727,8 +2848,15 @@ const App: React.FC = () => {
         pending={isEvaluationSubmissionPending}
         savesInBrowser={appFeatures.debugHistory && !!debugExportSource}
         savesToCloud={!!evaluationReceipt && !!evaluationReceiptExpiresAt && Date.parse(evaluationReceiptExpiresAt) > Date.now()}
+        savesFullArchive={!!archiveGenerationTicketRef.current && !!creationArchiveSnapshotRef.current}
         onAccept={() => void handleEvaluationCentralConsent("accepted")}
         onDecline={() => void handleEvaluationCentralConsent("declined")}
+      />
+
+      <CreationArchiveManager
+        open={isCreationArchiveManagerOpen}
+        onClose={() => setIsCreationArchiveManagerOpen(false)}
+        onToast={(message, tone) => setSaveToast({ message, tone })}
       />
 
       {isComparableCandidateSet(generatedLyricsCandidates) && followUpFinalPreferenceSelection !== null && (
@@ -2897,6 +3025,14 @@ const App: React.FC = () => {
           >
             デバッグ履歴
           </button>}
+          <button
+            type="button"
+            onClick={() => setIsCreationArchiveManagerOpen(true)}
+            title="クラウド保存した作品を確認・削除"
+            className="rounded-full px-5 py-2 text-sm font-black text-gray-600 transition-all hover:bg-sky-50"
+          >
+            保存した作品
+          </button>
         </div>
       </header>
 
@@ -2914,6 +3050,13 @@ const App: React.FC = () => {
               🎵 保存した歌
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setIsCreationArchiveManagerOpen(true)}
+            className="shrink-0 rounded-full border border-sky-200 bg-white px-3 py-2 text-xs font-black text-sky-700 shadow-sm"
+          >
+            保存した作品
+          </button>
         </div>
       )}
 
@@ -3453,7 +3596,13 @@ const App: React.FC = () => {
                   ? retryTurnstile
                   : null
               }
-              generationSecurityCheck={turnstileSecurityCheck}
+              generationSecurityCheck={<>
+                {turnstileSecurityCheck}
+                {appFeatures.voicevox && <details className="w-full text-center text-xs leading-relaxed text-gray-500">
+                  <summary className="cursor-pointer">名前などは描かないでね · データの扱い</summary>
+                  <p className="mx-auto mt-1 max-w-sm">歌を届けるため、歌声は最大1日、歌詞のデータは約1時間、一時保存します。改善用に残すかは、あとで選べます。</p>
+                </details>}
+              </>}
               initialDrawing={playbackDrawing}
               playbackDrawing={playbackDrawing}
               playbackAudioRef={audioRef}
