@@ -37,3 +37,18 @@ node scripts/measureVoicevoxCloudRun.mjs --run --production --requests 1
 ```
 
 1回の確認は最大3リクエストまでです。HTTP 200、`backend: "cloud-run"`、`fallback: "false"`、有効なWAVのすべてを満たさないリクエストが出た時点で、次の合成は送らずに停止します。各リクエストには180秒のtimeout、応答本文には8 MiBの上限を設けています。cold startを見積もる場合は、別日に十分なidle時間を置いて1回だけ実行し、実行前のインスタンス状態をログで確認してください。
+
+## 2026-09-01: overflow公開前の追加確認
+
+同じ固定スコアを本番Worker経由で1回ずつ確認した。どちらもHTTP 200、`cloud-run`、fallbackなし、有効な676,908 bytesのWAVで、試験用grantは削除済みである。
+
+| 条件 | Worker TTFB | 全体 |
+| --- | ---: | ---: |
+| runtimeサービスアカウント変更前 | 23,558 ms | 23,623 ms |
+| 専用runtimeサービスアカウントへ変更後 | 18,798 ms | 18,866 ms |
+
+実行前のインスタンス状態を取得していないため、どちらもcold/warmとは断定しない。Cloud Runの実行identityは、project Editorだった既定Compute Engineサービスアカウントから、project roleを持たない`voicevox-runtime`専用サービスアカウントへ変更した。呼び出しidentityは従来どおりCloud Run Invokerだけを持つ`cf-voicevox-invoker`である。
+
+overflow公開後の稼働revisionは`voicevox-engine-00003-jjj`。1 vCPU、2 GiB、concurrency 1、min 0、max 1、timeout 120秒を再確認した。設定更新中にmaxが20へ戻っていることを検出したため、公開確認中に1へ修正した。現在は最大1台であり、Cloud Run側の追加並列はまだ許可していない。
+
+公開`/api/voicevox/status?backend=cloud-run`は、第三者の状態確認だけで課金対象インスタンスを起動しないよう、現在は設定確認だけを行う。`liveCheck:false`は「認証情報とURLの設定は有効だが、Engineへlive requestは送っていない」という意味である。実稼働確認はgrantで保護された合成要求とCloud Runログを使う。

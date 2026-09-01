@@ -7,15 +7,16 @@
 | 対象 | 名前・設定 |
 | --- | --- |
 | 内部Worker | `cho-ekaki-uta-voicevox-infrastructure` |
-| version | `507bceda-7c38-4d60-930f-0e6a00b11226` |
+| version | `23c1d6ba-7176-4bd4-8b10-f23c144be322` |
 | HTTP | workers.dev・preview URL無効、routeなし。default/named entrypointも404 |
 | SQLite Durable Object | `VoicevoxBackendPool` / binding `VOICEVOX_BACKEND_POOL` |
-| 通常Queue | `cho-ekaki-uta-voicevox-jobs`、保持24時間 |
+| 通常Queue | `cho-ekaki-uta-voicevox-jobs`、VPC consumer concurrency 1、保持24時間 |
+| overflow Queue | `cho-ekaki-uta-voicevox-cloud-run-jobs`、公開Worker consumer concurrency 1、保持24時間 |
 | DLQ用Queue | `cho-ekaki-uta-voicevox-dlq`、保持24時間 |
 | D1 | 本番・Previewとも`0004_voicevox_jobs.sql`まで適用済み |
 | R2 | `cho-ekaki-uta-voicevox-audio`、APAC・Standard・非公開 |
 
-Queueはproducer bindingのみ。consumer、失敗時のDLQ転送、公開job APIは未接続で、現時点でQueueへ歌詞・音声を送っていない。
+両Queueはjob参照だけを送り、失敗時は共通DLQへ最大3回後に転送する。歌詞を含むscore payloadは短命D1、生成WAVは短命・非公開R2に置く。
 
 内部Workerのnamed entrypointは`VoicevoxInfrastructureWorker`。将来のconsumerはService Bindingから`acquireBackendLease`・`releaseBackendLease`・`snapshotBackendPool`を呼ぶ。
 
@@ -58,7 +59,9 @@ npx.cmd wrangler r2 bucket lifecycle add cho-ekaki-uta-voicevox-audio delete-tem
 
 内部Worker version `fea57e6b-e632-450c-9fd7-3b5de659a3de` を公開し、Queue consumer、D1、VPC、一時R2、2分ごとの回収処理を接続した。公開アプリはA/BをQueueへ一括登録し、2件とも完了してから歌詞選択を表示する。実ブラウザで2件のVPC合成と音声取得を確認した。
 
-初期consumerはVPC専用、batch 1・concurrency 1である。`CLOUD_RUN_CAPACITY`は将来のpool設定用で、現在のconsumerはCloud Runへ自動送信しない。
+VPC consumerとCloud Run consumerはいずれもbatch 1・concurrency 1である。異なる未完了generationが2件以上あるとき、新しいgenerationのA/BをまとめてCloud Runへ固定する。1人分のA/Bや最初の2世代はVPCを使う。backendはD1登録時に固定し、再送時も別経路へ切り替えない。
+
+2026-09-01のoverflow公開versionは、内部Worker `23c1d6ba-7176-4bd4-8b10-f23c144be322`、公開Worker `5160243e-f535-42bb-a7d4-93a583f6266c`。本番・Preview D1へ`0007_voicevox_group_backend.sql`を適用済みで、旧jobのNULL backendはVPCへbackfillした。Cloud Runはrevision `voicevox-engine-00003-jjj`、min 0・max 1・concurrency 1である。
 
 ### 2026-08-31の追加実装（実Workerへ接続済み）
 
@@ -79,10 +82,10 @@ npx.cmd wrangler r2 bucket lifecycle add cho-ekaki-uta-voicevox-audio delete-tem
 2. D1の登録とQueue送信間の障害対策（outbox/reconciliation）、job statusのlease fencing、期限後cleanup。**関数層を実装。定期実行・実環境の結線は未完了。**
 3. Queue consumerをVPC専用・batch 1から接続。DLQと再試行を設定し、重複配信を試験する。
 4. capability付きjob/audio APIと短命WAV配信を実装。保存同意とは別の生成用一時保持を簡潔に説明する。
-5. 公開status APIによる不要なCloud Run起動を防止したうえで、混雑時のCloud Runを限定導入。
+5. 公開status APIによる不要なCloud Run起動を防止したうえで、混雑時のCloud Runを限定導入。**完了。statusは設定確認のみで`liveCheck:false`。**
 6. A/B一括登録・polling・キャンセルをfeature flagでブラウザへ接続。
 
-Cloud Run初回のWorker総時間は約20.7秒、後続2回のEngine合成部分は約11.5〜12.3秒。厳密なcold開始や後続のWorker総時間は未確定である。さくらの1件約8秒と比較し、単純に2リクエスト来たらCloud Runへ送らず、世代単位の予測完了時間で判断する。現状はmax 1/min 0を維持し、自動振り分けは有効にしない。
+Cloud Run初回のWorker総時間は約20.7秒、後続2回のEngine合成部分は約11.5〜12.3秒。2026-09-01の追加2回は全体約23.6秒と18.9秒だった。厳密なcold開始や後続のWorker総時間は未確定である。現状はmax 1/min 0を維持し、3番目の重複世代から自動振り分けを有効にした。次は実利用ログを見ながら閾値を変更し、maxを増やす場合は別途費用と負荷を確認する。
 
 詳細: [計画](../../docs/voicevox-public-scaling-plan.md)、[Cloud Run実測](../../docs/voicevox-cloud-run-capacity.md)。
 
