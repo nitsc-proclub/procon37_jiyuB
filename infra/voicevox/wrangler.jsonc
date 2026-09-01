@@ -9,7 +9,7 @@
   "vars": {
     "VPC_CAPACITY": "1",
     "CLOUD_RUN_OVERFLOW_GENERATIONS": "2",
-    "CLOUD_RUN_CAPACITY": "1"
+    "CLOUD_RUN_CAPACITY": "3"
   },
   "durable_objects": {
     "bindings": [{ "name": "VOICEVOX_BACKEND_POOL", "class_name": "VoicevoxBackendPool" }]

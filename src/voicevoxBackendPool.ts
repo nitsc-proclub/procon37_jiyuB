@@ -288,13 +288,22 @@ function assertId(label: string, value: unknown): asserts value is string {
 }
 
 function parseCapacity(value: unknown, backend: VoicevoxBackend): number {
-  if (value !== "1") {
+  if (backend === "vpc") {
+    if (value === "1") return 1;
     throw new VoicevoxBackendPoolError(
       "backend-pool-mismatch",
-      `${backend} capacity must be configured as the fixed value '1'.`,
+      "vpc capacity must be configured as the fixed value '1'.",
     );
   }
-  return 1;
+
+  const capacity = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 3) {
+    throw new VoicevoxBackendPoolError(
+      "backend-pool-mismatch",
+      "cloud-run capacity must be configured as an integer from '1' through '3'.",
+    );
+  }
+  return capacity;
 }
 
 function parseStoredBackend(value: string): VoicevoxBackend {

@@ -28,7 +28,7 @@
       { "binding": "VOICEVOX_JOBS", "queue": "cho-ekaki-uta-voicevox-jobs" },
       { "binding": "VOICEVOX_CLOUD_RUN_JOBS", "queue": "cho-ekaki-uta-voicevox-cloud-run-jobs" }
     ],
-    "consumers": [{ "queue": "cho-ekaki-uta-voicevox-cloud-run-jobs", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3, "dead_letter_queue": "cho-ekaki-uta-voicevox-dlq" }]
+    "consumers": [{ "queue": "cho-ekaki-uta-voicevox-cloud-run-jobs", "max_batch_size": 1, "max_concurrency": 3, "max_retries": 3, "dead_letter_queue": "cho-ekaki-uta-voicevox-dlq" }]
   },
   "services": [{ "binding": "VOICEVOX_INFRASTRUCTURE", "service": "cho-ekaki-uta-voicevox-infrastructure", "entrypoint": "VoicevoxInfrastructureWorker" }],
   "r2_buckets": [

@@ -11,7 +11,7 @@
 | HTTP | workers.dev・preview URL無効、routeなし。default/named entrypointも404 |
 | SQLite Durable Object | `VoicevoxBackendPool` / binding `VOICEVOX_BACKEND_POOL` |
 | 通常Queue | `cho-ekaki-uta-voicevox-jobs`、VPC consumer concurrency 1、保持24時間 |
-| overflow Queue | `cho-ekaki-uta-voicevox-cloud-run-jobs`、公開Worker consumer concurrency 1、保持24時間 |
+| overflow Queue | `cho-ekaki-uta-voicevox-cloud-run-jobs`、公開Worker consumer concurrency 3、保持24時間 |
 | DLQ用Queue | `cho-ekaki-uta-voicevox-dlq`、保持24時間 |
 | D1 | 本番・Previewとも`0004_voicevox_jobs.sql`まで適用済み |
 | R2 | `cho-ekaki-uta-voicevox-audio`、APAC・Standard・非公開 |
@@ -20,7 +20,7 @@
 
 内部Workerのnamed entrypointは`VoicevoxInfrastructureWorker`。将来のconsumerはService Bindingから`acquireBackendLease`・`releaseBackendLease`・`snapshotBackendPool`を呼ぶ。
 
-DOは`voicevox-backend-pool:v1:vpc`と`voicevox-backend-pool:v1:cloud-run`に分ける。各上限は1、標準leaseは5分。SQLiteで取得を直列化し、generation/job/attempt/lease IDで再送と解放を照合する。lease期限は実Engineの停止保証ではないので、consumer側にもtimeoutとD1の条件付き完了更新が必要である。
+DOは`voicevox-backend-pool:v1:vpc`と`voicevox-backend-pool:v1:cloud-run`に分ける。VPCは1枠、Cloud Runは3枠、標準leaseは5分。SQLiteで取得を直列化し、generation/job/attempt/lease IDで再送と解放を照合する。lease期限は実Engineの停止保証ではないので、consumer側にもtimeoutとD1の条件付き完了更新が必要である。
 
 ## 検証・配置
 
@@ -59,9 +59,9 @@ npx.cmd wrangler r2 bucket lifecycle add cho-ekaki-uta-voicevox-audio delete-tem
 
 内部Worker version `fea57e6b-e632-450c-9fd7-3b5de659a3de` を公開し、Queue consumer、D1、VPC、一時R2、2分ごとの回収処理を接続した。公開アプリはA/BをQueueへ一括登録し、2件とも完了してから歌詞選択を表示する。実ブラウザで2件のVPC合成と音声取得を確認した。
 
-VPC consumerとCloud Run consumerはいずれもbatch 1・concurrency 1である。異なる未完了generationが2件以上あるとき、新しいgenerationのA/BをまとめてCloud Runへ固定する。1人分のA/Bや最初の2世代はVPCを使う。backendはD1登録時に固定し、再送時も別経路へ切り替えない。
+VPC consumerはbatch 1・concurrency 1、Cloud Run consumerはbatch 1・concurrency 3である。異なる未完了generationが2件以上あるとき、新しいgenerationのA/BをまとめてCloud Runへ固定する。1人分のA/Bや最初の2世代はVPCを使う。backendはD1登録時に固定し、再送時も別経路へ切り替えない。
 
-2026-09-01のoverflow公開versionは、内部Worker `23c1d6ba-7176-4bd4-8b10-f23c144be322`、公開Worker `5fcb628e-5c60-4984-805a-fa54d81c8768`。本番・Preview D1へ`0007_voicevox_group_backend.sql`を適用済みで、旧jobのNULL backendはVPCへbackfillした。Cloud Runはrevision `voicevox-engine-00003-jjj`、min 0・max 1・concurrency 1である。
+2026-09-01の最大3並列公開versionは、内部Worker `80e0f335-a08c-489c-b8c3-bcaccd36c01a`、公開Worker `949a3bc2-1504-457f-b748-7283024cc3f0`。本番・Preview D1へ`0007_voicevox_group_backend.sql`を適用済みで、旧jobのNULL backendはVPCへbackfillした。Cloud Runはrevision `voicevox-engine-00004-hmr`、min 0・max 3・container concurrency 1である。
 
 ### 2026-08-31の追加実装（実Workerへ接続済み）
 
@@ -85,7 +85,7 @@ VPC consumerとCloud Run consumerはいずれもbatch 1・concurrency 1である
 5. 公開status APIによる不要なCloud Run起動を防止したうえで、混雑時のCloud Runを限定導入。**完了。statusは設定確認のみで`liveCheck:false`。**
 6. A/B一括登録・polling・キャンセルをfeature flagでブラウザへ接続。
 
-Cloud Run初回のWorker総時間は約20.7秒、後続2回のEngine合成部分は約11.5〜12.3秒。2026-09-01の追加2回は全体約23.6秒と18.9秒だった。厳密なcold開始や後続のWorker総時間は未確定である。現状はmax 1/min 0を維持し、3番目の重複世代から自動振り分けを有効にした。次は実利用ログを見ながら閾値を変更し、maxを増やす場合は別途費用と負荷を確認する。
+Cloud Run初回のWorker総時間は約20.7秒、後続2回のEngine合成部分は約11.5〜12.3秒。2026-09-01の追加2回は全体約23.6秒と18.9秒だった。厳密なcold開始や後続のWorker総時間は未確定である。現状はCloud Runをmax 3/min 0、Queue consumerとDOを3枠に揃え、3番目の重複世代から自動振り分けする。次は実利用ログで3並列時の待ち時間、失敗率、Cloud Run利用量を確認する。
 
 詳細: [計画](../../docs/voicevox-public-scaling-plan.md)、[Cloud Run実測](../../docs/voicevox-cloud-run-capacity.md)。
 

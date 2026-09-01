@@ -52,3 +52,7 @@ node scripts/measureVoicevoxCloudRun.mjs --run --production --requests 1
 overflow公開後の稼働revisionは`voicevox-engine-00003-jjj`。1 vCPU、2 GiB、concurrency 1、min 0、max 1、timeout 120秒を再確認した。設定更新中にmaxが20へ戻っていることを検出したため、公開確認中に1へ修正した。現在は最大1台であり、Cloud Run側の追加並列はまだ許可していない。
 
 公開`/api/voicevox/status?backend=cloud-run`は、第三者の状態確認だけで課金対象インスタンスを起動しないよう、現在は設定確認だけを行う。`liveCheck:false`は「認証情報とURLの設定は有効だが、Engineへlive requestは送っていない」という意味である。実稼働確認はgrantで保護された合成要求とCloud Runログを使う。
+
+## 2026-09-01: 最大3並列への変更
+
+Cloud Runはcontainer concurrency 1とmin 0を維持し、service/revisionのmax instancesをともに3へ変更した。revision `voicevox-engine-00004-hmr`がReadyで100% trafficを受けている。同時にCloud Run用Queue consumerの`max_concurrency`とCloud Run用Durable Objectの`CLOUD_RUN_CAPACITY`も3に揃えた。これにより、1インスタンス1合成のまま最大3件を並列実行できる。さくらVPC経路は従来どおり1枠である。変更後は5・10世代の制御した負荷試験で、実際のスケールアウト数、待ち時間、エラーと再試行、Cloud Run利用量を確認する。

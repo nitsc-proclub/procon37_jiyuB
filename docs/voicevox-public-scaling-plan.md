@@ -392,7 +392,7 @@ VOICEVOXコンテナはモデル読込が重い可能性があるため、`min i
 
 1. Cloud Runへの自動振り分けを無効にした状態でQueue→さくらを確認する。**完了。**
 2. 管理用または試験用の強制Cloud Run経路で認証・合成を確認する。**完了。cold/warmの断定はしていない。**
-3. 小さいmax instancesと保守的な閾値で自動振り分けを有効にする。**完了。max 1、3番目の重複世代から。**
+3. 小さいmax instancesと保守的な閾値で自動振り分けを有効にする。**完了。max 3、3番目の重複世代から。**
 4. 2・3・5世代の同時利用を試す。
 5. 待ち時間、失敗率、費用を見て閾値を調整する。
 
@@ -410,14 +410,14 @@ VOICEVOXコンテナはモデル読込が重い可能性があるため、`min i
 - ログへ歌詞、画像、WAV、grant、サービスアカウント情報を出さない。
 - 旧同期経路へfeature flagで戻せる。
 
-## 14. 次回の未確定事項
+## 14. 次回の検証事項
 
 次回は実装前に次を確定する。
 
 1. Cloud Runの実際のcold/warm時間、CPU、メモリ、現在のrevision設定
 2. R2へWAVを一時保存することの利用者説明と保持時間
 3. 初期Cloud Run起動条件を「異なる待機世代2件」にするか、予測時間を主条件にするか
-4. Cloud Run `max instances`を3から始めるか
+4. Cloud Run `max instances=3`の実スケールアウト数、待ち時間、利用量
 5. polling間隔、ジョブ全体期限、取消後の扱い
 6. D1とDurable Object storageの責務分担と保存期間
 7. SingingScoreを置く短命D1 job payloadの保持時間と削除方法
@@ -456,7 +456,7 @@ Queue messageは小さいjob参照だけにする。実際のSingingScore JSON�
 
 第一候補は次の構成とする。
 
-> A/Bを1つの生成グループとしてCloudflareへ登録し、Queueで急増と再試行を吸収する。さくらVOICEVOXは実行枠1の通常系とし、異なる生成世代の待機と予測完了時間が増えた場合だけ、concurrency 1・min 0・小さいmax instancesのCloud Runへ振り分ける。Durable Objectはbackend poolのlease調整、R2は完成WAVの短期受け渡しに限定する。
+> A/Bを1つの生成グループとしてCloudflareへ登録し、Queueで急増と再試行を吸収する。さくらVOICEVOXは実行枠1の通常系とし、異なる生成世代の待機と予測完了時間が増えた場合だけ、container concurrency 1・min 0・max 3のCloud Runへ振り分ける。Cloud Run用Queue consumerとDurable Object leaseは3枠に揃える。Durable Objectはbackend poolのlease調整、R2は完成WAVの短期受け渡しに限定する。
 
 この構成なら、通常利用と1人分のA/Bではさくらを優先しながら、複数利用者の重なりだけCloud Runで緩和できる。またQueue化によって、現在の45秒付近の同期待機タイムアウトと、ブラウザ切断による処理中断の影響を小さくできる。
 
@@ -473,10 +473,10 @@ Queue messageは小さいjob参照だけにする。実際のSingingScore JSON�
 
 - 本番・Preview D1へ`0007_voicevox_group_backend.sql`を適用し、generation単位の`preferred_backend`を追加した。既存jobはVPCへbackfillした。
 - 最初の2つの未完了generationはVPC、すでに異なる未完了generationが2件ある状態で登録された3番目からCloud Runへ送る。A/Bは同じbackendへ原子的に固定する。
-- VPC Queueは内部Worker、Cloud Run Queueは公開Workerが消費し、どちらもbatch 1・concurrency 1・最大3回再試行・共通DLQである。
+- VPC Queueは内部Workerがbatch 1・concurrency 1、Cloud Run Queueは公開Workerがbatch 1・concurrency 3で消費する。どちらも最大3回再試行・共通DLQである。
 - Cloud Run consumerは内部WorkerのService Binding RPCからCloud Run用DO leaseを取得する。Cloud Run URLとサービスアカウント秘密情報は公開Workerの外へ渡さない。
-- Cloud Runは`voicevox-engine-00003-jjj`、1 vCPU、2 GiB、min 0、max 1、concurrency 1。runtime identityをproject roleなしの専用サービスアカウントへ変更した。
+- Cloud Runは1 vCPU、2 GiB、min 0、max 3、container concurrency 1。runtime identityはproject roleなしの専用サービスアカウントである。
 - 公開status APIはCloud Runを起動しない設定確認に変更した。`liveCheck:false`は実Engine未照会を表す。
 - Miniflareで3世代の振り分けが`VPC × 4 job → Cloud Run × 2 job`となること、全88テスト、型検査、両Worker dry-runを確認した。本番では両Queueのconsumerとbindingを確認済み。
 
-次の段階は、実利用または制御した少数負荷試験で2・3・5世代の待ち時間、Cloud Run起動時間、失敗率、課金量を記録すること。現在は費用上限を守るためmax 1を維持し、観測なしに3～5へ増やさない。
+次の段階は、実利用または制御した負荷試験で5・10世代の待ち時間、Cloud Runの同時インスタンス数、失敗率、利用量を記録すること。max 3は上限であり、min 0を維持する。
