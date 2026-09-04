@@ -14,7 +14,7 @@
     "CREATION_ARCHIVES_ENABLED": "true",
     "TURNSTILE_EXPECTED_HOSTNAME": "cho-ekaki-uta.nitsc-proclub.workers.dev",
     "LYRICS_PIPELINE_MODE": "phase1",
-    "GEMINI_VISION_MODEL": "gemini-3.7-flash",
+    "GEMINI_VISION_MODEL": "gemini-3.8-flash",
     "LYRICS_BASE_MODEL": "gemini-3.5-flash",
     "LYRICS_CANDIDATE_COUNT": "2",
     "DRAWING_ANALYSIS_SCHEMA_VERSION": "1",
