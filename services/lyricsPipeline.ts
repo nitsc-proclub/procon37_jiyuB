@@ -1,4 +1,5 @@
 import type { DrawingAnalysis, DrawingAnalysisObjectCandidate, DrawingAnalysisPart, LyricsCandidate, LyricsResponse, StrokeGroup } from "../types";
+import type { LyricsCandidateCount } from "../config/generationConfig";
 
 type SchemaTypes<T extends string> = {
   OBJECT: T;
@@ -99,10 +100,11 @@ Stroke group information:
 ${buildStrokeGroupDescriptions(strokeGroups).join("\n")}
 `;
 
-export const buildLyricsCandidatesPrompt = (drawingAnalysis: DrawingAnalysis, promptVersion: string) => `
-あなたは日本語の「絵描き歌」を作る作詞家です。画像やraw strokeは渡されません。次の描画理解JSONだけを根拠に、子どもにも歌いやすい候補A/Bを1回で作ってください。
-このA/B比較の目的は「同じ描画理解に対して、どちらがより絵描き歌らしいか」を比べることです。objectCandidates[0].label が共通題材です。候補A/Bで題材を変えたり、別の動物・物として再解釈したり、題材の正しさを競わせたりしないでください。題材名はサーバーが共通で設定するため、identifiedObject は返さないでください。
-候補は candidate-a と candidate-b の2件です。各候補は必ず4行にし、表示用 lines と、VOICEVOX用のひらがな中心の singingKanaLines を同じ4行にしてください。表示用の各行は空白を除いて18文字以内、歌唱用の各行は22文字以内にしてください。
+export const buildLyricsCandidatesPrompt = (drawingAnalysis: DrawingAnalysis, promptVersion: string, candidateCount: LyricsCandidateCount = 2) => `
+あなたは日本語の「絵描き歌」を作る作詞家です。画像やraw strokeは渡されません。次の描画理解JSONだけを根拠に、子どもにも歌いやすい歌詞候補を1回で作ってください。
+候補数は ${candidateCount} 本です。${candidateCount === 1 ? "candidate-a を1件だけ返してください。candidate-b は返さないでください。" : "candidate-a と candidate-b の2件を返してください。"}
+objectCandidates[0].label が共通題材です。候補間で題材を変えたり、別の動物・物として再解釈したり、題材の正しさを競わせたりしないでください。題材名はサーバーが共通で設定するため、identifiedObject は返さないでください。
+各候補は必ず4行にし、表示用 lines と、VOICEVOX用のひらがな中心の singingKanaLines を同じ4行にしてください。表示用の各行は空白を除いて18文字以内、歌唱用の各行は22文字以内にしてください。
 singingKanaLines では漢字、英字、数字、句読点、絵文字、ASCII記号を避け、発音どおりの読みを使ってください。例: 「ねこは」→「ねこわ」、「まるを」→「まるお」。
 各行は、描く動作・形・位置をそのまま歌える短い言葉にしてください。「〜なので」「〜を表します」「〜してください」のような説明文、理由づけ、長い完成説明は避けてください。候補の違いは、リズム、言葉選び、描く順の見せ方にしてください。
 各候補で title、lineStrokeMappings を返してください。lineStrokeMappings は歌詞1行につき1件、drawingAnalysisに存在するgroup idだけを使い、描画順を尊重して同じgroup idを複数行に使わないでください。最後の完成宣言は空配列でも構いません。
@@ -185,7 +187,7 @@ export const createDrawingAnalysisResponseSchema = <T extends string>(types: Sch
   required: ["schemaVersion", "objectCandidates", "parts", "drawingOrder"],
 });
 
-export const createLyricsCandidatesResponseSchema = <T extends string>(types: SchemaTypes<T>) => ({
+export const createLyricsCandidatesResponseSchema = <T extends string>(types: SchemaTypes<T>, candidateCount: LyricsCandidateCount = 2) => ({
   type: types.OBJECT,
   properties: {
     candidates: {
@@ -195,6 +197,8 @@ export const createLyricsCandidatesResponseSchema = <T extends string>(types: Sc
         properties: { candidateId: { type: types.STRING }, ...candidateLyricFieldsSchema(types) },
         required: ["candidateId", "title", "lines", "singingKanaLines", "lineStrokeMappings"],
       },
+      minItems: candidateCount,
+      maxItems: candidateCount,
     },
   },
   required: ["candidates"],
@@ -263,7 +267,7 @@ export const normalizeDrawingAnalysis = (value: unknown, strokeGroups: StrokeGro
   return { schemaVersion: DRAWING_ANALYSIS_SCHEMA_VERSION, objectCandidates, parts, drawingOrder };
 };
 
-export const normalizeLyricsCandidates = (value: unknown, strokeGroups: StrokeGroup[], drawingAnalysis: DrawingAnalysis): LyricsCandidate[] => {
+export const normalizeLyricsCandidates = (value: unknown, strokeGroups: StrokeGroup[], drawingAnalysis: DrawingAnalysis, candidateCount?: LyricsCandidateCount): LyricsCandidate[] => {
   if (!isRecord(value) || !Array.isArray(value.candidates)) throw new Error("歌詞候補の形式が正しくありません。");
   // This is intentionally derived once, rather than accepted from either candidate.
   // A/B is about lyric quality, not a second object-recognition contest.
@@ -322,6 +326,8 @@ export const normalizeLyricsCandidates = (value: unknown, strokeGroups: StrokeGr
       return [];
     }
   });
-  if (candidates.length === 0) throw new Error("有効な歌詞候補がありません。");
+  if (candidates.length === 0 || (candidateCount !== undefined && candidates.length !== candidateCount)) {
+    throw new Error("有効な歌詞候補数が設定と一致しません。");
+  }
   return candidates;
 };

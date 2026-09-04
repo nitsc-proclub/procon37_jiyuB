@@ -59,7 +59,6 @@ const CreationArchiveManager: React.FC<Props> = ({ open, onClose, onToast }) => 
   return <div className="fixed inset-0 z-[97] flex items-center justify-center bg-slate-900/45 px-4" role="presentation">
     <section ref={dialogRef} className="max-h-[calc(100svh-2rem)] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="archive-manager-title">
       <h2 id="archive-manager-title" className="text-xl font-black text-gray-800">保存した作品</h2>
-      <p className="mt-2 text-xs font-semibold text-gray-600">このブラウザの削除用レシートです。1年の保管中、非公開で改善にだけ使います。</p>
       <div className="mt-4 space-y-3">
         {entries.length === 0 && <p className="rounded-2xl bg-gray-50 p-4 text-sm font-bold text-gray-600">このブラウザに保存した作品はありません。</p>}
         {entries.map((entry) => <article key={entry.archiveId} className="rounded-2xl border border-sky-100 p-3">

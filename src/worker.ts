@@ -47,6 +47,7 @@ import { createVoicevoxJobCapability, handleVoicevoxJobApi } from "./voicevoxJob
 import { consumeVoicevoxJob, voicevoxPoolRpcFromService, type VoicevoxJobQueueMessage, type VoicevoxPoolServiceRpc } from "./voicevoxJobConsumer";
 import { issueArchiveGenerationTicket } from "./creationArchiveTicket";
 import { handleCreationArchiveRequest, cleanupCreationArchives } from "./creationArchiveApi";
+import { resolveLyricsCandidateCount } from "../config/generationConfig";
 
 // Production binding types come from Wrangler; optional bindings preserve the
 // staging/local variants that intentionally omit remote voice services.
@@ -345,16 +346,17 @@ const generatePhase1Lyrics = async (drawingData: DrawingData, env: Env): Promise
     env,
   );
   const drawingAnalysis = normalizeDrawingAnalysis(JSON.parse(drawingAnalysisText), strokeGroups);
+  const candidateCount = resolveLyricsCandidateCount(env.LYRICS_CANDIDATE_COUNT);
   const candidatesText = await getGeneratedText(
     lyricsModel,
     {
       // The lyrics stage receives only the structured analysis: no image URI or raw stroke data.
-      contents: [{ parts: [{ text: buildLyricsCandidatesPrompt(drawingAnalysis, promptVersion) }] }],
-      generationConfig: { responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(schemaTypes) },
+      contents: [{ parts: [{ text: buildLyricsCandidatesPrompt(drawingAnalysis, promptVersion, candidateCount) }] }],
+      generationConfig: { responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(schemaTypes, candidateCount) },
     },
     env,
   );
-  const candidates = normalizeLyricsCandidates(JSON.parse(candidatesText), strokeGroups, drawingAnalysis).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
+  const candidates = normalizeLyricsCandidates(JSON.parse(candidatesText), strokeGroups, drawingAnalysis, candidateCount).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
   const selectedCandidate = candidates.find((candidate) => candidate.candidateId === "candidate-a") ?? candidates[0];
   if (!selectedCandidate) throw new Error("No valid lyrics candidate");
   return {
@@ -368,8 +370,7 @@ const generatePhase1Lyrics = async (drawingData: DrawingData, env: Env): Promise
 };
 
 const shouldUsePhase1 = (env: Env) => {
-  const candidateCount = env.LYRICS_CANDIDATE_COUNT?.trim();
-  return env.LYRICS_PIPELINE_MODE?.trim().toLowerCase() === "phase1" && (candidateCount === undefined || candidateCount === "2");
+  return env.LYRICS_PIPELINE_MODE?.trim().toLowerCase() === "phase1";
 };
 
 const generateEkakiUta = async (drawingData: DrawingData, env: Env): Promise<LyricsResponse | Phase1LyricsResponse> => {

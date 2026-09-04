@@ -149,6 +149,18 @@ test("lyrics-stage prompt contains only DrawingAnalysis and no image payload", (
   assert.match(prompt, /identifiedObject は返さない/);
 });
 
+test("single-candidate mode constrains the prompt, schema, and normalized response", () => {
+  const prompt = pipeline.buildLyricsCandidatesPrompt(drawingAnalysis, "3", 1);
+  assert.match(prompt, /候補数は 1 本/);
+  assert.match(prompt, /candidate-a を1件だけ/);
+  const schema = pipeline.createLyricsCandidatesResponseSchema({ OBJECT: "OBJECT", ARRAY: "ARRAY", STRING: "STRING", INTEGER: "INTEGER" }, 1);
+  assert.equal(schema.properties.candidates.minItems, 1);
+  assert.equal(schema.properties.candidates.maxItems, 1);
+  const candidates = pipeline.normalizeLyricsCandidates({ candidates: [validLyrics("candidate-a", "g1")] }, strokeGroups, drawingAnalysis, 1);
+  assert.equal(candidates.length, 1);
+  assert.throws(() => pipeline.normalizeLyricsCandidates({ candidates: [validLyrics("candidate-a", "g1"), validLyrics("candidate-b", "g2")] }, strokeGroups, drawingAnalysis, 1), /有効な歌詞候補数/);
+});
+
 test("drawing analysis prompt makes the first, confidence-ordered candidate the shared subject", () => {
   const prompt = pipeline.buildDrawingAnalysisPrompt(strokeGroups, "1");
   assert.match(prompt, /最も確からしい題材を先頭/);

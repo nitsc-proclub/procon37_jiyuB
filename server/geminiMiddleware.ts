@@ -15,6 +15,7 @@ import {
   parseInlineImage,
   resolveDrawingAnalysisSchemaVersion,
 } from "../services/lyricsPipeline";
+import { resolveLyricsCandidateCount } from "../config/generationConfig";
 
 const DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite";
 const DEFAULT_VISION_MODEL = "gemini-3.7-flash";
@@ -441,13 +442,14 @@ const generatePhase1EkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
   });
   const drawingAnalysis = normalizeDrawingAnalysis(JSON.parse(analysisResponse.text.trim()), strokeGroups);
 
+  const candidateCount = resolveLyricsCandidateCount(env.LYRICS_CANDIDATE_COUNT);
   const candidatesResponse = await ai.models.generateContent({
     model: lyricsModel,
     // The lyrics stage deliberately contains only the structured analysis.
-    contents: [{ parts: [{ text: buildLyricsCandidatesPrompt(drawingAnalysis, promptVersion) }] }],
-    config: { responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(Type) },
+    contents: [{ parts: [{ text: buildLyricsCandidatesPrompt(drawingAnalysis, promptVersion, candidateCount) }] }],
+    config: { responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(Type, candidateCount) },
   });
-  const candidates = normalizeLyricsCandidates(JSON.parse(candidatesResponse.text.trim()), strokeGroups, drawingAnalysis).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
+  const candidates = normalizeLyricsCandidates(JSON.parse(candidatesResponse.text.trim()), strokeGroups, drawingAnalysis, candidateCount).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
   const selectedCandidate = candidates.find((candidate) => candidate.candidateId === "candidate-a") ?? candidates[0];
   if (!selectedCandidate) throw new Error("No valid lyrics candidate");
   return {
@@ -461,8 +463,7 @@ const generatePhase1EkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
 };
 
 const shouldUsePhase1 = (env: GeminiEnv) => {
-  const candidateCount = env.LYRICS_CANDIDATE_COUNT?.trim();
-  return env.LYRICS_PIPELINE_MODE?.trim().toLowerCase() === "phase1" && (candidateCount === undefined || candidateCount === "2");
+  return env.LYRICS_PIPELINE_MODE?.trim().toLowerCase() === "phase1";
 };
 
 const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promise<LyricsResponse | Phase1LyricsResponse> => {

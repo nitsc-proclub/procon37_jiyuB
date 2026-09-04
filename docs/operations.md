@@ -31,10 +31,15 @@ VOICEVOX Engine は開発中、既定で `http://127.0.0.1:50021` で起動し�
 | `GEMINI_MODEL` | 生成に使う第一候補の Gemini モデル名。未指定時は動的候補と `gemini-2.5-flash-lite` を使う |
 | `GEMINI_MODEL_SUB` | 最後に試すフォールバック用モデル名 |
 | `GEMINI_MODEL_CANDIDATES` | カンマまたは空白区切りの明示的なモデル候補。指定時はこの順序を優先する |
+| `LYRICS_CANDIDATE_COUNT` | `1` は歌詞・歌声を1本だけ生成、`2` はA/B比較。ローカルViteと公開Workerで同じ値にする |
+| `VITE_LYRICS_CANDIDATE_COUNT` | ブラウザ側の表示ガード。`LYRICS_CANDIDATE_COUNT` と同じ値にする |
+| `VITE_HIDE_PARTICIPANT_AGE` | `true` で年齢の入力・表示を隠し、保存値も未選択にする |
 | `DEMO_RECORDS_DIR` | `demo-records` の保存先を変更したいときに使う |
 | `VOICEVOX_TIMING_PROFILE` | VOICEVOX サーバー性能ごとのタイミング推定グループ名。変更すると別の推定群として扱う |
 
 `GEMINI_MODEL_CANDIDATES` を省略した場合は、`GEMINI_MODEL` を第一候補にしたうえで Gemini API のモデル一覧を取得し、利用可能な Flash 系モデルを世代・preview・lite などの名前から優先順に並べて試します。`GEMINI_MODEL_SUB` は、その後に試す最後の保険として扱います。
+
+実証実験の設定は `.env.local` に `LYRICS_CANDIDATE_COUNT=1`、`VITE_LYRICS_CANDIDATE_COUNT=1`、`VITE_HIDE_PARTICIPANT_AGE=true` を記述します。公開版のWorker設定も同じく `LYRICS_CANDIDATE_COUNT=1` に揃えます。A/B比較へ戻す場合は、両方の候補数を `2` に戻してください。
 
 ## 4. 起動時の内部構成
 

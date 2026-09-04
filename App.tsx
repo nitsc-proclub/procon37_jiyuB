@@ -13,7 +13,7 @@ import VoicevoxServerSelector from "./components/VoicevoxServerSelector";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
 import { appBuildId } from "./config/buildInfo";
-import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, getUsageStats, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
+import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
 import { GenerateEkakiUtaError, generateEkakiUta } from "./services/geminiService";
 import { buildDebugBundleArtifacts, createDebugBundle, createDebugBundleFromArtifacts, createDebugRecordId, DebugBundleArtifacts, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
 import { DebugHistoryRecord, saveDebugHistoryRecord } from "./services/debugHistoryDb";
@@ -43,7 +43,7 @@ import {
 } from "./services/voicevoxRouting";
 import { synthesizeSingingVoice, VoicevoxProgressStage } from "./services/voicevoxService";
 import { registerVoicevoxJobGroup, waitForVoicevoxJobs, voicevoxJobAudioUrl, cancelVoicevoxJobGroup } from "./services/voicevoxJobService";
-import { DemoRecordSummary, DrawingAnalysis, DrawingData, DrawingSubjectFeedbackChoice, EvaluationCentralConsent, EvaluationDraft, EvaluationSelection, EvaluationStructuredRatings, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsCandidate, LyricsResponse, Phase1ModelInfo, SingingScore, UsageStats } from "./types";
+import { DemoRecordSummary, DrawingAnalysis, DrawingData, DrawingSubjectFeedbackChoice, EvaluationCentralConsent, EvaluationDraft, EvaluationSelection, EvaluationStructuredRatings, GenerationTimingDurations, GenerationTimingEstimate, GenerationTimingPhase, LyricsCandidate, LyricsResponse, Phase1ModelInfo, SingingScore } from "./types";
 
 const isBlobUrl = (value: string | null) => !!value && value.startsWith("blob:");
 
@@ -78,8 +78,6 @@ type GenerationRecordOptions = {
 };
 
 const PARTICIPANT_AGE_OPTIONS = Array.from({ length: 100 }, (_, index) => index);
-const RECORDING_OPTION_INTRODUCED_DATE = "2026-07-10";
-const COMPLETE_USAGE_STATS_START_DATE = "2026-07-18";
 
 const useMediaQueryAny = (queries: string[]) => {
   const getMatches = () => typeof window !== "undefined" && queries.some((query) => window.matchMedia(query).matches);
@@ -154,18 +152,6 @@ const getGenerationFailureDisplay = (error: unknown): GenerationFailureDisplay =
     message: "少し待ってから、絵にもどってもう一度ためしてみてね。",
     diagnosticCode: "AI-GENERATE",
   };
-};
-
-const getUsageStatsCoverage = (date: string) => {
-  if (date < RECORDING_OPTION_INTRODUCED_DATE) {
-    return { label: "記録なし未導入", className: "bg-gray-100 text-gray-600" };
-  }
-
-  if (date < COMPLETE_USAGE_STATS_START_DATE) {
-    return { label: "記録なし未集計", className: "bg-amber-100 text-amber-700" };
-  }
-
-  return { label: "両方を集計", className: "bg-emerald-100 text-emerald-700" };
 };
 
 const VOICEVOX_BASE_URL_STORAGE_KEY = "ekaki-uta:voicevox-base-url";
@@ -442,10 +428,8 @@ const App: React.FC = () => {
   const [demoBrowseMode, setDemoBrowseMode] = useState<DemoBrowseMode>("drawings");
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
   const [demoRecords, setDemoRecords] = useState<DemoRecordSummary[]>([]);
-  const [usageStats, setUsageStats] = useState<UsageStats | null>(null);
   const [isDemoRecordsLoading, setIsDemoRecordsLoading] = useState(false);
   const [demoRecordsError, setDemoRecordsError] = useState<string | null>(null);
-  const [usageStatsError, setUsageStatsError] = useState<string | null>(null);
   const [loadingDemoRecordId, setLoadingDemoRecordId] = useState<string | null>(null);
   const [updatingDemoRecordId, setUpdatingDemoRecordId] = useState<string | null>(null);
   const [deletingDemoRecordId, setDeletingDemoRecordId] = useState<string | null>(null);
@@ -658,20 +642,9 @@ const App: React.FC = () => {
   const loadDemoRecords = async () => {
     setIsDemoRecordsLoading(true);
     setDemoRecordsError(null);
-    setUsageStatsError(null);
 
     try {
-      const [recordsResult, statsResult] = await Promise.allSettled([listDemoRecords(), getUsageStats()]);
-      if (recordsResult.status === "fulfilled") {
-        setDemoRecords(recordsResult.value);
-      } else {
-        setDemoRecordsError(recordsResult.reason instanceof Error ? recordsResult.reason.message : "デモ記録を読み込めませんでした。");
-      }
-      if (statsResult.status === "fulfilled") {
-        setUsageStats(statsResult.value);
-      } else {
-        setUsageStatsError(statsResult.reason instanceof Error ? statsResult.reason.message : "体験集計を読み込めませんでした。");
-      }
+      setDemoRecords(await listDemoRecords());
     } catch (loadError) {
       setDemoRecordsError(loadError instanceof Error ? loadError.message : "デモ記録を読み込めませんでした。");
     } finally {
@@ -681,20 +654,9 @@ const App: React.FC = () => {
 
   const refreshDemoRecords = async () => {
     setDemoRecordsError(null);
-    setUsageStatsError(null);
 
     try {
-      const [recordsResult, statsResult] = await Promise.allSettled([listDemoRecords(), getUsageStats()]);
-      if (recordsResult.status === "fulfilled") {
-        setDemoRecords(recordsResult.value);
-      } else {
-        setDemoRecordsError(recordsResult.reason instanceof Error ? recordsResult.reason.message : "デモ記録を読み込めませんでした。");
-      }
-      if (statsResult.status === "fulfilled") {
-        setUsageStats(statsResult.value);
-      } else {
-        setUsageStatsError(statsResult.reason instanceof Error ? statsResult.reason.message : "体験集計を読み込めませんでした。");
-      }
+      setDemoRecords(await listDemoRecords());
     } catch (loadError) {
       setDemoRecordsError(loadError instanceof Error ? loadError.message : "デモ記録を読み込めませんでした。");
     }
@@ -1886,7 +1848,6 @@ const App: React.FC = () => {
     setIsInitialPlaybackPromptVisible(false);
     if (appFeatures.dataSaving) {
       void recordGeneration(recordOptions.shouldRecord)
-        .then(setUsageStats)
         .catch((statsError) => {
           if (import.meta.env.DEV) {
             console.warn("Failed to record usage stats", statsError);
@@ -1907,18 +1868,21 @@ const App: React.FC = () => {
       const generationResult = await generateEkakiUta(groupedDrawingData, turnstileTokenForRequest, requestedGenerationId ?? undefined);
       if (!isCurrentGeneration()) return;
       generatedLyrics = generationResult.lyrics;
-      generatedCandidates = generationResult.candidates;
+      generatedCandidates = appConfig.lyricsCandidateCount === 1
+        ? generationResult.candidates?.slice(0, 1) ?? null
+        : generationResult.candidates;
       voicevoxGrantsRef.current = generationResult.voiceGrants ?? {};
       archiveGenerationTicketRef.current = generationResult.archiveGenerationTicket ?? null;
       setEvaluationReceipt(generationResult.evaluationReceipt ?? null);
       setEvaluationReceiptExpiresAt(generationResult.evaluationReceiptExpiresAt ?? null);
-      setGeneratedLyricsCandidates(generationResult.candidates);
+      setGeneratedLyricsCandidates(generatedCandidates);
       setGeneratedDrawingAnalysis(generationResult.drawingAnalysis);
       setGeneratedPhase1ModelInfo(generationResult.modelInfo);
-      if (isComparableCandidateSet(generationResult.candidates) && generationResult.drawingAnalysis && generationResult.modelInfo) {
+      const candidateSet = generatedCandidates;
+      if (isComparableCandidateSet(candidateSet) && generationResult.drawingAnalysis && generationResult.modelInfo) {
         const generationId = generationResult.generationId ?? requestedGenerationId;
-        const displayOrder = shuffleCandidateIds(generationResult.candidates.map((candidate) => candidate.candidateId));
-        const initialPreviewCandidate = getInitialPreviewCandidate(generationResult.candidates, displayOrder);
+        const displayOrder = shuffleCandidateIds(candidateSet.map((candidate) => candidate.candidateId));
+        const initialPreviewCandidate = getInitialPreviewCandidate(candidateSet, displayOrder);
         if (!initialPreviewCandidate) {
           throw new Error("候補の表示順を初期化できませんでした。");
         }
@@ -1935,7 +1899,7 @@ const App: React.FC = () => {
           evaluationDraft = createEvaluationDraft({
             generationId,
             createdAt,
-            candidates: generationResult.candidates,
+            candidates: candidateSet,
             displayOrder,
             drawingAnalysis: generationResult.drawingAnalysis,
             modelInfo: generationResult.modelInfo,
@@ -2346,7 +2310,7 @@ const App: React.FC = () => {
   };
 
   const handleRecordAndGenerate = async () => {
-    await startPendingGeneration({ shouldRecord: true, participantAge });
+    await startPendingGeneration({ shouldRecord: true, participantAge: appConfig.hideParticipantAgeUi ? null : participantAge });
   };
 
   const handleGenerateWithoutRecord = async () => {
@@ -2902,13 +2866,7 @@ const App: React.FC = () => {
               </h2>
             </div>
 
-            <div className="space-y-3 text-sm font-semibold leading-relaxed text-gray-600">
-              <p>記録は、このアプリをより楽しく使いやすくするために使います。</p>
-              <p>記録されるのは、描いた絵、できあがった歌、音声、描いた順番、年齢（選んだ場合のみ）です。</p>
-              <p>名前や住所など、個人がわかることは入力しないでください。</p>
-            </div>
-
-            <div className="mt-5 rounded-2xl border-2 border-orange-100 bg-orange-50/70 p-4">
+            {!appConfig.hideParticipantAgeUi && <div className="mt-5 rounded-2xl border-2 border-orange-100 bg-orange-50/70 p-4">
               <label htmlFor="participant-age" className="mb-2 block text-sm font-black text-gray-700">
                 年齢を選んでください（任意）
               </label>
@@ -2933,11 +2891,7 @@ const App: React.FC = () => {
                   {recordConsentError}
                 </p>
               )}
-            </div>
-
-            <p className="mt-4 rounded-2xl bg-gray-50 px-4 py-3 text-sm font-bold text-gray-600">
-              記録しない場合も、利用回数や処理時間など、個人が分からない情報だけを保存します。絵・歌・音声・年齢は保存しません。
-            </p>
+            </div>}
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <button
@@ -3016,23 +2970,23 @@ const App: React.FC = () => {
           >
             デモ記録
           </button>}
-          {appFeatures.debugHistory && <button
+          {appFeatures.debugHistory && !appFeatures.demoRecords && <button
             type="button"
             onClick={() => setAppView("debugHistory")}
-            title="デバッグ履歴"
+            title="デモ記録"
             className={`rounded-full px-5 py-2 text-sm font-black transition-all ${appView === "debugHistory" ? "bg-violet-500 text-white shadow-sm" : "text-gray-600 hover:bg-violet-50"
               }`}
           >
-            デバッグ履歴
+            デモ記録
           </button>}
-          <button
+          {!isCompactPortraitLayout && <button
             type="button"
             onClick={() => setIsCreationArchiveManagerOpen(true)}
             title="クラウド保存した作品を確認・削除"
             className="rounded-full px-5 py-2 text-sm font-black text-gray-600 transition-all hover:bg-sky-50"
           >
             保存した作品
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -3040,23 +2994,16 @@ const App: React.FC = () => {
         <div className="compact-maker-intro" aria-label="超えかき歌の説明">
           <img src="/logo.png" alt="超えかき歌！" />
           <p>絵を描くと、AI が歌詞を作り、ずんだもん（VOICEVOX）が歌ってくれます！</p>
-          {appFeatures.debugHistory && (
+          {(appFeatures.demoRecords || appFeatures.debugHistory) && (
             <button
               type="button"
-              onClick={() => setAppView("debugHistory")}
+              onClick={() => setAppView(appFeatures.demoRecords ? "demoRecords" : "debugHistory")}
               className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-2 text-xs font-black text-violet-700 shadow-sm"
-              aria-label="保存した歌を開く"
+              aria-label="デモ記録を開く"
             >
-              🎵 保存した歌
+              🎵 デモ記録
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => setIsCreationArchiveManagerOpen(true)}
-            className="shrink-0 rounded-full border border-sky-200 bg-white px-3 py-2 text-xs font-black text-sky-700 shadow-sm"
-          >
-            保存した作品
-          </button>
         </div>
       )}
 
@@ -3071,9 +3018,9 @@ const App: React.FC = () => {
           <section className="rounded-3xl border-8 border-orange-100 bg-white p-5 shadow-xl md:p-7">
             <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>
-                <h2 className="text-2xl font-black text-gray-800">demo-records</h2>
+                <h2 className="text-2xl font-black text-gray-800">デモ記録</h2>
                 <p className="text-sm font-semibold text-gray-500">
-                  保存済みの絵描き歌を選ぶと、生成後の状態でメーカー画面に開きます。星でお気に入り、ゴミ箱で削除できます。
+                  これまでに生成した絵描き歌を選ぶと、もう一度見返せます。
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -3118,83 +3065,6 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            <section className="mb-5 rounded-2xl border-2 border-sky-100 bg-sky-50 p-4" aria-labelledby="usage-stats-heading">
-              <div className="mb-3 flex items-baseline justify-between gap-3">
-                <div>
-                  <h3 id="usage-stats-heading" className="text-lg font-black text-slate-800">体験集計</h3>
-                  <p className="text-xs font-semibold text-slate-500">生成を始めた回数を、記録の有無と日付ごとに集計しています。</p>
-                </div>
-                {isDemoRecordsLoading && <span className="text-xs font-bold text-sky-600">更新中...</span>}
-              </div>
-
-              {usageStatsError ? (
-                <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{usageStatsError}</p>
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <div className="rounded-xl bg-white p-3 shadow-sm">
-                      <p className="text-xs font-bold text-slate-500">総生成回数</p>
-                      <p className="text-2xl font-black text-slate-800">{usageStats?.totalGenerations ?? "-"}</p>
-                    </div>
-                    <div className="rounded-xl bg-white p-3 shadow-sm">
-                      <p className="text-xs font-bold text-slate-500">記録あり生成</p>
-                      <p className="text-2xl font-black text-emerald-600">{usageStats?.recordedGenerations ?? "-"}</p>
-                    </div>
-                    <div className="rounded-xl bg-white p-3 shadow-sm">
-                      <p className="text-xs font-bold text-slate-500">記録なし生成</p>
-                      <p className="text-2xl font-black text-sky-600">{usageStats?.unrecordedGenerations ?? "-"}</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold leading-relaxed text-amber-900" role="note">
-                    <p className="font-black">集計期間について</p>
-                    <ul className="mt-1 list-disc space-y-1 pl-5">
-                      <li>2026/7/9以前：「記録なし」の選択肢はありませんでした。</li>
-                      <li>2026/7/10〜7/17：「記録なし」を選んだ生成は集計されていません。</li>
-                      <li>2026/7/18以降：「記録あり」「記録なし」の両方を集計しています。</li>
-                    </ul>
-                    <p className="mt-2 font-bold">そのため、2026/7/10〜7/17の生成回数は、実際より少ない可能性があります。</p>
-                  </div>
-
-                  {usageStats && (usageStats.days.length > 0 ? (
-                    <div className="mt-4 overflow-x-auto">
-                      <table className="min-w-full text-left text-sm">
-                        <thead className="border-b border-sky-100 text-xs text-slate-500">
-                          <tr>
-                            <th className="px-2 py-2 font-bold">日付（日本時間）</th>
-                            <th className="px-2 py-2 text-right font-bold">生成回数</th>
-                            <th className="px-2 py-2 text-right font-bold">記録あり</th>
-                            <th className="px-2 py-2 text-right font-bold">記録なし</th>
-                            <th className="px-2 py-2 text-right font-bold">集計範囲</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-sky-100">
-                          {usageStats.days.map((day) => {
-                            const coverage = getUsageStatsCoverage(day.date);
-                            return (
-                              <tr key={day.date} className="bg-white/70 text-slate-700">
-                                <td className="px-2 py-2 font-bold">{day.date}</td>
-                                <td className="px-2 py-2 text-right font-black">{day.generationCount}</td>
-                                <td className="px-2 py-2 text-right">{day.recordedCount}</td>
-                                <td className="px-2 py-2 text-right">{day.unrecordedCount}</td>
-                                <td className="px-2 py-2 text-right">
-                                  <span className={`inline-block whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-black ${coverage.className}`}>
-                                    {coverage.label}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p className="mt-4 text-sm font-bold text-slate-500">まだ体験集計はありません。</p>
-                  ))}
-                </>
-              )}
-            </section>
-
             {demoRecordsError && (
               <div className="mb-5 rounded-2xl border-2 border-red-200 bg-red-50 p-4 text-center font-bold text-red-700">
                 {demoRecordsError}
@@ -3231,7 +3101,7 @@ const App: React.FC = () => {
                         <p className="truncate text-sm font-black text-gray-800">{record.title}</p>
                         <div className="mt-1 flex items-center justify-between gap-2">
                           <p className="min-w-0 truncate text-xs font-bold text-orange-500">{record.identifiedObject}</p>
-                          {record.participantAge !== null && (
+                          {!appConfig.hideParticipantAgeUi && record.participantAge !== null && (
                             <span className="shrink-0 text-[10px] font-bold text-gray-400">{record.participantAge}歳</span>
                           )}
                         </div>
@@ -3321,7 +3191,7 @@ const App: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <span className="min-w-0 truncate text-base font-black text-gray-800">{record.title}</span>
                         {record.isFavorite && <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-black text-orange-500">お気に入り</span>}
-                        {record.participantAge !== null && (
+                        {!appConfig.hideParticipantAgeUi && record.participantAge !== null && (
                           <span className="shrink-0 text-[10px] font-bold text-gray-400">{record.participantAge}歳</span>
                         )}
                       </div>
@@ -3598,10 +3468,6 @@ const App: React.FC = () => {
               }
               generationSecurityCheck={<>
                 {turnstileSecurityCheck}
-                {appFeatures.voicevox && <details className="w-full text-center text-xs leading-relaxed text-gray-500">
-                  <summary className="cursor-pointer">名前などは描かないでね · データの扱い</summary>
-                  <p className="mx-auto mt-1 max-w-sm">歌を届けるため、歌声は最大1日、歌詞のデータは約1時間、一時保存します。改善用に残すかは、あとで選べます。</p>
-                </details>}
               </>}
               initialDrawing={playbackDrawing}
               playbackDrawing={playbackDrawing}
@@ -3832,11 +3698,6 @@ const App: React.FC = () => {
           </section>
         </main>
       )}
-
-      <footer className="mt-auto text-gray-400 text-sm font-medium pb-8 text-center">
-        <p>&copy; 2026 超えかき歌！</p>
-        <p className="mt-1 text-[10px] font-bold text-gray-300" title={`build ${appBuildId}`}>{releaseLabel} build {shortBuildId}</p>
-      </footer>
 
       {saveToast && (
         <div

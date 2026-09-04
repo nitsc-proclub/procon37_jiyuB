@@ -1,9 +1,13 @@
+import { resolveLyricsCandidateCount, resolveParticipantAgeUiHidden } from "./generationConfig";
+
 const isDeploymentPreview = import.meta.env.VITE_APP_MODE === "deployment-preview";
 const isProductionBuild = import.meta.env.PROD;
 
 export const appConfig = {
   mode: isDeploymentPreview ? "deployment-preview" : "full",
   isDeploymentPreview,
+  lyricsCandidateCount: resolveLyricsCandidateCount(import.meta.env.VITE_LYRICS_CANDIDATE_COUNT),
+  hideParticipantAgeUi: resolveParticipantAgeUiHidden(import.meta.env.VITE_HIDE_PARTICIPANT_AGE),
 } as const;
 
 export const appFeatures = {
