@@ -836,7 +836,7 @@ const App: React.FC = () => {
     setIsEvaluationConsentOpen(false);
     setEvaluationGenerationId(null);
     setEvaluationReceipt(null);
-      setEvaluationReceiptExpiresAt(null);
+    setEvaluationReceiptExpiresAt(null);
     setIsEvaluationSubmissionPending(false);
     setFinalPreferenceSelection(null);
     setSubjectFeedbackChoice(null);
@@ -1401,11 +1401,11 @@ const App: React.FC = () => {
       const fullArchiveRequested = !!evaluationPayload && !!archiveSnapshotAtConsent && !!archiveTicketAtConsent;
       const archiveSave = fullArchiveRequested && evaluationPayload && archiveSnapshotAtConsent && archiveTicketAtConsent
         ? startCreationArchive({
-            evaluation: evaluationPayload,
-            generationTicket: archiveTicketAtConsent,
-            consentVersion: CREATION_ARCHIVE_CONSENT_VERSION,
-            snapshot: archiveSnapshotAtConsent,
-          })
+          evaluation: evaluationPayload,
+          generationTicket: archiveTicketAtConsent,
+          consentVersion: CREATION_ARCHIVE_CONSENT_VERSION,
+          snapshot: archiveSnapshotAtConsent,
+        })
         : Promise.resolve(null);
       // A full archive keeps evaluation and material under the same retention
       // lifecycle. Legacy metadata-only saves retain the existing parallel path.
@@ -1923,9 +1923,9 @@ const App: React.FC = () => {
         : null;
       const candidatesToPrepare: LyricsResponse[] = comparableCandidates
         ? [
-            generatedLyrics as LyricsCandidate,
-            ...comparableCandidates.filter((candidate) => candidate.candidateId !== initialCandidateId),
-          ]
+          generatedLyrics as LyricsCandidate,
+          ...comparableCandidates.filter((candidate) => candidate.candidateId !== initialCandidateId),
+        ]
         : generatedLyrics
           ? [generatedLyrics]
           : [];
@@ -1992,7 +1992,10 @@ const App: React.FC = () => {
       for (const [candidateIndex, candidate] of candidatesToPrepare.entries()) {
         if (!isCurrentGeneration()) return;
         if (queuedVoice) break;
-        const candidateId: LyricsCandidate["candidateId"] | "legacy" = "candidateId" in candidate
+        // A single-candidate response still carries candidate metadata. It is
+        // not an A/B set, so store its prepared playback under the legacy key
+        // used by the final lookup below.
+        const candidateId: LyricsCandidate["candidateId"] | "legacy" = comparableCandidates && "candidateId" in candidate
           ? (candidate as LyricsCandidate).candidateId
           : "legacy";
         const voiceGrant = candidateId === "legacy"
@@ -2166,6 +2169,25 @@ const App: React.FC = () => {
       setGenerationFailureDisplay(getGenerationFailureDisplay(generationError));
       // Gemini succeeded before a later VOICEVOX stage failed. Keep that useful
       // lyric result visible instead of discarding it with the audio error.
+      if (generatedLyrics && !generatedAudioBlob) {
+        try {
+          const fallbackScore = generatedScore ?? buildSingingScore(generatedLyrics, createSingingSeed(generatedLyrics, 0));
+          const fallbackAudio = createSilentPlaybackAudio(fallbackScore);
+          generatedScore = fallbackScore;
+          generatedAudioBlob = fallbackAudio;
+          generatedVoiceAudioBlob = null;
+          voicevoxIssue = "歌声を作れなかったため、絵のアニメーションで再生します。";
+          voicevoxStatus = appFeatures.voicevox || appFeatures.localVoicevox ? "failed" : "not-attempted";
+          setPlaybackScore(fallbackScore);
+          replaceAudioUrl(URL.createObjectURL(fallbackAudio));
+          setPlaybackKind("animation-only");
+          setVoicevoxWarning(voicevoxIssue);
+          setVoicevoxResolvedServer(null);
+        } catch {
+          // If the lyric itself cannot produce a score, retain the original
+          // generation error and let the existing error view explain it.
+        }
+      }
       setLyrics(generatedLyrics);
       if (!generatedLyrics) {
         setPlaybackScore(null);
@@ -2573,10 +2595,10 @@ const App: React.FC = () => {
 
     const focusableElements: HTMLElement[] = recordConsentDialogRef.current
       ? Array.from(
-          recordConsentDialogRef.current.querySelectorAll<HTMLElement>(
-            'button:not([disabled]), select:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-          ),
-        ) as HTMLElement[]
+        recordConsentDialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), select:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ) as HTMLElement[]
       : [];
     if (focusableElements.length === 0) return;
 
@@ -2771,20 +2793,20 @@ const App: React.FC = () => {
                   items: group.items.filter((item) => appFeatures.gemini || !item.requiresBackend),
                 }))
                 .map((group) => (
-                <section key={group.title} className="rounded-2xl border border-orange-100 bg-orange-50/40 p-3">
-                  <h3 className="mb-2 text-sm font-black text-orange-600">{group.title}</h3>
-                  <div className="space-y-2">
-                    {group.items.map((item) => (
-                      <div key={`${group.title}-${item.keys}`} className="flex gap-3 text-sm">
-                        <span className="min-w-40 shrink-0 rounded-full bg-white px-3 py-1 font-black text-gray-700 shadow-sm">
-                          {item.keys}
-                        </span>
-                        <span className="pt-1 font-semibold text-gray-600">{item.description}</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ))}
+                  <section key={group.title} className="rounded-2xl border border-orange-100 bg-orange-50/40 p-3">
+                    <h3 className="mb-2 text-sm font-black text-orange-600">{group.title}</h3>
+                    <div className="space-y-2">
+                      {group.items.map((item) => (
+                        <div key={`${group.title}-${item.keys}`} className="flex gap-3 text-sm">
+                          <span className="min-w-40 shrink-0 rounded-full bg-white px-3 py-1 font-black text-gray-700 shadow-sm">
+                            {item.keys}
+                          </span>
+                          <span className="pt-1 font-semibold text-gray-600">{item.description}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ))}
             </div>
           </section>
         </div>
@@ -2862,8 +2884,11 @@ const App: React.FC = () => {
             <div className="mb-5 border-b border-orange-100 pb-4">
               <p className="text-xs font-black tracking-[0.18em] text-orange-400">アプリの改善</p>
               <h2 id="record-consent-title" className="mt-1 text-2xl font-black leading-tight text-gray-800">
-                記録に協力してもよいですか？
+                絵を記録してもよいですか？（任意）
               </h2>
+              <p className="mt-2 text-sm font-bold leading-relaxed text-gray-600">
+                描いた絵と生成された絵描き歌を保存し、研究およびサービス改善のために使用してもよろしいですか？
+              </p>
             </div>
 
             {!appConfig.hideParticipantAgeUi && <div className="mt-5 rounded-2xl border-2 border-orange-100 bg-orange-50/70 p-4">
@@ -3491,199 +3516,200 @@ const App: React.FC = () => {
           <section className="result-stage flex min-w-0 flex-col gap-6">
             {lyrics || isGenerating || error ? (
               <>
-              <div className="magic-card bg-white p-5 sm:p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
-                {isGenerating ? (
-                  <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} timingEstimate={generationTimingEstimate} progressPhase={generationProgressPhase} runKey={generationTimingRunKey} isComplete={isGenerationProgressComplete} onCompletionDisplayComplete={handleGenerationProgressDisplayComplete} />
-                ) : lyrics && !audioUrl ? (
-                  <>
-                    {error && (
-                      <p className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800" role="alert">
-                        歌詞はできましたが、歌声の生成に失敗しました。{error}
-                      </p>
-                    )}
-                    {!isCompactMakerLayout && <button
-                      type="button"
-                      onClick={handleStartPrint}
-                      disabled={!canShowPrintLayout}
-                      className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border-2 border-orange-100 bg-white text-orange-500 shadow-sm transition-all hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
-                      title="印刷する"
-                      aria-label="印刷する"
-                    >
-                      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path d="M7 9V4h10v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        <path d="M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        <path d="M7 14h10v6H7z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </button>}
-                    <div className="mb-6 border-b-2 border-orange-50 pb-4 pt-14 text-center">
-                      <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">{lyrics.identifiedObject}</span>
-                      <h2 ref={completionHeadingRef} tabIndex={-1} className="text-3xl font-bold text-gray-800 focus:outline-none">{lyrics.title}</h2>
-                    </div>
-                    <KaraokeLyricsPanel
-                      lyrics={lyrics}
-                      audioRef={audioRef}
-                      singingScore={playbackScore}
-                      className="mt-2"
-                      showKanaLines
-                    />
-                    {renderAlternativeCandidateButton()}
-                    <div className="mt-6 rounded-2xl border-2 border-orange-100 bg-orange-50/60 p-4">
-                      <p className="mb-2 text-sm font-black text-gray-700">描く順番</p>
-                      <div className="space-y-2 text-sm font-semibold text-gray-600">
-                        {lyrics.lineStrokeMappings?.map((mapping) => <p key={mapping.lineIndex}>{mapping.lineIndex + 1}行目: {mapping.strokeGroupIds.length > 0 ? mapping.strokeGroupIds.join("、") : "対応する線なし"}</p>)}
-                      </div>
-                    </div>
-                    <p className="mt-6 text-center text-sm font-bold text-gray-500">歌声は、ローカルVOICEVOX連携の実装後に再生できます。</p>
-                    {renderDebugExportButton()}
-                    {renderModelInfo()}
-                  </>
-                ) : error ? (
-                  <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
-                    {renderDebugExportButton()}
-                    <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>
-                    <h2 className="text-2xl font-black text-red-700">{generationFailureDisplay?.label ?? "AI生成失敗"}</h2>
-                    <p className="mt-3 max-w-md font-bold leading-relaxed text-slate-600">
-                      {generationFailureDisplay?.message ?? "絵はそのまま残っています。絵にもどって、もう一度ためしてみてね。"}
-                    </p>
-                    <p className="mt-3 text-xs font-bold text-slate-400">
-                      診断コード: {generationFailureDisplay?.diagnosticCode ?? "AI-GENERATE"}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError(null);
-                        setGenerationFailureDisplay(null);
-                      }}
-                      className="mt-6 min-h-12 rounded-2xl bg-violet-600 px-6 py-3 font-black text-white shadow-lg"
-                    >
-                      絵にもどる
-                    </button>
-                  </div>
-                ) : lyrics ? (
-                  <>
-                    {renderDebugExportButton()}
-                    {!isCompactMakerLayout && <button
-                      type="button"
-                      onClick={handleStartPrint}
-                      disabled={!canShowPrintLayout}
-                      className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border-2 border-orange-100 bg-white text-orange-500 shadow-sm transition-all hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
-                      title="印刷する"
-                      aria-label="印刷する"
-                    >
-                      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path
-                          d="M7 9V4h10v5"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        <path
-                          d="M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        <path
-                          d="M7 14h10v6H7z"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </button>}
-
-                    <div className="mb-6 border-b-2 border-orange-50 pb-4 pt-14 text-center">
-                      <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">
-                        {lyrics.identifiedObject}
-                      </span>
-                      <h2 ref={completionHeadingRef} tabIndex={-1} className="text-3xl font-bold text-gray-800 focus:outline-none">{lyrics.title}</h2>
-                      {selectedDemoRecordId && (
-                        <p className="mt-2 text-xs font-bold text-gray-400">demo-records から読み込み済み</p>
+                <div className="magic-card bg-white p-5 sm:p-8 rounded-3xl shadow-xl border-8 border-orange-100 animate-fade-in relative min-h-[400px]">
+                  {isGenerating ? (
+                    <GenerationJourney stageLabel={progressLabel} drawingData={playbackDrawing} timingEstimate={generationTimingEstimate} progressPhase={generationProgressPhase} runKey={generationTimingRunKey} isComplete={isGenerationProgressComplete} onCompletionDisplayComplete={handleGenerationProgressDisplayComplete} />
+                  ) : lyrics && !audioUrl ? (
+                    <>
+                      {error && (
+                        <p className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800" role="alert">
+                          歌詞はできましたが、歌声の生成に失敗しました。{error}
+                        </p>
                       )}
-                    </div>
-
-                    {isCompactMakerLayout && (
-                      <p className="sr-only" role="status" aria-live="polite">
-                        歌ができたよ。絵と歌詞を確認して、再生できます。
-                      </p>
-                    )}
-
-                    <KaraokeLyricsPanel
-                      lyrics={lyrics}
-                      audioRef={audioRef}
-                      singingScore={playbackScore}
-                      className={isCompactMakerLayout ? "mobile-playback-lyrics" : "mt-2"}
-                      title={isCompactMakerLayout ? lyrics.title : undefined}
-                      showKanaLines={false}
-                      compact={isCompactMakerLayout}
-                    />
-
-                    <div className={`mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5 ${isCompactMakerLayout ? "mobile-playback-player" : ""}`}>
-                      <div className="mb-4 flex justify-end">
-                        <div className="flex rounded-full bg-white p-1 shadow-sm">
-                          <button
-                            type="button"
-                            onClick={() => setDrawingDisplayMode("animated")}
-                            className={`rounded-full px-4 py-2 text-sm font-black transition-all ${drawingDisplayMode === "animated" ? "bg-orange-400 text-white shadow-sm" : "text-gray-500"
-                              }`}
-                          >
-                            アニメーション
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDrawingDisplayMode("static")}
-                            className={`rounded-full px-4 py-2 text-sm font-black transition-all ${drawingDisplayMode === "static" ? "bg-orange-400 text-white shadow-sm" : "text-gray-500"
-                              }`}
-                          >
-                            完成絵
-                          </button>
-                        </div>
+                      {!isCompactMakerLayout && <button
+                        type="button"
+                        onClick={handleStartPrint}
+                        disabled={!canShowPrintLayout}
+                        className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border-2 border-orange-100 bg-white text-orange-500 shadow-sm transition-all hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                        title="印刷する"
+                        aria-label="印刷する"
+                      >
+                        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <path d="M7 9V4h10v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          <path d="M7 14h10v6H7z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </button>}
+                      <div className="mb-6 border-b-2 border-orange-50 pb-4 pt-14 text-center">
+                        <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">{lyrics.identifiedObject}</span>
+                        <h2 ref={completionHeadingRef} tabIndex={-1} className="text-3xl font-bold text-gray-800 focus:outline-none">{lyrics.title}</h2>
                       </div>
-                      <audio
-                        ref={audioRef}
-                        src={audioUrl ?? undefined}
-                        controls
-                        className="w-full"
-                        aria-label={playbackKind === "voice" ? "歌声の再生" : "絵描き歌アニメーションの再生"}
-                        onPlay={() => {
-                          setIsInitialPlaybackPromptVisible(false);
-                          setIsAudioPlaying(true);
-                          setHasPlaybackStartedForGeneration(true);
-                        }}
-                        onPause={() => setIsAudioPlaying(false)}
-                        onEnded={() => setIsAudioPlaying(false)}
-                        onEmptied={() => setIsAudioPlaying(false)}
+                      <KaraokeLyricsPanel
+                        lyrics={lyrics}
+                        audioRef={audioRef}
+                        singingScore={playbackScore}
+                        className="mt-2"
+                        showKanaLines={playbackKind === "voice"}
                       />
-                      <p className="mt-3 text-center text-sm font-bold text-gray-600">
-                        {playbackKind === "voice" ? "歌声に合わせて、絵を描く順番を見てみよう" : "音声なしで、絵を描く順番と歌詞を見てみよう"}
+                      {renderAlternativeCandidateButton()}
+                      {playbackKind === "voice" && (
+                        <div className="mt-6 rounded-2xl border-2 border-orange-100 bg-orange-50/60 p-4">
+                          <p className="mb-2 text-sm font-black text-gray-700">描く順番</p>
+                          <div className="space-y-2 text-sm font-semibold text-gray-600">
+                            {lyrics.lineStrokeMappings?.map((mapping) => <p key={mapping.lineIndex}>{mapping.lineIndex + 1}行目: {mapping.strokeGroupIds.length > 0 ? mapping.strokeGroupIds.join("、") : "対応する線なし"}</p>)}
+                          </div>
+                        </div>
+                      )}
+                      {renderDebugExportButton()}
+                      {renderModelInfo()}
+                    </>
+                  ) : error ? (
+                    <div className="flex min-h-[340px] flex-col items-center justify-center text-center" role="alert">
+                      {renderDebugExportButton()}
+                      <div className="mb-4 text-6xl" aria-hidden="true">🌙</div>
+                      <h2 className="text-2xl font-black text-red-700">{generationFailureDisplay?.label ?? "AI生成失敗"}</h2>
+                      <p className="mt-3 max-w-md font-bold leading-relaxed text-slate-600">
+                        {generationFailureDisplay?.message ?? "絵はそのまま残っています。絵にもどって、もう一度ためしてみてね。"}
                       </p>
+                      <p className="mt-3 text-xs font-bold text-slate-400">
+                        診断コード: {generationFailureDisplay?.diagnosticCode ?? "AI-GENERATE"}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setError(null);
+                          setGenerationFailureDisplay(null);
+                        }}
+                        className="mt-6 min-h-12 rounded-2xl bg-violet-600 px-6 py-3 font-black text-white shadow-lg"
+                      >
+                        絵にもどる
+                      </button>
                     </div>
+                  ) : lyrics ? (
+                    <>
+                      {renderDebugExportButton()}
+                      {!isCompactMakerLayout && <button
+                        type="button"
+                        onClick={handleStartPrint}
+                        disabled={!canShowPrintLayout}
+                        className="absolute right-4 top-4 z-10 flex h-11 w-11 items-center justify-center rounded-full border-2 border-orange-100 bg-white text-orange-500 shadow-sm transition-all hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                        title="印刷する"
+                        aria-label="印刷する"
+                      >
+                        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <path
+                            d="M7 9V4h10v5"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M7 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M7 14h10v6H7z"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>}
 
-                    {voicevoxWarning && (
-                      <p className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800" role="alert">
-                        {isCompactMakerLayout
-                          ? "現在、歌声生成機能は準備中です。"
-                          : `歌声は作れませんでしたが、絵描き歌のアニメーションは再生できます。${voicevoxWarning}`}
-                      </p>
-                    )}
+                      <div className="mb-6 border-b-2 border-orange-50 pb-4 pt-14 text-center">
+                        <span className="inline-block px-4 py-1 bg-orange-100 text-orange-600 rounded-full text-sm font-bold mb-2">
+                          {lyrics.identifiedObject}
+                        </span>
+                        <h2 ref={completionHeadingRef} tabIndex={-1} className="text-3xl font-bold text-gray-800 focus:outline-none">{lyrics.title}</h2>
+                        {selectedDemoRecordId && (
+                          <p className="mt-2 text-xs font-bold text-gray-400">demo-records から読み込み済み</p>
+                        )}
+                      </div>
 
-                    {renderAlternativeCandidateButton()}
-                    {renderEvaluationFollowUpControls()}
-                    {renderModelInfo()}
-                  </>
-                ) : null}
-              </div>
-              {lyrics && (
-                <button
-                  type="button"
-                  onClick={handleStartNewSong}
-                  className="new-song-action min-h-12 w-full rounded-2xl border-2 border-orange-200 bg-orange-50 px-4 py-3 text-base font-black text-orange-700 shadow-sm transition hover:border-orange-300 hover:bg-orange-100 active:scale-[.98]"
-                >
-                  新しい歌を作る
-                </button>
-              )}
+                      {isCompactMakerLayout && (
+                        <p className="sr-only" role="status" aria-live="polite">
+                          歌ができたよ。絵と歌詞を確認して、再生できます。
+                        </p>
+                      )}
+
+                      <KaraokeLyricsPanel
+                        lyrics={lyrics}
+                        audioRef={audioRef}
+                        singingScore={playbackScore}
+                        className={isCompactMakerLayout ? "mobile-playback-lyrics" : "mt-2"}
+                        title={isCompactMakerLayout ? lyrics.title : undefined}
+                        showKanaLines={false}
+                        compact={isCompactMakerLayout}
+                      />
+
+                      <div className={`mt-8 rounded-3xl border-2 border-yellow-100 bg-yellow-50/80 p-5 ${isCompactMakerLayout ? "mobile-playback-player" : ""}`}>
+                        <div className="mb-4 flex justify-end">
+                          <div className="flex rounded-full bg-white p-1 shadow-sm">
+                            <button
+                              type="button"
+                              onClick={() => setDrawingDisplayMode("animated")}
+                              className={`rounded-full px-4 py-2 text-sm font-black transition-all ${drawingDisplayMode === "animated" ? "bg-orange-400 text-white shadow-sm" : "text-gray-500"
+                                }`}
+                            >
+                              アニメーション
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDrawingDisplayMode("static")}
+                              className={`rounded-full px-4 py-2 text-sm font-black transition-all ${drawingDisplayMode === "static" ? "bg-orange-400 text-white shadow-sm" : "text-gray-500"
+                                }`}
+                            >
+                              完成絵
+                            </button>
+                          </div>
+                        </div>
+                        <audio
+                          ref={audioRef}
+                          src={audioUrl ?? undefined}
+                          controls
+                          className="w-full"
+                          aria-label={playbackKind === "voice" ? "歌声の再生" : "絵描き歌アニメーションの再生"}
+                          onPlay={() => {
+                            setIsInitialPlaybackPromptVisible(false);
+                            setIsAudioPlaying(true);
+                            setHasPlaybackStartedForGeneration(true);
+                          }}
+                          onPause={() => setIsAudioPlaying(false)}
+                          onEnded={() => setIsAudioPlaying(false)}
+                          onEmptied={() => setIsAudioPlaying(false)}
+                        />
+                        <p className="mt-3 text-center text-sm font-bold text-gray-600">
+                          {playbackKind === "voice" ? "歌声に合わせて、絵を描く順番を見てみよう" : "音声なしで、絵を描く順番と歌詞を見てみよう"}
+                        </p>
+                      </div>
+
+                      {voicevoxWarning && (
+                        <p className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800" role="alert">
+                          {isCompactMakerLayout
+                            ? "歌声は作れませんでしたが、絵描き歌のアニメーションは再生できます。"
+                            : `歌声は作れませんでしたが、絵描き歌のアニメーションは再生できます。${voicevoxWarning}`}
+                        </p>
+                      )}
+
+                      {renderAlternativeCandidateButton()}
+                      {renderEvaluationFollowUpControls()}
+                      {renderModelInfo()}
+                    </>
+                  ) : null}
+                </div>
+                {lyrics && (
+                  <button
+                    type="button"
+                    onClick={handleStartNewSong}
+                    className="new-song-action min-h-12 w-full rounded-2xl border-2 border-orange-200 bg-orange-50 px-4 py-3 text-base font-black text-orange-700 shadow-sm transition hover:border-orange-300 hover:bg-orange-100 active:scale-[.98]"
+                  >
+                    新しい歌を作る
+                  </button>
+                )}
               </>
             ) : (
               <div className="magic-card h-full flex flex-col items-center justify-center p-8 sm:p-12 bg-white/80 border-4 border-dashed border-violet-200 rounded-3xl text-slate-500 text-center">
