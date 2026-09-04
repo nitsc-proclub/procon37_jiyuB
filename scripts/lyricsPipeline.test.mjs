@@ -147,6 +147,8 @@ test("lyrics-stage prompt contains only DrawingAnalysis and no image payload", (
   assert.match(prompt, /題材を変えたり/);
   assert.match(prompt, /18文字以内/);
   assert.match(prompt, /identifiedObject は返さない/);
+  assert.match(prompt, /4行目は、なるべく最後のストロークや絵全体をまとめる言葉/);
+  assert.match(prompt, /毎回ではなく、ときどき/);
 });
 
 test("single-candidate mode constrains the prompt, schema, and normalized response", () => {
