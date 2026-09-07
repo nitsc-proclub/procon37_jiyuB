@@ -59,13 +59,29 @@ type RhythmTemplateMap = Map<number, number[]>;
 // Durations stay on the sixteenth-note grid until the VOICEVOX boundary.
 type RhythmNote = Omit<SingingNote, "frame_length"> & { sixteenths: number };
 
-export const rhythmNoteToSingingNote = (note: RhythmNote): SingingNote => {
-  const framesPerUnit = (SCORE_FRAMES_PER_SECOND * 60) / (SINGING_BPM * UNITS_PER_BEAT);
-  const frameLength = note.sixteenths * framesPerUnit;
-  if (!Number.isInteger(note.sixteenths) || note.sixteenths <= 0 || !Number.isSafeInteger(frameLength)) {
-    throw new Error("音符の長さを整数フレームに変換できませんでした。");
+export const resolveSingingBpm = (value: string | number | undefined): number => {
+  const bpm = value === undefined || (typeof value === "string" && value.trim() === "") ? SINGING_BPM : Number(value);
+  if (!Number.isFinite(bpm) || bpm < 60 || bpm > 180) {
+    throw new Error("歌声のBPMは60から180の数値で指定してください（VITE_SINGING_BPM）。");
   }
-  return { lyric: note.lyric, key: note.key, frame_length: frameLength };
+  return bpm;
+};
+
+export const rhythmNotesToSingingNotes = (notes: RhythmNote[], bpm = SINGING_BPM): SingingNote[] => {
+  const phraseFrames = Math.round((SCORE_FRAMES_PER_SECOND * 60 * PHRASE_BEATS) / resolveSingingBpm(bpm));
+  let elapsedUnits = 0;
+  let previousFrame = 0;
+  return notes.map((note) => {
+    if (!Number.isSafeInteger(note.sixteenths) || note.sixteenths <= 0 || elapsedUnits + note.sixteenths > PHRASE_UNITS) {
+      throw new Error("音符の長さを整数フレームに変換できませんでした。");
+    }
+    elapsedUnits += note.sixteenths;
+    // Round absolute positions within a fixed-length phrase, never individual durations.
+    const endFrame = Math.round((elapsedUnits * phraseFrames) / PHRASE_UNITS);
+    const frameLength = endFrame - previousFrame;
+    previousFrame = endFrame;
+    return { lyric: note.lyric, key: note.key, frame_length: frameLength };
+  });
 };
 
 export type MelodyAccentLevel = "low" | "mid" | "high" | "neutral";
@@ -457,6 +473,7 @@ export const buildSingingScore = (
   lyrics: LyricsResponse,
   seed: string,
   accentLineHints?: MelodyAccentLineHint[],
+  bpm = resolveSingingBpm(import.meta.env.VITE_SINGING_BPM),
 ): SingingScore => {
   const sourceLines = lyrics.singingKanaLines?.filter((line) => line.trim().length > 0) ?? [];
 
@@ -485,7 +502,7 @@ export const buildSingingScore = (
       rhythmTemplates,
       accentLineHints?.[index],
     );
-    notes.push(...phraseNotes.map(rhythmNoteToSingingNote));
+    notes.push(...rhythmNotesToSingingNotes(phraseNotes, bpm));
     previousKey = getLastPitchedKey(phraseNotes) ?? previousKey;
   });
 
