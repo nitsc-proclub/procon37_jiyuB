@@ -1,12 +1,15 @@
 import { LyricsResponse, SingingNote, SingingScore } from "../types";
+import { SCORE_FRAMES_PER_SECOND } from "./silentPlaybackService";
 
-const PHRASE_LENGTH = 330;
+export const SINGING_BPM = 93.75;
 const PHRASE_BEATS = 8;
-const BREATH_REST_LENGTH = Math.round(PHRASE_LENGTH / PHRASE_BEATS);
-const WORD_BREAK_REST_LENGTH = Math.round(BREATH_REST_LENGTH / 4);
+const UNITS_PER_BEAT = 4;
+const PHRASE_UNITS = PHRASE_BEATS * UNITS_PER_BEAT;
+const BREATH_REST_UNITS = UNITS_PER_BEAT;
+const WORD_BREAK_REST_UNITS = 1;
 const LEADING_REST_LENGTH = 2;
 const NOTE_POOL = [64, 65, 67];
-const MIN_NOTE_LENGTH = 8;
+const MIN_NOTE_UNITS = 1;
 const LONG_VOWEL_WEIGHT_BONUS = 0.4;
 const GROUP_END_WEIGHT_BONUS = 0.65;
 const FINAL_GROUP_END_WEIGHT_BONUS = 0.35;
@@ -52,6 +55,18 @@ type ParsedLine = {
 };
 
 type RhythmTemplateMap = Map<number, number[]>;
+
+// Durations stay on the sixteenth-note grid until the VOICEVOX boundary.
+type RhythmNote = Omit<SingingNote, "frame_length"> & { sixteenths: number };
+
+export const rhythmNoteToSingingNote = (note: RhythmNote): SingingNote => {
+  const framesPerUnit = (SCORE_FRAMES_PER_SECOND * 60) / (SINGING_BPM * UNITS_PER_BEAT);
+  const frameLength = note.sixteenths * framesPerUnit;
+  if (!Number.isInteger(note.sixteenths) || note.sixteenths <= 0 || !Number.isSafeInteger(frameLength)) {
+    throw new Error("音符の長さを整数フレームに変換できませんでした。");
+  }
+  return { lyric: note.lyric, key: note.key, frame_length: frameLength };
+};
 
 export type MelodyAccentLevel = "low" | "mid" | "high" | "neutral";
 
@@ -193,7 +208,7 @@ const allocateWeightedLengths = (totalLength: number, minimumLengths: number[], 
   const extraBudget = totalLength - minimumTotalLength;
   const rawExtras = weights.map((weight) => (extraBudget * weight) / totalWeight);
   const lengths = rawExtras.map((extraLength, index) => minimumLengths[index] + Math.floor(extraLength));
-  let remainingFrames = totalLength - lengths.reduce((sum, length) => sum + length, 0);
+  let remainingUnits = totalLength - lengths.reduce((sum, length) => sum + length, 0);
 
   rawExtras
     .map((extraLength, index) => ({
@@ -202,12 +217,12 @@ const allocateWeightedLengths = (totalLength: number, minimumLengths: number[], 
     }))
     .sort((left, right) => right.fraction - left.fraction || left.index - right.index)
     .forEach(({ index }) => {
-      if (remainingFrames <= 0) {
+      if (remainingUnits <= 0) {
         return;
       }
 
       lengths[index] += 1;
-      remainingFrames -= 1;
+      remainingUnits -= 1;
     });
 
   return lengths;
@@ -250,11 +265,11 @@ const allocateRhythmicPhraseLengths = (
   phraseNoteLength: number,
   beatTemplate: number[],
 ) => {
-  const groupMinimumLengths = groups.map((group) => group.moras.length * MIN_NOTE_LENGTH);
+  const groupMinimumLengths = groups.map((group) => group.moras.length * MIN_NOTE_UNITS);
   const groupLengths = allocateWeightedLengths(phraseNoteLength, groupMinimumLengths, beatTemplate);
 
   return groups.flatMap((group, groupIndex) => {
-    const minimumLengths = group.moras.map(() => MIN_NOTE_LENGTH);
+    const minimumLengths = group.moras.map(() => MIN_NOTE_UNITS);
     const weights = group.moras.map((mora, moraIndex) =>
       getMoraRhythmWeight(
         mora,
@@ -330,7 +345,7 @@ const pickSmoothestCadence = (cadences: number[][], previousKey: number | null, 
   return pickRandom(bestCadences, random);
 };
 
-const applyFinalCadence = (notes: SingingNote[], previousKey: number | null, random: () => number) => {
+const applyFinalCadence = (notes: RhythmNote[], previousKey: number | null, random: () => number) => {
   const pitchedIndexes = notes
     .map((note, index) => (note.key === null ? null : index))
     .filter((index): index is number => index !== null);
@@ -364,7 +379,7 @@ const applyFinalCadence = (notes: SingingNote[], previousKey: number | null, ran
   notes[pitchedIndexes[0]].key = 60;
 };
 
-const getLastPitchedKey = (notes: SingingNote[]) => {
+const getLastPitchedKey = (notes: RhythmNote[]) => {
   for (let index = notes.length - 1; index >= 0; index -= 1) {
     if (notes[index].key !== null) {
       return notes[index].key;
@@ -381,7 +396,7 @@ const buildPhraseForLine = (
   previousKey: number | null,
   rhythmTemplates: RhythmTemplateMap,
   accentLineHint: MelodyAccentLineHint | undefined,
-): SingingNote[] => {
+): RhythmNote[] => {
   const phraseUnits = parsedLine.units;
   const moras = phraseUnits.filter((unit): unit is MoraUnit => unit.type === "mora");
 
@@ -389,10 +404,10 @@ const buildPhraseForLine = (
     return [];
   }
 
-  const breathRestLength = isFinalLine ? 0 : BREATH_REST_LENGTH;
+  const breathRestLength = isFinalLine ? 0 : BREATH_REST_UNITS;
   const wordBreakRestCount = phraseUnits.filter((unit) => unit.type === "rest").length;
-  const wordBreakRestTotalLength = wordBreakRestCount * WORD_BREAK_REST_LENGTH;
-  const phraseNoteLength = PHRASE_LENGTH - breathRestLength - wordBreakRestTotalLength;
+  const wordBreakRestTotalLength = wordBreakRestCount * WORD_BREAK_REST_UNITS;
+  const phraseNoteLength = PHRASE_UNITS - breathRestLength - wordBreakRestTotalLength;
   const beatTemplate =
     rhythmTemplates.get(parsedLine.groups.length) ?? createFallbackBeatTemplate(parsedLine.groups.length);
   const noteLengths = allocateRhythmicPhraseLengths(parsedLine.groups, isFinalLine, phraseNoteLength, beatTemplate);
@@ -403,20 +418,20 @@ const buildPhraseForLine = (
       return {
         lyric: "",
         key: null,
-        frame_length: WORD_BREAK_REST_LENGTH,
+        sixteenths: WORD_BREAK_REST_UNITS,
       };
     }
 
     const accentLevel = accentLineHint?.levels[moraIndex];
     const key = chooseStepwisePitch(currentKey, random, accentLevel);
-    const frameLength = noteLengths[moraIndex];
+    const sixteenths = noteLengths[moraIndex];
     currentKey = key;
     moraIndex += 1;
 
     return {
       lyric: unit.lyric,
       key,
-      frame_length: frameLength,
+      sixteenths,
     };
   });
 
@@ -428,7 +443,7 @@ const buildPhraseForLine = (
     phraseNotes.push({
       lyric: "",
       key: null,
-      frame_length: breathRestLength,
+      sixteenths: breathRestLength,
     });
   }
 
@@ -470,7 +485,7 @@ export const buildSingingScore = (
       rhythmTemplates,
       accentLineHints?.[index],
     );
-    notes.push(...phraseNotes);
+    notes.push(...phraseNotes.map(rhythmNoteToSingingNote));
     previousKey = getLastPitchedKey(phraseNotes) ?? previousKey;
   });
 

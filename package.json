@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:melody": "node --test scripts/melodyService.test.mjs",
     "dev": "vite",
     "build": "vite build",
     "build:deployment-preview": "vite build --mode deployment-preview",
