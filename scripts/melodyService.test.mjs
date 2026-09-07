@@ -11,9 +11,9 @@ const { buildLineTimings } = await vite.ssrLoadModule("/utils/playbackTiming.ts"
 const lyrics = (lines) => ({ title: "test", identifiedObject: "test", lines, singingKanaLines: lines });
 
 test("note values convert exactly at 93.75 BPM without rounding", () => {
-  assert.equal(SINGING_BPM, 93.75);
+  assert.equal(SINGING_BPM, 125);
   for (const [sixteenths, frames] of [[1, 15], [2, 30], [3, 45], [4, 60], [8, 120], [16, 240]]) {
-    assert.equal(rhythmNotesToSingingNotes([{ lyric: "あ", key: 64, sixteenths }])[0].frame_length, frames);
+    assert.equal(rhythmNotesToSingingNotes([{ lyric: "あ", key: 64, sixteenths }], 93.75)[0].frame_length, frames);
   }
   for (const sixteenths of [0, -1, 0.5, NaN, Infinity]) {
     assert.throws(() => rhythmNotesToSingingNotes([{ lyric: "あ", key: 64, sixteenths }]));
@@ -69,7 +69,7 @@ test("over-capacity lyrics fail instead of shortening notes off the grid", () =>
 });
 
 test("tempo configuration accepts decimal BPM and rejects invalid values", () => {
-  for (const value of [undefined, "", " "]) assert.equal(resolveSingingBpm(value), 93.75);
+  for (const value of [undefined, "", " "]) assert.equal(resolveSingingBpm(value), 125);
   assert.equal(resolveSingingBpm("112.5"), 112.5);
   for (const value of ["abc", "Infinity", 0, 59, 181, NaN]) assert.throws(() => resolveSingingBpm(value), /BPM/);
 });

@@ -1,7 +1,7 @@
 import { LyricsResponse, SingingNote, SingingScore } from "../types";
 import { SCORE_FRAMES_PER_SECOND } from "./silentPlaybackService";
 
-export const SINGING_BPM = 93.75;
+export const SINGING_BPM = 125;
 const PHRASE_BEATS = 8;
 const UNITS_PER_BEAT = 4;
 const PHRASE_UNITS = PHRASE_BEATS * UNITS_PER_BEAT;
