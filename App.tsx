@@ -1918,7 +1918,11 @@ const App: React.FC = () => {
       const comparableCandidates = isComparableCandidateSet(generatedCandidates)
         ? generatedCandidates
         : null;
-      const initialCandidateId = comparableCandidates
+      // Phase 1 always returns candidate-scoped voice grants, including when
+      // production is configured to show only one candidate.  Do not collapse
+      // that one candidate back to the legacy shape here: doing so loses its
+      // `candidate-a` grant before the synthesis request is made.
+      const initialCandidateId: LyricsCandidate["candidateId"] | null = generatedLyrics && "candidateId" in generatedLyrics
         ? (generatedLyrics as LyricsCandidate).candidateId
         : null;
       const candidatesToPrepare: LyricsResponse[] = comparableCandidates
@@ -1992,10 +1996,10 @@ const App: React.FC = () => {
       for (const [candidateIndex, candidate] of candidatesToPrepare.entries()) {
         if (!isCurrentGeneration()) return;
         if (queuedVoice) break;
-        // A single-candidate response still carries candidate metadata. It is
-        // not an A/B set, so store its prepared playback under the legacy key
-        // used by the final lookup below.
-        const candidateId: LyricsCandidate["candidateId"] | "legacy" = comparableCandidates && "candidateId" in candidate
+        // A single-candidate Phase 1 response still carries `candidate-a` and
+        // its scoped voice grant. Preserve both even though it is not an A/B
+        // set; only truly legacy responses use the legacy cache key.
+        const candidateId: LyricsCandidate["candidateId"] | "legacy" = "candidateId" in candidate
           ? (candidate as LyricsCandidate).candidateId
           : "legacy";
         const voiceGrant = candidateId === "legacy"
