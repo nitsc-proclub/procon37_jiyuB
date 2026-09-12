@@ -356,7 +356,7 @@ const toClientError = (error: unknown) => {
   return error.message;
 };
 
-const generateLegacyEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promise<LyricsResponse> => {
+const generateLegacyEkakiUta = async (drawingData: DrawingData, env: GeminiEnv, signal?: AbortSignal): Promise<LyricsResponse> => {
   const apiKey = env.GEMINI_API_KEY;
 
   if (!apiKey) {
@@ -370,6 +370,7 @@ const generateLegacyEkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
   const prompt = buildLegacyLyricsPrompt(strokeGroups);
 
   const generateWithModel = async (targetModelName: string) => {
+    signal?.throwIfAborted();
     const response = await ai.models.generateContent({
       model: targetModelName,
       contents: [
@@ -383,6 +384,7 @@ const generateLegacyEkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
         },
       ],
       config: {
+        abortSignal: signal,
         responseMimeType: "application/json",
         responseSchema: createLegacyLyricsResponseSchema(Type),
       },
@@ -402,6 +404,7 @@ const generateLegacyEkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
     try {
       return await generateWithModel(modelName);
     } catch (error) {
+      signal?.throwIfAborted();
       attempts.push({ role: index === 0 ? "メイン" : "サブ", modelName, error });
 
       if (index >= modelCandidates.length - 1 || !shouldTryNextModel(error)) {
@@ -415,7 +418,7 @@ const generateLegacyEkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
   throw new ModelAttemptsError(attempts);
 };
 
-const generatePhase1EkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promise<Phase1LyricsResponse> => {
+const generatePhase1EkakiUta = async (drawingData: DrawingData, env: GeminiEnv, signal?: AbortSignal): Promise<Phase1LyricsResponse> => {
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("Gemini API key is unavailable");
   const ai = new GoogleGenAI({ apiKey });
@@ -438,7 +441,7 @@ const generatePhase1EkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
         ],
       },
     ],
-    config: { responseMimeType: "application/json", responseSchema: createDrawingAnalysisResponseSchema(Type) },
+    config: { abortSignal: signal, responseMimeType: "application/json", responseSchema: createDrawingAnalysisResponseSchema(Type) },
   });
   const drawingAnalysis = normalizeDrawingAnalysis(JSON.parse(analysisResponse.text.trim()), strokeGroups);
 
@@ -447,7 +450,7 @@ const generatePhase1EkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
     model: lyricsModel,
     // The lyrics stage deliberately contains only the structured analysis.
     contents: [{ parts: [{ text: buildLyricsCandidatesPrompt(drawingAnalysis, promptVersion, candidateCount) }] }],
-    config: { responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(Type, candidateCount) },
+    config: { abortSignal: signal, responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(Type, candidateCount) },
   });
   const candidates = normalizeLyricsCandidates(JSON.parse(candidatesResponse.text.trim()), strokeGroups, drawingAnalysis, candidateCount).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
   const selectedCandidate = candidates.find((candidate) => candidate.candidateId === "candidate-a") ?? candidates[0];
@@ -466,12 +469,13 @@ const shouldUsePhase1 = (env: GeminiEnv) => {
   return env.LYRICS_PIPELINE_MODE?.trim().toLowerCase() === "phase1";
 };
 
-export const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promise<LyricsResponse | Phase1LyricsResponse> => {
-  if (!shouldUsePhase1(env)) return generateLegacyEkakiUta(drawingData, env);
+export const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv, signal?: AbortSignal): Promise<LyricsResponse | Phase1LyricsResponse> => {
+  if (!shouldUsePhase1(env)) return generateLegacyEkakiUta(drawingData, env, signal);
   try {
-    return await generatePhase1EkakiUta(drawingData, env);
+    return await generatePhase1EkakiUta(drawingData, env, signal);
   } catch {
-    return generateLegacyEkakiUta(drawingData, env);
+    signal?.throwIfAborted();
+    return generateLegacyEkakiUta(drawingData, env, signal);
   }
 };
 

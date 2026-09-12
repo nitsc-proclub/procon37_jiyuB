@@ -1,6 +1,6 @@
 import type { LyricsResponse, SingingNote } from '../types';
 import { buildSingingScore } from '../services/melodyService';
-import { BPM, CHORDS, FPS, LEAD_FRAMES, LINE_FRAMES, MUSIC_VERSION, SONG_SECONDS, type Arrangement, type RoleId } from './shared';
+import { BPM, CHORDS, FPS, LEAD_FRAMES, LINE_FRAMES, MUSIC_VERSION, LOW_OCTAVE_VERSION, SONG_SECONDS, type Arrangement, type RoleId } from './shared';
 
 export function melodyKey(line: number, cell: number, seed: number): number {
   let start = 0;
@@ -38,7 +38,7 @@ export function arrange(lyrics: LyricsResponse, role: RoleId, seed: number): Arr
       let boundary = 0;
       const chord = CHORDS[line].find(c => { boundary += c.units; return unit < boundary; })!;
       const key = role === 'rhythm' ? (cell % 2 ? 60 : 55) : role === 'melody' || role === 'octave'
-        ? melodyKey(line, cell, seed) + (role === 'octave' ? 12 : 0)
+        ? melodyKey(line, cell, seed) + (role === 'octave' ? -12 : 0)
         : chord.keys[role === 'root' ? 0 : role === 'third' ? 1 : 2] + 12;
       part.forEach((lyric, i) => {
         const a = Math.round((unit + Math.floor(i * unitsPerCell / part.length)) * LINE_FRAMES / 32);
@@ -50,6 +50,6 @@ export function arrange(lyrics: LyricsResponse, role: RoleId, seed: number): Arr
   }
   if (notes.some(n => n.frame_length <= 0)) throw new Error('音符の長さを作れませんでした。');
   if (notes.some(n => n.lyric && (!Number.isInteger(n.key) || n.key! < 0 || n.key! > 127))) throw new Error('歌声の音程を作れませんでした。');
-  return { version: MUSIC_VERSION, role, melodySeed: seed, score: { notes }, duration: SONG_SECONDS };
+  return { version: role === 'octave' ? LOW_OCTAVE_VERSION : MUSIC_VERSION, role, melodySeed: seed, score: { notes }, duration: SONG_SECONDS };
 }
 export const frameSeconds = (frames: number) => frames / FPS;

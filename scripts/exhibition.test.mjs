@@ -14,7 +14,7 @@ const lyrics = { title: 'まるいねこ', identifiedObject: 'ねこ', lines: ['
 const drawing = { imageUri: 'data:image/png;base64,aA==', strokes: [{ points: [{x: 0,y: 0,timestamp: 0},{x: 30,y: 30,timestamp: 1}],startTime: 0,endTime: 1 }] };
 test('first three simultaneous reservations cover rhythm, root and melody; all six have separate slots', () => {
   const tasks = [];
-  for (let i=0;i<6;i++) { const role = shared.chooseRole([], tasks, tasks.at(-1)?.role, undefined, () => 0); tasks.push({role,status:'queued'}); }
+  for (let i=0;i<6;i++) { const role = shared.chooseRole([], tasks, tasks.at(-1)?.role, undefined, () => 0, 6); tasks.push({role,status:'queued'}); }
   assert.deepEqual(new Set(tasks.slice(0,3).map(t=>t.role)),new Set(['rhythm','root','melody']));
   assert.equal(new Set(tasks.map(t=>t.role)).size,6);
 });
@@ -52,7 +52,7 @@ test('melody stays finite for unsigned seeds, including the high bit', () => {
 test('octave melody shares generated contour; saved seed reproduces the score', () => {
   const m=arrange(lyrics,'melody',124),o=arrange(lyrics,'octave',124);
   assert.deepEqual(m,arrange(lyrics,'melody',124));
-  m.score.notes.slice(1).forEach((n,i)=>assert.equal(o.score.notes[i+1].key,n.key+12));
+  m.score.notes.slice(1).forEach((n,i)=>assert.equal(o.score.notes[i+1].key,n.key-12));
   assert.equal(melodyKey(3,3,124),60);
 });
 test('persistent queue, re-arrangement, playback snapshot and restart preserve originals', async () => {
@@ -88,4 +88,50 @@ test('legacy import accepts Japanese record folders once and preserves its sourc
     assert.equal((await readFile(join(record,'metadata.json'),'utf8')),metadata);
     assert.equal(store.enqueue({id:randomUUID(),deviceId:'admin',workId:work.id,instrument:'piano'}).workId,work.id);
   } finally { if(!directory.startsWith(join(tmpdir(),'exhibition-test-')))throw new Error('unsafe cleanup');await rm(directory,{recursive:true,force:true}); }
+});
+
+test('default four reserves only rhythm, root, fifth and melody; each capacity has a useful palette', () => {
+  for (let limit = 1; limit <= 6; limit++) {
+    const tasks=[];
+    for(let i=0;i<limit;i++) tasks.push({role:shared.chooseRole([],tasks,undefined,undefined,()=>0,limit),status:'queued'});
+    assert.deepEqual(new Set(tasks.map(t=>t.role)),new Set(shared.rolesForLimit(limit)));
+  }
+  assert.deepEqual(new Set(shared.rolesForLimit(4)),new Set(['rhythm','root','fifth','melody']));
+  assert.equal(shared.chooseRole([], [{role:'rhythm',status:'cancelled'}],undefined,undefined,()=>0),'rhythm');
+  assert.equal(shared.chooseRole([], [], undefined,'drums',()=>0,1),'rhythm');
+});
+
+test('capacity persists, shrinking favors the standard parts and never changes an active performance', async () => {
+  const directory=await mkdtemp(join(tmpdir(),'exhibition-test-'));
+  try {
+    const store=await ExhibitionStore.open(directory);assert.equal(store.state.participantLimit,4);
+    store.setLimit(6);
+    const wav=new Uint8Array(44);wav.set(Buffer.from('RIFF'),0);wav.set(Buffer.from('WAVE'),8);
+    for(const role of shared.ROLE_IDS){const t=store.enqueue({id:randomUUID(),deviceId:role,drawing,role});await store.complete(t,lyrics,wav,'test');store.join(t.workId,t.id);}
+    const performance=store.start(); store.setLimit(4);
+    assert.equal(performance.members.length,6);assert.equal(store.state.members.length,4);
+    assert.deepEqual(new Set(store.state.members.map(m=>m.role)),new Set(shared.rolesForLimit(4)));
+    assert.throws(()=>store.setLimit(0));assert.throws(()=>store.setLimit(7));assert.throws(()=>store.setLimit(2.5));
+    await store.save();const restored=await ExhibitionStore.open(directory);assert.equal(restored.state.participantLimit,4);assert.equal(restored.state.works.length,6);
+    const old=JSON.parse(await readFile(join(directory,'state.json'),'utf8'));delete old.participantLimit;old.members=performance.members;
+    const migrated=new ExhibitionStore(directory,old);assert.equal(migrated.state.participantLimit,4);assert.equal(migrated.state.members.length,4);
+    const low=store.state.works.find(w=>w.versions[0].role==='octave');assert.ok(shared.playableVersion(low.versions[0]));
+    low.versions[0].arrangement.version=shared.MUSIC_VERSION;assert.throws(()=>store.join(low.id,low.selectedVersion));
+  } finally { assert.ok(directory.startsWith(join(tmpdir(),'exhibition-test-')));await rm(directory,{recursive:true,force:true}); }
+});
+
+test('cancel frees the device immediately and a late voice write cannot publish or survive restart', async () => {
+  const directory=await mkdtemp(join(tmpdir(),'exhibition-test-'));
+  try {
+    const store=await ExhibitionStore.open(directory);
+    const t=store.enqueue({id:randomUUID(),deviceId:'one',drawing});
+    assert.throws(()=>store.cancel(t.id,'another-device'));
+    const wav=new Uint8Array(44);wav.set(Buffer.from('RIFF'),0);wav.set(Buffer.from('WAVE'),8);
+    const late=store.complete(t,lyrics,wav,'test');store.cancel(t.id,'one');
+    const next=store.enqueue({id:randomUUID(),deviceId:'one',drawing});await late;
+    assert.equal(store.state.works.length,0);assert.equal(t.status,'cancelled');
+    await assert.rejects(readFile(join(directory,'audio',t.id+'.wav')));
+    await store.save();const restored=await ExhibitionStore.open(directory);
+    assert.equal(restored.state.tasks.find(x=>x.id===t.id).status,'cancelled');assert.equal(restored.state.tasks.find(x=>x.id===next.id).status,'queued');
+  } finally { assert.ok(directory.startsWith(join(tmpdir(),'exhibition-test-')));await rm(directory,{recursive:true,force:true}); }
 });

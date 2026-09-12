@@ -4,7 +4,6 @@ const filename = '.env.exhibition.local';
 let content = await readFile(filename, 'utf8').catch(() => '');
 const get = key => content.match(new RegExp(`^${key}=(.+)$`, 'm'))?.[1]?.trim();
 if (!get('EXHIBITION_TOKEN')) content += `\nEXHIBITION_TOKEN=${randomBytes(32).toString('hex')}\n`;
-if (!get('EXHIBITION_ADMIN_PIN')) content += `EXHIBITION_ADMIN_PIN=${randomBytes(3).toString('hex')}\n`;
 if (!get('EXHIBITION_VOICE_URL')) content += 'EXHIBITION_VOICE_URL=https://cho-ekaki-uta-exhibition-voice.nitsc-proclub.workers.dev\n';
 await writeFile(filename, content);
 await mkdir('.wrangler', { recursive: true });

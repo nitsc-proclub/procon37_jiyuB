@@ -8,7 +8,7 @@ https://creativecommons.org/licenses/by/3.0/
 
 This app extracts selected notes without changing their encoded sample data.
 Drum sounds are synthesized by this application's Web Audio code.
-The samples are used only by the separately built local exhibition app.
+These retained samples are no longer loaded or distributed by the exhibition build.
 
 UI font: M PLUS Rounded 1c, Copyright 2016 The Rounded M+ Project Authors.
 Licensed under SIL Open Font License 1.1; bundled as FONT-LICENSE.txt in the built samples directory.

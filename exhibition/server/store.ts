@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash, randomBytes } from 'node:crypto';
-import { ROLE_IDS, chooseRole, joinMember, MUSIC_VERSION, type State, type Instrument, type Task, type Version, type Work } from '../shared';
+import { chooseRole, joinMember, playableVersion, pendingTask, rolesForLimit, DEFAULT_PARTICIPANT_LIMIT, type RoleId, type State, type Instrument, type Task, type Version, type Work } from '../shared';
 import { arrange } from '../music';
 import type { DrawingData, LyricsResponse } from '../../types';
 
@@ -10,7 +10,9 @@ export class ExhibitionStore {
   private writes: Promise<void> = Promise.resolve();
   onChange: () => void = () => {};
   constructor(readonly directory: string, initial?: State) {
-    this.state = initial ?? { schemaVersion: 1, revision: 0, melodySeed: randomBytes(4).readUInt32LE(), works: [], members: [], tasks: [], performance: null, lastRoles: {}, volume: .75, backend: 'auto' };
+    this.state = initial ?? { schemaVersion: 1, revision: 0, melodySeed: randomBytes(4).readUInt32LE(), works: [], members: [], tasks: [], performance: null, lastRoles: {}, volume: .75, backend: 'auto', participantLimit: DEFAULT_PARTICIPANT_LIMIT };
+    this.setLimit(this.state.participantLimit ?? DEFAULT_PARTICIPANT_LIMIT);
+    this.state.members = this.state.members.filter(m => this.state.works.find(w => w.id === m.workId)?.versions.some(v => v.id === m.versionId && playableVersion(v)));
   }
   static async open(directory: string) {
     await fs.mkdir(path.join(directory, 'audio'), { recursive: true });
@@ -20,7 +22,7 @@ export class ExhibitionStore {
     if (state && state.schemaVersion !== 1) throw new Error('未対応の保存形式です。');
     const store = new ExhibitionStore(directory, state);
     if (store.state.performance) store.state.performance.status = 'stopped';
-    for (const t of store.state.tasks) if (!['complete', 'failed'].includes(t.status)) { t.status = 'queued'; t.message = '再開を待っています'; }
+    for (const t of store.state.tasks) if (pendingTask(t)) { t.status = 'queued'; t.message = '順番待ち'; }
     await store.save(); return store;
   }
   async save() {
@@ -34,24 +36,38 @@ export class ExhibitionStore {
     this.writes = write.catch(() => {});
     await write; this.onChange();
   }
-  enqueue(input: { id: string; deviceId: string; drawing?: DrawingData; workId?: string; instrument?: Instrument }): Task {
+  setLimit(limit: number) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 6) throw new Error('人数は1〜6人から選んでください');
+    this.state.participantLimit = limit;
+    const preferred = rolesForLimit(limit);
+    this.state.members = [...this.state.members].sort((a, b) => Number(preferred.includes(b.role)) - Number(preferred.includes(a.role)) || b.joinedAt - a.joinedAt).slice(0, limit);
+  }
+  cancel(taskId: string, deviceId: string) {
+    const t = this.state.tasks.find(t => t.id === taskId && t.deviceId === deviceId);
+    if (!t) throw new Error('作成中の歌が見つかりません');
+    if (pendingTask(t)) { t.status = 'cancelled'; t.message = '中止しました'; delete t.drawing; delete t.lyrics; }
+    return t;
+  }
+  enqueue(input: { id: string; deviceId: string; drawing?: DrawingData; workId?: string; instrument?: Instrument; role?: RoleId }): Task {
     const existing = this.state.tasks.find(t => t.id === input.id);
     if (existing) { if (existing.deviceId !== input.deviceId) throw new Error('操作IDが重複しています'); return existing; }
-    const pending = this.state.tasks.filter(t => !['complete', 'failed'].includes(t.status));
+    const pending = this.state.tasks.filter(pendingTask);
     if (pending.length >= 12) throw new Error('順番待ちがいっぱいです。少し待ってください。');
     if (pending.some(t => t.deviceId === input.deviceId)) throw new Error('この端末の歌を作っています。完成を待ってください。');
     const work = input.workId ? this.state.works.find(w => w.id === input.workId) : undefined;
     if (input.workId && !work) throw new Error('作品が見つかりません');
     if (!work && !input.drawing) throw new Error('絵を描いてください');
-    const role = chooseRole(this.state.members, pending, this.state.lastRoles[input.deviceId], input.instrument);
+    const role = input.role ?? chooseRole(this.state.members, pending, this.state.lastRoles[input.deviceId], input.instrument, Math.random, this.state.participantLimit);
     const t: Task = { id: input.id, deviceId: input.deviceId, workId: work?.id ?? randomUUID(), role, status: 'queued', message: '歌を作る順番を待っています', drawing: work?.drawing ?? input.drawing, lyrics: work?.lyrics, createdAt: Date.now(), backend: this.state.backend };
     this.state.tasks.push(t); this.state.lastRoles[input.deviceId] = role;
     return t;
   }
   async complete(t: Task, lyrics: LyricsResponse, bytes: Uint8Array, backend: string) {
+    if (!pendingTask(t)) return;
     if (bytes.length < 44 || Buffer.from(bytes.slice(0, 4)).toString() !== 'RIFF' || Buffer.from(bytes.slice(8, 12)).toString() !== 'WAVE') throw new Error('歌声の形式が正しくありません');
     const file = path.join(this.directory, 'audio', `${t.id}.wav`);
     await fs.writeFile(`${file}.tmp`, bytes); await fs.rename(`${file}.tmp`, file);
+    if (!pendingTask(t)) { await fs.unlink(file); return; }
     const version: Version = { id: t.id, role: t.role, createdAt: new Date().toISOString(), arrangement: arrange(lyrics, t.role, this.state.melodySeed), backend, audioUrl: `/api/exhibition/audio/${t.id}.wav` };
     let work = this.state.works.find(w => w.id === t.workId);
     if (!work) { work = { id: t.workId, title: lyrics.title, createdAt: new Date().toISOString(), drawing: t.drawing!, lyrics, selectedVersion: version.id, versions: [] }; this.state.works.push(work); }
@@ -62,8 +78,8 @@ export class ExhibitionStore {
   join(workId: string, versionId: string) {
     const work = this.state.works.find(w => w.id === workId);
     const v = work?.versions.find(v => v.id === versionId);
-    if (!v || v.arrangement.version !== MUSIC_VERSION) throw new Error('合奏用の歌声を作ってから参加してください');
-    this.state.members = joinMember(this.state.members, { workId, versionId, role: v.role, joinedAt: Date.now() });
+    if (!v || !playableVersion(v)) throw new Error('合奏用の歌声を作ってから参加してください');
+    this.state.members = joinMember(this.state.members, { workId, versionId, role: v.role, joinedAt: Date.now() }, this.state.participantLimit);
   }
   start() {
     if (this.state.performance && ['preparing', 'playing'].includes(this.state.performance.status)) return this.state.performance;
@@ -72,7 +88,7 @@ export class ExhibitionStore {
     return this.state.performance;
   }
   async remove(workId: string) {
-    if (this.state.tasks.some(t => t.workId === workId && !['complete', 'failed'].includes(t.status))) throw new Error('生成中の作品です。完成後に削除してください');
+    if (this.state.tasks.some(t => t.workId === workId && pendingTask(t))) throw new Error('作成を中止してから削除してください');
     if (this.state.performance && ['preparing', 'playing'].includes(this.state.performance.status) && this.state.performance.members.some(m => m.workId === workId)) throw new Error('演奏を停止してから削除してください');
     const work = this.state.works.find(w => w.id === workId);
     this.state.members = this.state.members.filter(m => m.workId !== workId);

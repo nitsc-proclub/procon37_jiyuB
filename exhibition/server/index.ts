@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { networkInterfaces } from 'node:os';
 import { loadEnv } from 'vite';
 import { generateEkakiUta } from '../../server/geminiMiddleware';
@@ -10,7 +10,7 @@ import { ExhibitionStore } from './store';
 import { arrange } from '../music';
 import { prepareLyrics } from './lyrics';
 import type { DrawingData, LyricsResponse } from '../../types';
-import type { Instrument, PublicState, Task } from '../shared';
+import { ROLE_IDS, pendingTask, type RoleId, type Instrument, type PublicState, type Task } from '../shared';
 
 const root = process.cwd(), env = { ...loadEnv('development', root, ''), ...loadEnv('exhibition', root, ''), ...process.env };
 const dataDir = path.resolve(env.EXHIBITION_DATA_DIR || 'exhibition-data');
@@ -21,15 +21,14 @@ catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
 await fs.writeFile(lockPath, String(process.pid), { flag: 'wx' });
 const store = await ExhibitionStore.open(dataDir);
 const streams = new Set<ServerResponse>();
-const pin = env.EXHIBITION_ADMIN_PIN || randomBytes(3).toString('hex');
 let display: { id: string; until: number; ready: boolean } | null = null;
 const cloud = Boolean(env.EXHIBITION_VOICE_URL && env.EXHIBITION_TOKEN);
 const port = Number(env.EXHIBITION_PORT || 3001);
 const broadcast = () => { for (const res of streams) res.write(`data: ${JSON.stringify({ revision: store.state.revision })}\n\n`); };
 store.onChange = broadcast;
-function snapshot(deviceId: string | null): PublicState {
+function snapshot(deviceId: string | null, workId: string | null): PublicState {
   const latest = store.state.tasks.filter(t => t.deviceId === deviceId).at(-1);
-  const detailed = new Set([...store.state.members.map(m => m.workId), ...(store.state.performance?.members.map(m => m.workId) ?? []), latest?.workId]);
+  const detailed = new Set([...store.state.members.map(m => m.workId), ...(store.state.performance?.members.map(m => m.workId) ?? []), latest?.workId, workId]);
   return {
     ...store.state,
     works: store.state.works.map(w => ({ ...w, drawing: { ...w.drawing, strokes: detailed.has(w.id) ? w.drawing.strokes : [], strokeGroups: detailed.has(w.id) ? w.drawing.strokeGroups : [], imageUri: `/api/exhibition/image/${encodeURIComponent(w.id)}` } })),
@@ -54,15 +53,19 @@ function drawing(value: unknown): DrawingData {
 }
 const id = (v: unknown) => { if (typeof v !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(v)) throw new Error('識別子が正しくありません'); return v; };
 let active = 0, localBusy = false;
-const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
-async function synthesize(t: Task, lyrics: LyricsResponse) {
+const controllers = new Map<string, AbortController>();
+async function synthesize(t: Task, lyrics: LyricsResponse, signal: AbortSignal) {
+  const wait = (ms: number) => delay(ms, undefined, { signal });
+  signal.throwIfAborted();
   const score = arrange(lyrics, t.role, store.state.melodySeed).score;
   if (t.backend === 'local') {
     while (localBusy) await wait(500);
+    signal.throwIfAborted();
     localBusy = true;
     try {
       const base = 'http://127.0.0.1:50021';
       const q = await fetch(`${base}/sing_frame_audio_query?speaker=6000`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(score), signal: AbortSignal.timeout(60000) });
+      signal.throwIfAborted();
       if (!q.ok) throw new Error('ローカルVOICEVOXに接続できません');
       const a = await fetch(`${base}/frame_synthesis?speaker=3003`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(await q.json()), signal: AbortSignal.timeout(120000) });
       if (!a.ok) throw new Error('ローカルVOICEVOXで歌声を作れませんでした');
@@ -73,8 +76,8 @@ async function synthesize(t: Task, lyrics: LyricsResponse) {
   const started = Date.now(); let failures = 0;
   while (Date.now() - started < 8 * 60000) {
     let response: Response;
-    try { response = await fetch(`${env.EXHIBITION_VOICE_URL!.replace(/\/$/, '')}/synthesize`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.EXHIBITION_TOKEN}` }, body: JSON.stringify({ score, backend: t.backend }), signal: AbortSignal.timeout(210000) }); }
-    catch { if (++failures >= 3) throw new Error('歌声サーバーとの通信を確認してください'); await wait(2000); continue; }
+    try { response = await fetch(`${env.EXHIBITION_VOICE_URL!.replace(/\/$/, '')}/synthesize`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.EXHIBITION_TOKEN}` }, body: JSON.stringify({ score, backend: t.backend }), signal: AbortSignal.any([signal, AbortSignal.timeout(210000)]) }); }
+    catch { signal.throwIfAborted(); if (++failures >= 3) throw new Error('歌声サーバーとの通信を確認してください'); await wait(2000); continue; }
     if (response.ok) return { audio: new Uint8Array(await response.arrayBuffer()), backend: response.headers.get('X-Voicevox-Backend') ?? 'cloud' };
     await response.body?.cancel();
     if (response.status === 429) { t.message = '歌声サーバーが空くのを待っています'; await store.save(); await wait(1500); continue; }
@@ -85,20 +88,26 @@ async function synthesize(t: Task, lyrics: LyricsResponse) {
   throw new Error('歌声の待ち時間を超えました。もう一度試してください');
 }
 async function run(t: Task) {
+  const controller = new AbortController(); controllers.set(t.id, controller);
+  const signal = controller.signal;
   try {
     let lyrics = t.lyrics;
     if (!lyrics) {
-      t.status = 'lyrics'; t.message = '絵を見て、ことばを考えています'; await store.save();
-      const result = await generateEkakiUta(t.drawing!, { ...env, LYRICS_CANDIDATE_COUNT: '1' });
+      t.status = 'lyrics'; t.message = '歌詞を考え中'; await store.save();
+      signal.throwIfAborted();
+      const result = await generateEkakiUta(t.drawing!, { ...env, LYRICS_CANDIDATE_COUNT: '1' }, signal);
+      signal.throwIfAborted();
       lyrics = 'candidates' in result ? result.candidates[0] : result;
       t.lyrics = lyrics;
     }
-    lyrics = await prepareLyrics(lyrics, env); t.lyrics = lyrics;
-    t.status = 'voice'; t.message = '楽器に合わせて歌声を作っています'; await store.save();
-    const { audio, backend } = await synthesize(t, lyrics);
+    signal.throwIfAborted();
+    lyrics = await prepareLyrics(lyrics, env, signal); signal.throwIfAborted(); t.lyrics = lyrics;
+    t.status = 'voice'; t.message = '歌声を作成中'; await store.save();
+    const { audio, backend } = await synthesize(t, lyrics, signal);
+    signal.throwIfAborted();
     await store.complete(t, lyrics, audio, backend);
-  } catch (e) { t.status = 'failed'; t.message = e instanceof Error ? e.message : '歌を作れませんでした'; await store.save(); }
-  finally { active--; pump(); }
+  } catch (e) { if (pendingTask(t)) { t.status = 'failed'; t.message = e instanceof Error ? e.message : '歌を作れませんでした'; await store.save(); } }
+  finally { controllers.delete(t.id); active--; pump(); }
 }
 function pump() {
   for (const t of store.state.tasks.filter(t => t.status === 'queued')) {
@@ -112,7 +121,7 @@ const server = createServer(async (req, res) => {
     if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) { send(res, 403, { error: '別のページからの操作は受け付けません' }); return; }
     const route = url.pathname;
     if (route.startsWith('/api/exhibition/')) {
-      if (route === '/api/exhibition/state' && req.method === 'GET') { send(res, 200, snapshot(url.searchParams.get('deviceId'))); return; }
+      if (route === '/api/exhibition/state' && req.method === 'GET') { send(res, 200, snapshot(url.searchParams.get('deviceId'), url.searchParams.get('workId'))); return; }
       if (route === '/api/exhibition/events' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' }); res.write('data: {}\n\n'); streams.add(res); req.on('close', () => streams.delete(res)); return;
       }
@@ -127,19 +136,24 @@ const server = createServer(async (req, res) => {
       }
       if (req.method !== 'POST') { send(res, 404, { error: 'not-found' }); return; }
       const body = await readJson(req);
-      if (['/api/exhibition/settings', '/api/exhibition/delete', '/api/exhibition/import', '/api/exhibition/admin', '/api/exhibition/select-version'].includes(route) && req.headers['x-exhibition-pin'] !== pin) { send(res, 403, { error: '管理用の暗証番号を確認してください' }); return; }
-      if (route === '/api/exhibition/admin') { send(res, 200, { ok: true }); return; }
       if (route === '/api/exhibition/generate') {
         if (typeof body.id !== 'string' || !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(body.id)) throw new Error('操作IDが正しくありません');
         const instrument = body.instrument as Instrument | undefined;
-        if (instrument && !['drums', 'piano', 'strings'].includes(instrument)) throw new Error('楽器が正しくありません');
-        const t = store.enqueue({ id: id(body.id), deviceId: id(body.deviceId), workId: body.workId ? id(body.workId) : undefined, drawing: body.drawing ? drawing(body.drawing) : undefined, instrument });
+        if (instrument && !['drums', 'piano', 'strings'].includes(instrument)) throw new Error('パートが正しくありません');
+        const role = body.role as RoleId | undefined;
+        if (role && !ROLE_IDS.includes(role)) throw new Error('パートが正しくありません');
+        const t = store.enqueue({ id: id(body.id), deviceId: id(body.deviceId), workId: body.workId ? id(body.workId) : undefined, drawing: body.drawing ? drawing(body.drawing) : undefined, instrument, role });
         await store.save(); send(res, 202, { taskId: t.id }); pump(); return;
+      }
+      if (route === '/api/exhibition/cancel') {
+        if (!store.state.tasks.some(t => t.id === body.taskId)) { send(res, 200, { ok: true }); return; }
+        const t = store.cancel(id(body.taskId), id(body.deviceId)); controllers.get(t.id)?.abort();
+        await store.save(); send(res, 200, { ok: true }); pump(); return;
       }
       if (route === '/api/exhibition/retry') {
         const t = store.state.tasks.find(t => t.id === body.taskId && t.deviceId === body.deviceId && t.status === 'failed');
         if (!t) throw new Error('再試行できる歌がありません');
-        if (store.state.tasks.some(x => x.deviceId === t.deviceId && !['complete', 'failed'].includes(x.status))) throw new Error('この端末の歌を作っています');
+        if (store.state.tasks.some(x => x.deviceId === t.deviceId && pendingTask(x))) throw new Error('この端末の歌を作っています');
         t.status = 'queued'; t.backend = store.state.backend; t.message = 'もう一度作ります'; await store.save(); send(res, 202, { taskId: t.id }); pump(); return;
       }
       if (route === '/api/exhibition/join') store.join(id(body.workId), id(body.versionId));
@@ -152,6 +166,7 @@ const server = createServer(async (req, res) => {
       else if (route === '/api/exhibition/delete') { await store.remove(id(body.workId)); send(res, 200, { ok: true }); return; }
       else if (route === '/api/exhibition/import') { send(res, 200, { count: await store.importLegacy(path.resolve(env.DEMO_RECORDS_DIR || 'demo-records')) }); return; }
       else if (route === '/api/exhibition/settings') {
+        if (body.participantLimit !== undefined) store.setLimit(body.participantLimit as number);
         if (body.volume !== undefined) { if (typeof body.volume !== 'number' || body.volume < 0 || body.volume > 1) throw new Error('音量を確認してください'); store.state.volume = body.volume; }
         if (body.backend !== undefined) { if (!['auto', 'vpc', 'cloud-run', 'local'].includes(String(body.backend))) throw new Error('接続先を確認してください'); store.state.backend = body.backend as Task['backend']; }
       } else if (route === '/api/exhibition/display') {
@@ -186,7 +201,7 @@ setInterval(() => {
   if (display && display.until <= Date.now()) { display = null; if (store.state.performance && ['preparing', 'playing'].includes(store.state.performance.status)) { store.state.performance.status = 'stopped'; void store.save(); } else broadcast(); }
 }, 3000).unref();
 server.listen(port, '0.0.0.0', () => {
-  console.log(`展示デモ http://localhost:${port}\n大画面 /stage  操作 /control  管理 /admin\n管理用暗証番号: ${pin}\n保存先: ${dataDir}`);
+  console.log(`展示デモ http://localhost:${port}\n大画面 /stage  操作 /control  保存作品 /admin\n保存先: ${dataDir}`);
   for (const items of Object.values(networkInterfaces())) for (const a of items ?? []) if (a.family === 'IPv4' && !a.internal) console.log(`端末から: http://${a.address}:${port}`);
   pump();
 });

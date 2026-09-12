@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import type { DrawingData } from '../../types';
 import { LEAD_FRAMES, LINE_FRAMES, FPS, SONG_SECONDS } from '../shared';
 
-export default function Drawing({ drawing, mappings, seconds, complete = false }: { drawing: DrawingData; mappings?: { lineIndex: number; strokeGroupIds: string[] }[]; seconds: number; complete?: boolean }) {
+export default function Drawing({ drawing, mappings, seconds = 0, clock, complete = false }: { drawing: DrawingData; mappings?: { lineIndex: number; strokeGroupIds: string[] }[]; seconds?: number; clock?: () => number; complete?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const geometry = useMemo(() => {
     const lineByStroke = new Map<number, number>();
@@ -42,6 +42,7 @@ export default function Drawing({ drawing, mappings, seconds, complete = false }
     const ctx = canvas.getContext('2d'); if (!ctx) return;
     const { size, scale, x, y } = surfaces;
     if (canvas.width !== size) canvas.width = canvas.height = size;
+    const draw = (seconds: number) => {
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, size, size);
     const finished = complete || seconds >= SONG_SECONDS;
     ctx.drawImage(finished ? surfaces.finished : surfaces.ghost, 0, 0);
@@ -68,7 +69,11 @@ export default function Drawing({ drawing, mappings, seconds, complete = false }
       trace(p, Math.min(p.total, distance), '#f88b2e', width * 1.35);
       trace(p, Math.min(p.total, distance - (progress >= 1 ? 0 : width * 5)), '#26324d', width);
     });
-  }, [drawing, geometry, surfaces, seconds, complete]);
+    };
+    let frame = 0;
+    const tick = () => { draw(clock ? clock() : seconds); if (clock && !complete) frame = requestAnimationFrame(tick); };
+    tick(); return () => cancelAnimationFrame(frame);
+  }, [drawing, geometry, surfaces, seconds, clock, complete]);
   if (!drawing.strokes?.length) return <img src={drawing.imageUri} alt="作品のイラスト" className="ex-drawing" />;
   return <canvas ref={ref} className="ex-drawing" aria-label="歌に合わせて描かれるイラスト" />;
 }
