@@ -1,0 +1,13 @@
+import { build } from 'esbuild';
+import { build as viteBuild } from 'vite';
+import { mkdir, copyFile, readdir } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+await mkdir('.exhibition-build', { recursive: true });
+const tailwind = spawnSync(process.execPath, ['node_modules/tailwindcss/lib/cli.js', '-c', 'exhibition/tailwind.config.cjs', '-i', 'exhibition/ui/tailwind.css', '-o', '.exhibition-build/tailwind.css', '--minify'], { stdio: 'inherit' });
+if (tailwind.status !== 0) process.exit(tailwind.status || 1);
+await viteBuild({ configFile: 'exhibition/vite.config.ts', logLevel: 'warn' });
+await mkdir('.exhibition-build/client/samples', { recursive: true });
+for (const name of await readdir('exhibition/assets')) await copyFile(`exhibition/assets/${name}`, `.exhibition-build/client/samples/${name}`);
+await copyFile('node_modules/@fontsource/m-plus-rounded-1c/LICENSE', '.exhibition-build/client/samples/FONT-LICENSE.txt');
+await build({ entryPoints: ['exhibition/server/index.ts'], outfile: '.exhibition-build/server.mjs', bundle: true, platform: 'node', format: 'esm', packages: 'external', target: 'node22' });
+console.log('Local exhibition build ready. Public dist was not modified.');

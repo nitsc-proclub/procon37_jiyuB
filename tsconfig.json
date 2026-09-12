@@ -1,5 +1,5 @@
 {
-  "exclude": ["node_modules", "infra", "src/voicevoxBackendPool.ts", "src/voicevoxInfrastructureWorker.ts"],
+  "exclude": ["node_modules", "infra", "exhibition/cloud", "src/voicevoxBackendPool.ts", "src/voicevoxInfrastructureWorker.ts"],
   "compilerOptions": {
     "target": "ES2022",
     "experimentalDecorators": true,

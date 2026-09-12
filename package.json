@@ -4,6 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "build:exhibition": "node scripts/exhibition-build.mjs",
+    "start:exhibition": "node .exhibition-build/server.mjs",
+    "test:exhibition": "node --test scripts/exhibition.test.mjs scripts/exhibition-cloud.test.mjs",
+    "type-check:exhibition": "wrangler types exhibition/cloud/worker-configuration.d.ts --config exhibition/cloud/wrangler.jsonc --env-interface ExhibitionCloudEnv && tsc --noEmit && tsc --noEmit -p exhibition/cloud/tsconfig.json",
+    "deploy:exhibition-voice": "wrangler deploy --config exhibition/cloud/wrangler.jsonc",
     "test:melody": "node --test scripts/melodyService.test.mjs",
     "dev": "vite",
     "build": "vite build",
@@ -41,10 +46,12 @@
     "ws": "8.21.3"
   },
   "devDependencies": {
+    "@fontsource/m-plus-rounded-1c": "^5.3.0",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "esbuild": "0.28.1",
     "miniflare": "5.20260825.0-alpha",
+    "tailwindcss": "^3.4.17",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "wrangler": "4.126.0"

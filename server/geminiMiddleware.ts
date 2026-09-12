@@ -466,7 +466,7 @@ const shouldUsePhase1 = (env: GeminiEnv) => {
   return env.LYRICS_PIPELINE_MODE?.trim().toLowerCase() === "phase1";
 };
 
-const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promise<LyricsResponse | Phase1LyricsResponse> => {
+export const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promise<LyricsResponse | Phase1LyricsResponse> => {
   if (!shouldUsePhase1(env)) return generateLegacyEkakiUta(drawingData, env);
   try {
     return await generatePhase1EkakiUta(drawingData, env);

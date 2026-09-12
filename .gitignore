@@ -53,5 +53,8 @@ Thumbs.db
 
 # Local project resources (Google Drive, not part of this repository)
 .local-resources/
+/.exhibition-build/
+/exhibition-data/
+/exhibition/cloud/worker-configuration.d.ts
 超えかき歌_サーバー管理セット/超えかき歌！_管理.bat
 超えかき歌_サーバー管理セット/cho_ekakiuta_manager.ps1

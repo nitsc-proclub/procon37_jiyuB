@@ -1,0 +1,14 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "cho-ekaki-uta-exhibition-voice",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-12",
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "services": [
+    { "binding": "PUBLIC_APP", "service": "cho-ekaki-uta" },
+    { "binding": "VOICEVOX_INFRASTRUCTURE", "service": "cho-ekaki-uta-voicevox-infrastructure", "entrypoint": "VoicevoxInfrastructureWorker" }
+  ],
+  "d1_databases": [{ "binding": "EVALUATIONS_DB", "database_name": "cho-ekaki-uta-evaluations", "database_id": "c305d19d-2119-4eb4-8e82-f941e8f57414" }],
+  "secrets": { "required": ["EXHIBITION_TOKEN"] }
+}
