@@ -3,13 +3,13 @@ import type { DrawingData, LyricsResponse, SingingScore } from '../types';
 export const ROLE_IDS = ['rhythm', 'root', 'melody', 'third', 'fifth', 'octave'] as const;
 export type RoleId = typeof ROLE_IDS[number];
 export type Instrument = 'drums' | 'strings' | 'piano';
-export const ROLES: Record<RoleId, { label: string; instrument: Instrument; detail: string; pan: number }> = {
-  rhythm: { label: 'リズム', instrument: 'drums', detail: 'ビート', pan: -.65 },
-  root: { label: 'ハーモニー', instrument: 'strings', detail: 'ルート', pan: -.3 },
-  melody: { label: 'メロディー', instrument: 'piano', detail: '主旋律', pan: .3 },
-  third: { label: 'ハーモニー', instrument: 'strings', detail: '3度', pan: -.3 },
-  fifth: { label: 'ハーモニー', instrument: 'strings', detail: '5度', pan: .1 },
-  octave: { label: 'メロディー', instrument: 'piano', detail: '1オクターブ下', pan: .65 },
+export const ROLES: Record<RoleId, { label: string; emoji: string; instrument: Instrument; detail: string; pan: number }> = {
+  rhythm: { label: 'リズム', emoji: '🥁', instrument: 'drums', detail: 'ビート', pan: -.65 },
+  root: { label: 'ベース', emoji: '🎸', instrument: 'strings', detail: '和音の土台', pan: -.3 },
+  melody: { label: 'メロディー', emoji: '🎤', instrument: 'piano', detail: '主旋律', pan: .3 },
+  third: { label: 'いろどり音', emoji: '🎻', instrument: 'strings', detail: '和音の3度', pan: -.3 },
+  fifth: { label: 'かさね音', emoji: '🎻', instrument: 'strings', detail: '和音の5度', pan: .1 },
+  octave: { label: '低いメロディー', emoji: '🎙️', instrument: 'piano', detail: '1オクターブ下', pan: .65 },
 };
 export const STAGE_ORDER: RoleId[] = ['rhythm', 'root', 'third', 'fifth', 'melody', 'octave'];
 export const DEFAULT_PARTICIPANT_LIMIT = 4;

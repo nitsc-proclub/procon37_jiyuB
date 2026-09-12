@@ -23,25 +23,45 @@ export class EnsembleAudio {
     const response = await fetch(url); if (!response.ok) throw new Error('音声の読み込みに失敗しました');
     const buffer = await this.context.decodeAudioData(await response.arrayBuffer()); this.buffers.set(url, buffer); return buffer;
   }
-  private bus(pan: number, gain: number) {
-    const g = this.context.createGain(), p = this.context.createStereoPanner(); g.gain.value = gain; p.pan.value = pan; g.connect(p).connect(this.master);
+  private bus(pan: number, gain: number, context: BaseAudioContext = this.context, output: AudioNode = this.master) {
+    const g = context.createGain(), p = context.createStereoPanner(); g.gain.value = gain; p.pan.value = pan; g.connect(p).connect(output);
     return { gain: g, disconnect: () => { g.disconnect(); p.disconnect(); } };
   }
-  private drum(at: number, snare: boolean, pan: number, gain: number) {
-    const bus = this.bus(pan, gain), g = bus.gain; g.gain.setValueAtTime(gain, at); g.gain.exponentialRampToValueAtTime(.0001, at + .17);
+  private drum(at: number, snare: boolean, pan: number, gain: number, context: BaseAudioContext = this.context, output: AudioNode = this.master, track = true) {
+    const bus = this.bus(pan, gain, context, output), g = bus.gain; g.gain.setValueAtTime(gain, at); g.gain.exponentialRampToValueAtTime(.0001, at + .17);
     if (snare) {
-      const buffer = this.context.createBuffer(1, Math.ceil(this.context.sampleRate * .2), this.context.sampleRate);
+      const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * .2), context.sampleRate);
       const channel = buffer.getChannelData(0); for (let i = 0; i < channel.length; i++) channel[i] = Math.random() * 2 - 1;
-      const s = this.context.createBufferSource(), filter = this.context.createBiquadFilter(); s.buffer = buffer; filter.type = 'highpass'; filter.frequency.value = 1300; s.connect(filter).connect(g); s.start(at); s.onended = () => { s.disconnect(); filter.disconnect(); bus.disconnect(); }; this.sources.push(s);
+      const s = context.createBufferSource(), filter = context.createBiquadFilter(); s.buffer = buffer; filter.type = 'highpass'; filter.frequency.value = 1300; s.connect(filter).connect(g); s.start(at); s.onended = () => { s.disconnect(); filter.disconnect(); bus.disconnect(); }; if (track) this.sources.push(s);
     } else {
-      const s = this.context.createOscillator(); s.frequency.setValueAtTime(135, at); s.frequency.exponentialRampToValueAtTime(45, at + .13); s.connect(g); s.start(at); s.stop(at + .19); s.onended = () => { s.disconnect(); bus.disconnect(); }; this.sources.push(s);
+      const s = context.createOscillator(); s.frequency.setValueAtTime(135, at); s.frequency.exponentialRampToValueAtTime(45, at + .13); s.connect(g); s.start(at); s.stop(at + .19); s.onended = () => { s.disconnect(); bus.disconnect(); }; if (track) this.sources.push(s);
     }
+  }
+  async prepare(voices: Voice[]) {
+    await this.enable();
+    if (voices.some(v => !playableVersion(v.version))) throw new Error('この歌声は作り直してください');
+    const buffers = await Promise.all(voices.map(v => this.load(v.version.audioUrl)));
+    if (buffers.some(b => Math.abs(b.duration - SONG_SECONDS) > .15)) throw new Error('音声の長さが合奏と合いません。歌声を作り直してください');
+  }
+  async previewSource(version: Version): Promise<string> {
+    if (version.role !== 'rhythm') return version.audioUrl;
+    // A mixed WAV keeps native audio pause/seek and the original karaoke component in sync.
+    const buffer = await this.load(version.audioUrl);
+    const context = new OfflineAudioContext(2, Math.ceil(buffer.duration * buffer.sampleRate), buffer.sampleRate);
+    const voice = context.createBufferSource(), gain = context.createGain(); voice.buffer = buffer; gain.gain.value = .68;
+    voice.connect(gain).connect(context.destination); voice.start();
+    for (let beat = 0; beat < 32; beat++) this.drum(LEAD_FRAMES / FPS + beat * 60 / BPM, beat % 2 === 1, 0, .19, context, context.destination, false);
+    const mixed = await context.startRendering(), bytes = new ArrayBuffer(44 + mixed.length * 4), view = new DataView(bytes);
+    const text = (offset: number, value: string) => [...value].forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
+    text(0, 'RIFF'); view.setUint32(4, bytes.byteLength - 8, true); text(8, 'WAVE'); text(12, 'fmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 2, true); view.setUint32(24, mixed.sampleRate, true); view.setUint32(28, mixed.sampleRate * 4, true); view.setUint16(32, 4, true); view.setUint16(34, 16, true); text(36, 'data'); view.setUint32(40, mixed.length * 4, true);
+    const left = mixed.getChannelData(0), right = mixed.getChannelData(1);
+    for (let i = 0; i < mixed.length; i++) for (let channel = 0; channel < 2; channel++) { const sample = Math.max(-1, Math.min(1, channel ? right[i] : left[i])); view.setInt16(44 + (i * 2 + channel) * 2, sample * (sample < 0 ? 32768 : 32767), true); }
+    return URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
   }
   async play(voices: Voice[], rounds: number, volume: number, fullBand = true): Promise<boolean> {
     this.stop(); const serial = this.serial;
-    await this.enable();
-    if (voices.some(v => !playableVersion(v.version))) throw new Error('この歌声は作り直してください');
-    await Promise.all(voices.map(v => this.load(v.version.audioUrl)));
+    await this.prepare(voices);
     if (serial !== this.serial) return false;
     const beat = 60 / BPM, lead = LEAD_FRAMES / FPS;
     this.startedAt = this.context.currentTime + .12; this.duration = SONG_SECONDS * rounds; this.active = true; this.setVolume(volume);

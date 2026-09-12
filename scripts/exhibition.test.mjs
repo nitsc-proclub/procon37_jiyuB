@@ -135,3 +135,22 @@ test('cancel frees the device immediately and a late voice write cannot publish 
     assert.equal(restored.state.tasks.find(x=>x.id===t.id).status,'cancelled');assert.equal(restored.state.tasks.find(x=>x.id===next.id).status,'queued');
   } finally { assert.ok(directory.startsWith(join(tmpdir(),'exhibition-test-')));await rm(directory,{recursive:true,force:true}); }
 });
+
+test('curtain waits for audio and preserves the close, cue, open order', async () => {
+  const {openStage}=await vite.ssrLoadModule('/exhibition/ui/curtain.ts');
+  const phases=[],durations=[];let loaded=false,release;const audio=new Promise(resolve=>{release=()=>{loaded=true;resolve();};});
+  const opening=openStage(()=>audio,value=>{phases.push(value);if(value==='opening')assert.ok(loaded);},new AbortController().signal,async ms=>{durations.push(ms);});
+  await Promise.resolve();assert.deepEqual(phases,['closing']);release();await opening;
+  assert.deepEqual(phases,['closing','closed','opening','idle']);assert.deepEqual(durations,[650,600,800]);
+});
+
+test('stopping during loading or any curtain phase prevents a delayed start', async () => {
+  const {openStage}=await vite.ssrLoadModule('/exhibition/ui/curtain.ts');
+  for(const stopAt of ['closing','closed','opening']){
+    const controller=new AbortController();let played=false;
+    const opening=openStage(async()=>{},value=>{if(value===stopAt)controller.abort();},controller.signal,async()=>{}).then(()=>{played=true;});
+    await assert.rejects(opening);assert.equal(played,false);
+  }
+  const controller=new AbortController();let release;const audio=new Promise(resolve=>{release=resolve;});
+  const opening=openStage(()=>audio,()=>{},controller.signal,async()=>{});controller.abort();release();await assert.rejects(opening);
+});

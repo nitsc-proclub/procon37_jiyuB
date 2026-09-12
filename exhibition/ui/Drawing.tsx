@@ -63,11 +63,13 @@ export default function Drawing({ drawing, mappings, seconds = 0, clock, complet
       ctx.stroke();
     };
     const frame = seconds * FPS - LEAD_FRAMES;
+    const currentLine = Math.floor(frame / LINE_FRAMES);
     geometry.paths.forEach((p, i) => {
-      const progress = Math.max(0, Math.min(1, (frame - p.line * LINE_FRAMES) / (LINE_FRAMES * .94)));
+      if (p.line < currentLine) { trace(p, p.total, '#334155', width); return; }
+      if (p.line !== currentLine) return;
+      const progress = Math.max(0, Math.min(1, (frame - p.line * LINE_FRAMES) / LINE_FRAMES));
       const distance = geometry.totals[p.line] * progress - geometry.starts[i];
-      trace(p, Math.min(p.total, distance), '#f88b2e', width * 1.35);
-      trace(p, Math.min(p.total, distance - (progress >= 1 ? 0 : width * 5)), '#26324d', width);
+      trace(p, Math.min(p.total, distance), '#f97316', width * 1.35);
     });
     };
     let frame = 0;
