@@ -1,8 +1,5 @@
 @echo off
-cd /d "%~dp0"
-call npm.cmd run build:exhibition
-if errorlevel 1 goto failed
-call npm.cmd run start:exhibition
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\manage-local-servers.ps1" -App Ensemble -Action Start
 if errorlevel 1 goto failed
 exit /b 0
 :failed

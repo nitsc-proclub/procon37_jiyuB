@@ -26,6 +26,7 @@ export default function ExhibitionApp() {
   const [toast, setToast] = useState(''), [reset, setReset] = useState(0), [ready, setReady] = useState(false);
   const [search, setSearch] = useState('');
   const [curtain, setCurtain] = useState<CurtainPhase>('idle');
+  const [playbackId, setPlaybackId] = useState('');
   const opening = useRef<AbortController | null>(null), personalAudio = useRef<HTMLAudioElement | null>(null);
   const [draft, setDraft] = useState<DrawingData | null>(null);
   const audio = useRef<EnsembleAudio | null>(null), handled = useRef(''), activePerformance = useRef('');
@@ -82,9 +83,9 @@ export default function ExhibitionApp() {
   useEffect(() => {
     if (view !== 'stage' || !state) return;
     const p = state.performance;
-    if (!connected || !ready || p?.status === 'stopped') { opening.current?.abort(); setCurtain('idle'); audio.current?.stop(); activePerformance.current = ''; if (!connected && ready) setReady(false); return; }
+    if (!connected || !ready || p?.status === 'stopped') { opening.current?.abort(); setCurtain('idle'); setPlaybackId(''); audio.current?.stop(); activePerformance.current = ''; if (!connected && ready) setReady(false); return; }
     if (!p || p.status !== 'preparing' || handled.current === p.id) return;
-    handled.current = p.id; activePerformance.current = p.id; setError('');
+    handled.current = p.id; activePerformance.current = p.id; setPlaybackId(''); setError('');
     const voices = sortCards(selectedWorks(state, p.members));
     opening.current?.abort(); const controller = new AbortController(); opening.current = controller;
     const tracks = voices.map((item, i) => ({ version: item.version, pan: voices.length <= 1 ? 0 : i / (voices.length - 1) * 1.3 - .65 }));
@@ -92,10 +93,14 @@ export default function ExhibitionApp() {
       await openStage(() => player().prepare(tracks), setCurtain, controller.signal);
       if (activePerformance.current !== p.id) return;
       const started = await player().play(tracks, 2, state.volume);
-      if (started && !controller.signal.aborted && activePerformance.current === p.id) await api('ack', { displayId, performanceId: p.id, status: 'playing' });
+      if (started && !controller.signal.aborted && activePerformance.current === p.id) {
+        // Start drawing from the local audio clock, without waiting for a server round trip.
+        setPlaybackId(p.id);
+        await api('ack', { displayId, performanceId: p.id, status: 'playing' });
+      }
     })().catch(e => {
       if (controller.signal.aborted) return;
-      setCurtain('idle'); audio.current?.stop(); setError(e instanceof Error ? e.message : '再生できませんでした');
+      setCurtain('idle'); setPlaybackId(''); audio.current?.stop(); setError(e instanceof Error ? e.message : '再生できませんでした');
       void api('ack', { displayId, performanceId: p.id, status: 'stopped' }).catch(() => {});
     });
   }, [state?.performance?.id, state?.performance?.status, connected, ready]);
@@ -104,7 +109,7 @@ export default function ExhibitionApp() {
     const timer = setInterval(() => {
       const a = audio.current;
       if (a?.active && a.elapsed >= a.duration + .12) {
-        a.stop();
+        a.stop(); setPlaybackId('');
         if (view === 'stage' && activePerformance.current) { const performanceId = activePerformance.current; activePerformance.current = ''; void api('ack', { displayId, performanceId, status: 'finished' }).catch(() => {}); }
       }
     }, 50);
@@ -149,14 +154,14 @@ export default function ExhibitionApp() {
     {!state ? <div className="ex-loading">つないでいます…</div> : <>
       {view === 'maker' && <main className="ex-maker-main"><div className="ex-maker-toolbar"><a className="ex-link" href="/admin">‹ みんなの作品を見る</a><span>{generating || busy && activeTaskId ? '歌を作成中' : work ? '' : '絵かき歌を作る'}</span>{(generating || activeTaskId) && <button className="ex-link" onClick={newSong}>中止して新しく描く</button>}</div>
         <>{work && !generating && !(busy && activeTaskId) ? <PersonalSong key={version?.id ?? work.id} work={work} version={version} audioRef={personalAudio} source={previewSource} onNewSong={newSong}>{result}</PersonalSong> : <div className="ex-maker-layout"><section className="ex-paper">
-          {generating || busy && activeTaskId ? task?.drawing || work || draft ? <Drawing drawing={task?.drawing ?? work?.drawing ?? draft!} complete/> : <div className="ex-placeholder">♪</div> : <PaintCanvas key={reset} initialDrawing={draft ?? (task?.status === 'failed' ? task.drawing : undefined)} onComplete={d => void generate(d)} onClear={() => { selectWork(null); setDraft(null); }} isGenerating={false} hideFocusControl onDrawingMetricsChange={m => setHasStrokes(m.strokeCount > 0)} guideState={hasStrokes ? null : 'draw'}/>}
+          {generating || busy && activeTaskId ? task?.drawing || work || draft ? <Drawing drawing={task?.drawing ?? work?.drawing ?? draft!} complete/> : <div className="ex-placeholder">♪</div> : <PaintCanvas key={reset} initialDrawing={draft ?? (task?.status === 'failed' ? task.drawing : undefined)} onComplete={d => void generate(d)} onClear={() => { selectWork(null); setDraft(null); }} isGenerating={false} hideFocusControl mobileScene="draw" onDrawingMetricsChange={m => setHasStrokes(m.strokeCount > 0)} guideState={hasStrokes ? null : 'draw'}/>}
         </section><aside className="ex-maker-side">
           {generating || busy && activeTaskId ? <section className="ex-card ex-generating"><div className="ex-orbit" aria-hidden="true">♪</div>{task && <RoleBadge role={task.role}/>}<h1>{task?.status === 'lyrics' ? '歌詞を考え中' : task?.status === 'voice' ? '歌声を作成中' : '順番待ち'}</h1><div className="ex-progress"><i/></div><button className="ex-button secondary" onClick={newSong}>中止して新しく描く</button></section> : <section className="ex-card ex-invitation"><div className="ex-music-symbols" aria-hidden="true">♪ 🎤 ♫</div><p>キャンバスに好きな絵を描いてください。</p></section>}
           {task?.status === 'failed' && <section className="ex-card ex-failed"><h2>もう一度試そう</h2><p>{task.message}</p><button className="ex-button secondary" onClick={() => void act('retry', { taskId: task.id, deviceId: device })}>もう一度作る</button><button className="ex-link" onClick={newSong}>新しい歌を作る</button></section>}
           <MiniStage cards={nextCards}/>
         </aside></div>}</></main>}
-      {view === 'stage' && <><Stage cards={cards} next={nextCards} clock={clock} playing={performing?.status === 'playing'} curtain={curtain} limit={state.participantLimit}/>{!ready && <div className="ex-enable"><button className="ex-button primary" onClick={async () => { try { await player().enable(); setReady(true); setError(''); } catch (e) { setError(String(e)); } }}>音を有効にする</button></div>}</>}
-      {view === 'control' && <main className="ex-control-main"><h1>みんなで演奏</h1><div className="ex-control-count"><strong>{nextCards.length}</strong><span> / {state.participantLimit} 人</span></div><button className={`ex-button ex-play-button ${stageActive ? 'secondary' : 'primary'}`} disabled={!connected || !stageActive && (!state.display.ready || !nextCards.length)} onClick={() => void act(stageActive ? 'stop' : 'play', {})}>{stageActive ? '■ とめる' : '▶ 合奏スタート'}</button><p>{!state.display.ready ? '大画面で音を有効にしてください' : stageActive ? '演奏中' : '2周うたうよ'}</p><MiniStage cards={nextCards}/><a className="ex-link" href="/admin">みんなの作品を見る・人数設定</a></main>}
+      {view === 'stage' && <><Stage cards={cards} next={nextCards} clock={clock} playing={stageActive && playbackId === performing?.id} curtain={curtain} limit={state.participantLimit}/>{!ready && <div className="ex-enable"><button className="ex-button primary" onClick={async () => { try { await player().enable(); setReady(true); setError(''); } catch (e) { setError(String(e)); } }}>音を有効にする</button></div>}</>}
+      {view === 'control' && <main className="ex-control-main"><h1>みんなで演奏</h1><div className="ex-control-count"><strong>{nextCards.length}</strong><span> / {state.participantLimit} 人</span></div><button className={`ex-button ex-play-button ${stageActive ? 'secondary' : 'primary'}`} disabled={!connected || !stageActive && (!state.display.ready || !nextCards.length)} onClick={() => void act(stageActive ? 'stop' : 'play', {})}>{stageActive ? '■ とめる' : '▶ 合奏スタート'}</button><p>{!state.display.ready ? '大画面で音を有効にしてください' : stageActive ? '演奏中' : ''}</p><MiniStage cards={nextCards}/><a className="ex-link" href="/admin">みんなの作品を見る・人数設定</a></main>}
       {view === 'admin' && <main className="ex-admin-main"><div className="ex-library-heading"><h1>みんなの作品 <small>{state.works.length}</small></h1><button className="ex-button primary" onClick={newSong}>＋ 新しい歌を作る</button></div>
         <section className="ex-library-settings"><label className="ex-limit">合奏の人数<select aria-label="合奏の人数" value={state.participantLimit} onChange={e => void act('settings', { participantLimit: Number(e.target.value) })}>{[1, 2, 3, 4, 5, 6].map(n => <option key={n} value={n}>{n} 人{n === 4 ? '（標準）' : ''}</option>)}</select></label><details><summary>設定</summary><div className="ex-settings"><label>音量<input aria-label="合奏の音量" type="range" min="0" max="1" step="0.05" value={state.volume} onChange={e => void act('settings', { volume: Number(e.target.value) })}/></label><label>歌声の接続先<select value={state.backend} onChange={e => void act('settings', { backend: e.target.value })}><option value="auto">クラウド優先（自動）</option><option value="vpc">未来サーバー</option><option value="cloud-run">Google Cloud Run</option><option value="local">ローカル VOICEVOX</option></select></label><button className="ex-button secondary" onClick={async () => { try { const value = await api<{ count: number }>('import', {}); await refresh(); setToast(`${value.count}作品を追加しました`); } catch (e) { setError(String(e)); } }}>デモ記録を読み込む</button></div></details><a className="ex-link" href="/control">演奏スタートボタン →</a></section>
         <label className="ex-search"><span>作品をさがす</span><input type="search" placeholder="タイトル" value={search} onChange={e => setSearch(e.target.value)}/></label>

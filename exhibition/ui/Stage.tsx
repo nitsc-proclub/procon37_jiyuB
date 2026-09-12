@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FPS, LEAD_FRAMES, LINE_FRAMES, SONG_SECONDS, ROLES, type Work, type RoleId, type selectedWorks } from '../shared';
-import Drawing from './Drawing';
+import Drawing, { drawingBounds } from './Drawing';
 import type { CurtainPhase } from './curtain';
 import background from '../assets/stage-background.png';
 
@@ -55,22 +55,16 @@ export function MiniStage({ cards, label = '合奏のなかま' }: { cards: Card
 }
 
 export default function Stage({ cards, next, clock, playing, curtain, limit }: { cards: Cards; next: Cards; clock: () => number; playing: boolean; curtain: CurtainPhase; limit: number }) {
-  const [round, setRound] = useState(1);
-  useEffect(() => {
-    if (!playing) { setRound(1); return; }
-    const timer = setInterval(() => setRound(clock() >= SONG_SECONDS ? 2 : 1), 80);
-    return () => clearInterval(timer);
-  }, [playing, clock]);
   const waiting = playing && (cards.length !== next.length || cards.some(c => !next.some(n => n.version.id === c.version.id)));
   return <main className={`ex-stage-main ${playing ? 'is-playing' : ''} count-${cards.length}`} style={{ backgroundImage: `url(${background})` }}>
-    <Sparkles/><span className="ex-round">{playing ? `${round} / 2 周` : `${cards.length} / ${limit} 人`}</span>
+    <Sparkles/>{!playing && <span className="ex-round">{cards.length} / {limit} 人</span>}
     <div className="ex-ensemble" style={{ '--players': Math.max(1, cards.length) } as React.CSSProperties}>
-      {cards.map(({ work, version }, i) => <article key={version.id} className={`ex-performer ${ROLES[version.role].instrument} role-${version.role}`} style={{ '--index': i } as React.CSSProperties}>
+      {cards.map(({ work, version }, i) => { const bounds = drawingBounds(work.drawing); return <article key={version.id} className={`ex-performer ${ROLES[version.role].instrument} role-${version.role}`} style={{ '--index': i, '--shadow-width': `${Math.max(22, bounds.width / Math.max(bounds.width, bounds.height) * 86)}%` } as React.CSSProperties}>
         <div className="ex-performer-heading"><FitTitle title={work.title}/></div>
         <div className="ex-speech"><LiveLyric work={work} clock={clock} playing={playing}/></div>
-        <div className="ex-performer-art"><span className="ex-role-icon" role="img" aria-label={ROLES[version.role].label} title={`${ROLES[version.role].label} · ${ROLES[version.role].detail}`}>{ROLES[version.role].emoji}</span><div className="ex-dancer"><Drawing drawing={work.drawing} mappings={work.lyrics.lineStrokeMappings} clock={playing ? clock : undefined} complete={!playing}/></div></div>
+        <div className="ex-performer-art"><span className="ex-role-icon" role="img" aria-label={ROLES[version.role].label} title={`${ROLES[version.role].label} · ${ROLES[version.role].detail}`}>{ROLES[version.role].emoji}</span><div className="ex-art-anchor"><span className="ex-floor-shadow" aria-hidden="true"/><div className="ex-dancer"><Drawing drawing={work.drawing} mappings={work.lyrics.lineStrokeMappings} clock={playing ? clock : undefined} complete={!playing} loop/></div></div></div>
         <div className="ex-notes" aria-hidden="true">{['♪', '♫', '♪', '♬', '♪'].map((note, n) => <span key={n} style={{ '--note': n } as React.CSSProperties}>{note}</span>)}</div>
-      </article>)}
+      </article>; })}
       {!cards.length && <div className="ex-empty-stage"><span aria-hidden="true">♪ 🎤 ♫</span></div>}
     </div>
     {waiting && <div className="ex-stage-bottom"><MiniStage cards={next} label="つぎの合奏"/></div>}

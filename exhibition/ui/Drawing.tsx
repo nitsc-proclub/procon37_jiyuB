@@ -2,7 +2,14 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import type { DrawingData } from '../../types';
 import { LEAD_FRAMES, LINE_FRAMES, FPS, SONG_SECONDS } from '../shared';
 
-export default function Drawing({ drawing, mappings, seconds = 0, clock, complete = false }: { drawing: DrawingData; mappings?: { lineIndex: number; strokeGroupIds: string[] }[]; seconds?: number; clock?: () => number; complete?: boolean }) {
+export function drawingBounds(drawing: DrawingData) {
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  for (const stroke of drawing.strokes ?? []) for (const p of stroke.points) { left = Math.min(left, p.x); top = Math.min(top, p.y); right = Math.max(right, p.x); bottom = Math.max(bottom, p.y); }
+  if (!Number.isFinite(left)) return { left: 0, top: 0, right: 1024, bottom: 1024, width: 1024, height: 1024 };
+  return { left, top, right, bottom, width: Math.max((drawing.lineWidth ?? 8) * 4, right - left), height: Math.max((drawing.lineWidth ?? 8) * 4, bottom - top) };
+}
+
+export default function Drawing({ drawing, mappings, seconds = 0, clock, complete = false, loop = false }: { drawing: DrawingData; mappings?: { lineIndex: number; strokeGroupIds: string[] }[]; seconds?: number; clock?: () => number; complete?: boolean; loop?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const geometry = useMemo(() => {
     const lineByStroke = new Map<number, number>();
@@ -17,12 +24,9 @@ export default function Drawing({ drawing, mappings, seconds = 0, clock, complet
   }, [drawing, mappings]);
   const surfaces = useMemo(() => {
     const size = 640, width = drawing.lineWidth ?? 8;
-    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
-    for (const p of geometry.paths) for (const point of p.points) { left = Math.min(left, point.x); top = Math.min(top, point.y); right = Math.max(right, point.x); bottom = Math.max(bottom, point.y); }
-    if (!Number.isFinite(left)) { left = top = 0; right = bottom = 1024; }
-    const w = Math.max(width * 4, right - left), h = Math.max(width * 4, bottom - top);
+    const { left, right, bottom, width: w, height: h } = drawingBounds(drawing);
     const scale = (size - 72) / Math.max(w, h);
-    const x = size / 2 - (left + right) / 2 * scale, y = size / 2 - (top + bottom) / 2 * scale;
+    const x = size / 2 - (left + right) / 2 * scale, y = size - 36 - bottom * scale;
     const paths = geometry.paths.map(p => {
       const path = new Path2D();
       if (p.points.length) { path.moveTo(p.points[0].x, p.points[0].y); for (const point of p.points.slice(1)) path.lineTo(point.x, point.y); }
@@ -43,6 +47,7 @@ export default function Drawing({ drawing, mappings, seconds = 0, clock, complet
     const { size, scale, x, y } = surfaces;
     if (canvas.width !== size) canvas.width = canvas.height = size;
     const draw = (seconds: number) => {
+    if (loop) seconds = Math.max(0, seconds) % SONG_SECONDS;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, size, size);
     const finished = complete || seconds >= SONG_SECONDS;
     ctx.drawImage(finished ? surfaces.finished : surfaces.ghost, 0, 0);
@@ -75,7 +80,7 @@ export default function Drawing({ drawing, mappings, seconds = 0, clock, complet
     let frame = 0;
     const tick = () => { draw(clock ? clock() : seconds); if (clock && !complete) frame = requestAnimationFrame(tick); };
     tick(); return () => cancelAnimationFrame(frame);
-  }, [drawing, geometry, surfaces, seconds, clock, complete]);
+  }, [drawing, geometry, surfaces, seconds, clock, complete, loop]);
   if (!drawing.strokes?.length) return <img src={drawing.imageUri} alt="作品のイラスト" className="ex-drawing" />;
   return <canvas ref={ref} className="ex-drawing" aria-label="歌に合わせて描かれるイラスト" />;
 }
