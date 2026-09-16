@@ -7,6 +7,7 @@ import { loadEnv } from 'vite';
 import { generateEkakiUta } from '../../server/geminiMiddleware';
 import { groupStrokes } from '../../services/strokeGroupingService';
 import { ExhibitionStore } from './store';
+import { acquireServerLock } from './lock';
 import { arrange } from '../music';
 import { prepareLyrics } from './lyrics';
 import type { DrawingData, LyricsResponse } from '../../types';
@@ -15,10 +16,7 @@ import { ROLE_IDS, pendingTask, type RoleId, type Instrument, type PublicState, 
 const root = process.cwd(), env = { ...loadEnv('development', root, ''), ...loadEnv('exhibition', root, ''), ...process.env };
 const dataDir = path.resolve(env.EXHIBITION_DATA_DIR || 'exhibition-data');
 await fs.mkdir(dataDir, { recursive: true });
-const lockPath = path.join(dataDir, 'server.lock');
-try { const pid = Number(await fs.readFile(lockPath, 'utf8')); try { process.kill(pid, 0); throw new Error(`展示サーバーは起動済みです (PID ${pid})`); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') throw e; } await fs.unlink(lockPath); }
-catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
-await fs.writeFile(lockPath, String(process.pid), { flag: 'wx' });
+const releaseLock = await acquireServerLock(dataDir);
 const store = await ExhibitionStore.open(dataDir);
 const streams = new Set<ServerResponse>();
 let display: { id: string; until: number; ready: boolean } | null = null;
@@ -205,5 +203,5 @@ server.listen(port, '0.0.0.0', () => {
   for (const items of Object.values(networkInterfaces())) for (const a of items ?? []) if (a.family === 'IPv4' && !a.internal) console.log(`端末から: http://${a.address}:${port}`);
   pump();
 });
-async function shutdown() { server.close(); for (const s of streams) s.end(); await store.save(); await fs.unlink(lockPath).catch(() => {}); process.exit(0); }
+async function shutdown() { server.close(); for (const s of streams) s.end(); await store.save(); await releaseLock(); process.exit(0); }
 process.on('SIGINT', () => void shutdown()); process.on('SIGTERM', () => void shutdown());

@@ -10,6 +10,24 @@ after(() => vite.close());
 const shared = await vite.ssrLoadModule('/exhibition/shared.ts');
 const { arrange, melodyKey } = await vite.ssrLoadModule('/exhibition/music.ts');
 const { ExhibitionStore } = await vite.ssrLoadModule('/exhibition/server/store.ts');
+const { acquireServerLock } = await vite.ssrLoadModule('/exhibition/server/lock.ts');
+
+test('Windows lock ignores a stale live PID and prevents duplicate servers sharing data', { skip: process.platform !== 'win32' }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'exhibition-lock-'));
+  let release;
+  try {
+    // A PID reused by an unrelated process must not block startup.
+    await writeFile(join(directory, 'server.lock'), String(process.pid));
+    release = await acquireServerLock(directory);
+    await assert.rejects(acquireServerLock(directory), /起動済み/);
+    assert.equal(await readFile(join(directory, 'server.lock'), 'utf8'), String(process.pid));
+    await release(); release = undefined;
+    release = await acquireServerLock(directory);
+  } finally {
+    await release?.();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 const lyrics = { title: 'まるいねこ', identifiedObject: 'ねこ', lines: ['まるをかいて','みみをふたつ','ひげをかいて','ねこのできあがり'], singingKanaLines: ['まるお かいて','みみお ふたつ','ひげお かいて','ねこの できあがり'] };
 const drawing = { imageUri: 'data:image/png;base64,aA==', strokes: [{ points: [{x: 0,y: 0,timestamp: 0},{x: 30,y: 30,timestamp: 1}],startTime: 0,endTime: 1 }] };
 test('first three simultaneous reservations cover rhythm, root and melody; all six have separate slots', () => {
