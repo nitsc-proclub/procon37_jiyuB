@@ -6,15 +6,12 @@ const PHRASE_BEATS = 8;
 const UNITS_PER_BEAT = 4;
 const PHRASE_UNITS = PHRASE_BEATS * UNITS_PER_BEAT;
 const BREATH_REST_UNITS = UNITS_PER_BEAT;
-const WORD_BREAK_REST_UNITS = 1;
+const WORD_BREAK_REST_UNITS = 2;
 const LEADING_REST_LENGTH = 2;
 const NOTE_POOL = [64, 65, 67];
 const MIN_NOTE_UNITS = 1;
-const LONG_VOWEL_WEIGHT_BONUS = 0.4;
 const GROUP_END_WEIGHT_BONUS = 0.65;
 const FINAL_GROUP_END_WEIGHT_BONUS = 0.35;
-const REPEATED_SHORT_WEIGHT = 0.8;
-const REPEATED_LONG_WEIGHT = 1.25;
 const FINAL_CADENCES = [
   [65, 67, 60],
   [65, 64, 60],
@@ -213,37 +210,6 @@ const parseLine = (line: string): ParsedLine => {
   };
 };
 
-const allocateWeightedLengths = (totalLength: number, minimumLengths: number[], weights: number[]) => {
-  const minimumTotalLength = minimumLengths.reduce((sum, length) => sum + length, 0);
-
-  if (minimumTotalLength > totalLength) {
-    throw new Error("歌詞の1行が長すぎて、固定フレーズ長に入りませんでした。");
-  }
-
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-  const extraBudget = totalLength - minimumTotalLength;
-  const rawExtras = weights.map((weight) => (extraBudget * weight) / totalWeight);
-  const lengths = rawExtras.map((extraLength, index) => minimumLengths[index] + Math.floor(extraLength));
-  let remainingUnits = totalLength - lengths.reduce((sum, length) => sum + length, 0);
-
-  rawExtras
-    .map((extraLength, index) => ({
-      index,
-      fraction: extraLength - Math.floor(extraLength),
-    }))
-    .sort((left, right) => right.fraction - left.fraction || left.index - right.index)
-    .forEach(({ index }) => {
-      if (remainingUnits <= 0) {
-        return;
-      }
-
-      lengths[index] += 1;
-      remainingUnits -= 1;
-    });
-
-  return lengths;
-};
-
 const createFallbackBeatTemplate = (groupCount: number) => Array.from({ length: groupCount }, () => PHRASE_BEATS / groupCount);
 
 const selectRhythmTemplates = (lines: ParsedLine[], random: () => number): RhythmTemplateMap => {
@@ -260,7 +226,8 @@ const selectRhythmTemplates = (lines: ParsedLine[], random: () => number): Rhyth
 
 const getMoraRhythmWeight = (mora: MoraUnit, index: number, moraCount: number, isFinalPhraseEnd: boolean) => {
   const isGroupEnd = index === moraCount - 1;
-  let weight = index % 3 === 2 ? REPEATED_LONG_WEIGHT : REPEATED_SHORT_WEIGHT;
+  // A long-vowel mark occupies a full mora, held on the preceding pitch.
+  let weight = 1 + mora.extensionCount;
 
   if (isGroupEnd) {
     weight += GROUP_END_WEIGHT_BONUS;
@@ -270,22 +237,25 @@ const getMoraRhythmWeight = (mora: MoraUnit, index: number, moraCount: number, i
     weight += FINAL_GROUP_END_WEIGHT_BONUS;
   }
 
-  weight += mora.extensionCount * LONG_VOWEL_WEIGHT_BONUS;
-
   return weight;
 };
 
 const allocateRhythmicPhraseLengths = (
-  groups: PhraseGroup[],
+  { groups, units }: ParsedLine,
   isFinalLine: boolean,
-  phraseNoteLength: number,
+  phraseLength: number,
   beatTemplate: number[],
 ) => {
-  const groupMinimumLengths = groups.map((group) => group.moras.length * MIN_NOTE_UNITS);
-  const groupLengths = allocateWeightedLengths(phraseNoteLength, groupMinimumLengths, beatTemplate);
+  const restCount = units.filter((unit) => unit.type === "rest").length;
+  const moraCount = groups.reduce((sum, group) =>
+    sum + group.moras.reduce((count, mora) => count + 1 + mora.extensionCount, 0), 0);
+  if (moraCount * MIN_NOTE_UNITS + restCount > phraseLength) {
+    throw new Error("歌詞の1行が長すぎて、固定フレーズ長に入りませんでした。");
+  }
 
-  return groups.flatMap((group, groupIndex) => {
-    const minimumLengths = group.moras.map(() => MIN_NOTE_UNITS);
+  const phraseNoteLength = phraseLength - restCount * WORD_BREAK_REST_UNITS;
+  const totalBeats = beatTemplate.reduce((sum, beats) => sum + beats, 0);
+  const noteTargets = groups.flatMap((group, groupIndex) => {
     const weights = group.moras.map((mora, moraIndex) =>
       getMoraRhythmWeight(
         mora,
@@ -294,9 +264,66 @@ const allocateRhythmicPhraseLengths = (
         isFinalLine && groupIndex === groups.length - 1 && moraIndex === group.moras.length - 1,
       ),
     );
-
-    return allocateWeightedLengths(groupLengths[groupIndex], minimumLengths, weights);
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    const groupTarget = phraseNoteLength * beatTemplate[groupIndex] / totalBeats;
+    return weights.map((weight) => groupTarget * weight / totalWeight);
   });
+  let moraIndex = 0;
+  const targets = units.map((unit) => unit.type === "rest" ? WORD_BREAK_REST_UNITS : noteTargets[moraIndex++]);
+  let targetEnd = 0;
+  const targetEnds = targets.map((length) => (targetEnd += length));
+
+  const allocate = (minimumMoraLength: number) => {
+    type Allocation = { cost: number; lengths: number[] };
+    let states = new Map<number, Allocation>([[0, { cost: 0, lengths: [] }]]);
+    units.forEach((unit, index) => {
+      const nextStates = new Map<number, Allocation>();
+      const span = unit.type === "mora" ? 1 + unit.extensionCount : 1;
+      const minimum = unit.type === "rest" ? MIN_NOTE_UNITS : span * minimumMoraLength;
+
+      for (const [start, allocation] of states) {
+        const beatOffset = start % UNITS_PER_BEAT;
+        for (let length = minimum; start + length <= phraseLength; length += 1) {
+          const end = start + length;
+          // An off-beat onset must finish within this beat. It cannot carry
+          // a sixteenth-note displacement into the following beat.
+          if (beatOffset !== 0 && length > UNITS_PER_BEAT - beatOffset) break;
+          if (unit.type === "rest") {
+            // Word breaks finish on a beat or an eighth, never an odd sixteenth.
+            if (length > UNITS_PER_BEAT || end % WORD_BREAK_REST_UNITS !== 0) continue;
+          } else if (length > UNITS_PER_BEAT && length % UNITS_PER_BEAT !== 0) {
+            // Longer holds start and finish on beats (ties are represented by
+            // one sustained note, including any long-vowel marks).
+            continue;
+          }
+
+          const deviation = length - targets[index];
+          // Spread subdivisions through the phrase instead of packing all
+          // short notes at one end when several allocations have equal cost.
+          const positionDeviation = end - targetEnds[index];
+          const shortNotePenalty = unit.type === "mora" && length < span * 2 ? 4 : 0;
+          const wordBreakPenalty = unit.type === "rest" && end % UNITS_PER_BEAT !== 0 ? 1 : 0;
+          const cost = allocation.cost + deviation * deviation / span + positionDeviation * positionDeviation / 2
+            + shortNotePenalty + wordBreakPenalty;
+          const existing = nextStates.get(end);
+          if (!existing || cost < existing.cost) {
+            nextStates.set(end, { cost, lengths: [...allocation.lengths, length] });
+          }
+        }
+      }
+      states = nextStates;
+    });
+    return states.get(phraseLength)?.lengths;
+  };
+
+  // Prefer eighths or longer for every mora, including each long-vowel mark.
+  // Dense lines may use sixteenths, but the beat constraints never relax.
+  const lengths = (moraCount * 2 + restCount * WORD_BREAK_REST_UNITS <= phraseLength ? allocate(2) : undefined)
+    ?? allocate(MIN_NOTE_UNITS);
+  if (!lengths) {
+    throw new Error("歌詞の1行が長すぎて、拍に沿った固定フレーズ長に入りませんでした。");
+  }
+  return lengths;
 };
 
 const getAccentTargetKey = (accentLevel: MelodyAccentLevel | undefined) => {
@@ -421,28 +448,26 @@ const buildPhraseForLine = (
   }
 
   const breathRestLength = isFinalLine ? 0 : BREATH_REST_UNITS;
-  const wordBreakRestCount = phraseUnits.filter((unit) => unit.type === "rest").length;
-  const wordBreakRestTotalLength = wordBreakRestCount * WORD_BREAK_REST_UNITS;
-  const phraseNoteLength = PHRASE_UNITS - breathRestLength - wordBreakRestTotalLength;
+  const phraseLength = PHRASE_UNITS - breathRestLength;
   const beatTemplate =
     rhythmTemplates.get(parsedLine.groups.length) ?? createFallbackBeatTemplate(parsedLine.groups.length);
-  const noteLengths = allocateRhythmicPhraseLengths(parsedLine.groups, isFinalLine, phraseNoteLength, beatTemplate);
+  const noteLengths = allocateRhythmicPhraseLengths(parsedLine, isFinalLine, phraseLength, beatTemplate);
   let currentKey = previousKey;
   let moraIndex = 0;
-  const phraseNotes = phraseUnits.map((unit) => {
+  const phraseNotes = phraseUnits.map((unit, unitIndex) => {
     if (unit.type === "rest") {
       return {
         lyric: "",
         key: null,
-        sixteenths: WORD_BREAK_REST_UNITS,
+        sixteenths: noteLengths[unitIndex],
       };
     }
 
     const accentLevel = accentLineHint?.levels[moraIndex];
     const key = chooseStepwisePitch(currentKey, random, accentLevel);
-    const sixteenths = noteLengths[moraIndex];
+    const sixteenths = noteLengths[unitIndex];
     currentKey = key;
-    moraIndex += 1;
+    moraIndex += 1 + unit.extensionCount;
 
     return {
       lyric: unit.lyric,

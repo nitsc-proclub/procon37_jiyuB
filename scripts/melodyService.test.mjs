@@ -10,6 +10,29 @@ const buildSingingScore = (lyrics, seed, hints, bpm = 93.75) => melody.buildSing
 const { buildLineTimings } = await vite.ssrLoadModule("/utils/playbackTiming.ts");
 const lyrics = (lines) => ({ title: "test", identifiedObject: "test", lines, singingKanaLines: lines });
 
+// At 93.75 BPM, 15 frames are exactly one sixteenth. Inspect musical
+// positions independently of the allocator and production frame rounding.
+const assertBeatAligned = (score) => {
+  let position = 0;
+  let offBeatNotes = 0;
+  for (const note of score.notes.slice(1)) {
+    const length = note.frame_length / 15;
+    const offset = position % 4;
+    assert.ok(Number.isInteger(length) && length > 0);
+    if (offset !== 0) {
+      assert.ok(length <= 4 - offset, `${note.lyric}: ${position}+${length} crosses the next beat`);
+      offBeatNotes += 1;
+      assert.ok(offBeatNotes <= 3, "an off-beat run must resolve within three notes");
+    } else {
+      offBeatNotes = 0;
+      if (length > 4) assert.equal(length % 4, 0);
+    }
+    position += length;
+    if (note.key === null) assert.equal(position % 2, 0, "word breaks cannot shift the next word by a sixteenth");
+  }
+  assert.equal(position % 32, 0);
+};
+
 test("note values convert exactly at 93.75 BPM without rounding", () => {
   assert.equal(SINGING_BPM, 125);
   for (const [sixteenths, frames] of [[1, 15], [2, 30], [3, 45], [4, 60], [8, 120], [16, 240]]) {
@@ -61,6 +84,73 @@ test("kana normalization preserves sung moras and long vowels", () => {
   const score = buildSingingScore(lyrics(["キャー ねこ！"]), "kana");
   assert.deepEqual(score.notes.filter(n => n.key !== null).map(n => n.lyric), ["きゃ", "ね", "こ"]);
   assert.equal(score.notes.slice(1).reduce((sum, n) => sum + n.frame_length, 0), 480);
+});
+
+test("reported lyrics stay on eighths and beats, with full mora lengths for long vowels", () => {
+  const lines = [
+    "まっすぐよこにせんおひき",
+    "したおぐるっとかこみましょー",
+    "ちいさなまるおみっつならべて",
+    "まっすぐせんおひけばほーちょーだ",
+  ];
+  const score = buildSingingScore(lyrics(lines), "reported-rhythm");
+  assertBeatAligned(score);
+  for (const note of score.notes.slice(1)) assert.equal((note.frame_length / 15) % 2, 0);
+  const ending = score.notes.filter(n => n.key !== null).slice(-3);
+  assert.deepEqual(ending.map(n => n.lyric), ["ほ", "ちょ", "だ"]);
+  assert.ok(ending[0].frame_length >= 60);
+  assert.ok(ending[1].frame_length >= 60);
+  assert.equal(ending.at(-1).key, 60);
+});
+
+test("all supported mora counts return to the beat instead of carrying displacement", () => {
+  for (let count = 1; count <= 32; count += 1) {
+    const line = "あ".repeat(count);
+    const lines = count <= 28 ? [line, line] : [line];
+    const score = buildSingingScore(lyrics(lines), `density-${count}`);
+    assertBeatAligned(score);
+    assert.equal(score.notes.filter(n => n.key !== null).length, count * lines.length);
+    assert.equal(score.notes.slice(1).reduce((sum, n) => sum + n.frame_length, 0), lines.length * 480);
+  }
+});
+
+test("word breaks and varied group templates preserve beat alignment and lyric order", () => {
+  const lines = [
+    "あいうえお かき", "あ いうえおかきくけこさしすせそた",
+    "まるお かいて みみ", "ちいさな まるお みっつ かこお",
+    "あい うえ おか きく けこ", "あ い う え お か", "あ あ あ あ あ あ あ あ あ あ あ",
+    "きゃー ねこ みゃーー", "あいうえおかきくけこさしすせそたちつてとなに",
+  ];
+  for (const line of lines) {
+    for (let seed = 0; seed < 20; seed += 1) {
+      const score = buildSingingScore(lyrics([line, line]), String(seed));
+      assertBeatAligned(score);
+      assert.equal(score.notes.filter(n => n.key !== null).map(n => n.lyric).join(""), line.replace(/[ ー]/g, "").repeat(2));
+      assert.equal(score.notes.slice(1).reduce((sum, n) => sum + n.frame_length, 0), 960);
+    }
+  }
+});
+
+test("successive long marks reserve full moras without extra attacks or dropped lyrics", () => {
+  for (const [line, minimumHold] of [["あ".repeat(12) + "ねーー", 6], ["あー".repeat(11), 2]]) {
+    const score = buildSingingScore(lyrics([line]), "long-vowels");
+    assertBeatAligned(score);
+    const sung = score.notes.filter(n => n.key !== null);
+    assert.equal(sung.map(n => n.lyric).join(""), line.replaceAll("ー", ""));
+    assert.ok(sung.at(-1).frame_length >= minimumHold * 15);
+    if (line === "あー".repeat(11)) assert.ok(sung.every(n => n.frame_length >= 30));
+  }
+  assert.throws(() => buildSingingScore(lyrics(["あー".repeat(17)]), "long"), /長すぎ/);
+  assert.throws(() => buildSingingScore(lyrics(["あ".repeat(28) + "ー", "あ"]), "long"), /長すぎ/);
+});
+
+test("accent hints after long vowels keep their original mora positions", () => {
+  const source = lyrics(["あーいーうえおか"]);
+  for (let seed = 0; seed < 20; seed += 1) {
+    const original = [{ levels: ["mid", "low", "high", "low", "low", "high", "mid", "low"] }];
+    const changedHolds = [{ levels: ["mid", "high", "high", "high", "low", "high", "mid", "low"] }];
+    assert.deepEqual(buildSingingScore(source, String(seed), original), buildSingingScore(source, String(seed), changedHolds));
+  }
 });
 
 test("over-capacity lyrics fail instead of shortening notes off the grid", () => {
