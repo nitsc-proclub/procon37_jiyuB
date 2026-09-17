@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:gallery": "node --test scripts/gallery.test.mjs scripts/demoRecordEvents.test.mjs",
+    "check:gallery-public": "node scripts/verifyGalleryBuild.mjs",
     "test:melody": "node --test scripts/melodyService.test.mjs",
     "dev": "vite",
     "build": "vite build",

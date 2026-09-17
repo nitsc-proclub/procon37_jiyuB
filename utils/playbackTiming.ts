@@ -1,4 +1,20 @@
-import { SingingScore } from "../types";
+import { LyricsResponse, SingingScore } from "../types";
+
+export const getSingingLineCount = (lyrics: LyricsResponse | null) => {
+  const singingLineCount = lyrics?.singingKanaLines?.filter((line) => line.trim().length > 0).length ?? 0;
+  return singingLineCount || lyrics?.lines.filter((line) => line.trim().length > 0).length || 0;
+};
+
+export const getDrawingAnimationEndProgress = (lyrics: LyricsResponse | null, score: SingingScore | null) => {
+  const lineCount = getSingingLineCount(lyrics);
+  if (!score || lineCount <= 1) return 1;
+  const totalFrames = score.notes.reduce((sum, note) => sum + note.frame_length, 0);
+  if (totalFrames <= 0) return 1;
+  const leadingRestFrames = score.notes[0]?.key === null && score.notes[0]?.lyric === "" ? score.notes[0].frame_length : 0;
+  const phraseFrames = (totalFrames - leadingRestFrames) / lineCount;
+  const lastLineStartFrame = leadingRestFrames + phraseFrames * (lineCount - 1);
+  return Math.min(1, Math.max(0.1, lastLineStartFrame / totalFrames));
+};
 
 export type LineTiming = {
   lineIndex: number;

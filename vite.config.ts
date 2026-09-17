@@ -3,9 +3,10 @@ import { randomUUID } from "crypto";
 import { execFileSync } from "child_process";
 import { promises as fs } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type ViteDevServer, type PreviewServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { createGeminiMiddleware } from "./server/geminiMiddleware";
+import { createDemoRecordEventHub, type DemoRecordEventHub } from "./server/demoRecordEvents";
 
 const MAX_RECORD_REQUEST_BYTES = 100 * 1024 * 1024;
 const DEFAULT_DEMO_RECORDS_DIR = path.resolve(process.cwd(), "demo-records");
@@ -536,8 +537,8 @@ const sendDemoRecordFile = async (
   response.end(file);
 };
 
-const createDemoRecordMiddleware =
-  (recordsRoot: string, voicevoxTimingProfile: string) => async (request: IncomingMessage, response: ServerResponse, next: () => void) => {
+export const createDemoRecordMiddleware =
+  (recordsRoot: string, voicevoxTimingProfile: string, events: DemoRecordEventHub) => async (request: IncomingMessage, response: ServerResponse, next: () => void) => {
     if (!request.url?.startsWith("/api/demo-records")) {
       next();
       return;
@@ -554,7 +555,13 @@ const createDemoRecordMiddleware =
       return;
     }
 
-    // Keep named API routes ahead of recordId parsing: "timings" is not a record id.
+    // Named routes must precede the generic record GET/DELETE/PATCH handlers.
+    if (pathParts.length === 3 && recordId === "events") {
+      if (request.method === "GET") events.connect(request, response);
+      else sendJson(response, 405, { error: "Method not allowed" });
+      return;
+    }
+
     const isTimingEstimatesRoute = pathParts.length === 3 && recordId === "timing-estimates";
     if (isTimingEstimatesRoute && request.method === "GET") {
       try {
@@ -683,6 +690,7 @@ const createDemoRecordMiddleware =
       try {
         const recordDirectory = getRecordDirectory(recordsRoot, recordId);
         await fs.rm(recordDirectory, { recursive: true, force: true });
+        events.publish({ kind: "deleted", recordId });
         sendJson(response, 200, { recordId });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to delete demo record";
@@ -705,6 +713,8 @@ const createDemoRecordMiddleware =
           ...metadata,
           favorite,
         }));
+
+        events.publish({ kind: "updated", recordId });
 
         sendJson(response, 200, {
           recordId,
@@ -770,6 +780,7 @@ const createDemoRecordMiddleware =
         "utf8",
       );
 
+      events.publish({ kind: "created", recordId });
       sendJson(response, 201, {
         recordId,
         directory: recordDirectory,
@@ -785,6 +796,18 @@ export default defineConfig(({ mode }) => {
   const buildId = getBuildId();
   const isDev = mode === "development";
   const demoRecordsDir = env.DEMO_RECORDS_DIR ? path.resolve(env.DEMO_RECORDS_DIR) : DEFAULT_DEMO_RECORDS_DIR;
+  const disposeEventHubs = new Set<() => void>();
+  const attachDemoRecords = (server: Pick<ViteDevServer | PreviewServer, "httpServer" | "middlewares">) => {
+    const events = createDemoRecordEventHub();
+    const dispose = () => {
+      events.close();
+      disposeEventHubs.delete(dispose);
+      server.httpServer?.off("close", dispose);
+    };
+    disposeEventHubs.add(dispose);
+    server.httpServer?.once("close", dispose);
+    server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir, env.VOICEVOX_TIMING_PROFILE?.trim() || "local-pc", events));
+  };
 
   return {
     define: {
@@ -815,11 +838,15 @@ export default defineConfig(({ mode }) => {
         name: "local-api",
         configureServer(server) {
           server.middlewares.use(createGeminiMiddleware(env));
-          server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir, env.VOICEVOX_TIMING_PROFILE?.trim() || "local-pc"));
+          attachDemoRecords(server);
         },
         configurePreviewServer(server) {
           server.middlewares.use(createGeminiMiddleware(env));
-          server.middlewares.use(createDemoRecordMiddleware(demoRecordsDir, env.VOICEVOX_TIMING_PROFILE?.trim() || "local-pc"));
+          attachDemoRecords(server);
+        },
+        closeBundle() {
+          // Also covers middleware-mode dev servers without their own HTTP server.
+          for (const dispose of disposeEventHubs) dispose();
         },
       },
     ],

@@ -13,6 +13,7 @@ import VoicevoxServerSelector from "./components/VoicevoxServerSelector";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
 import { appBuildId } from "./config/buildInfo";
+import { getDrawingAnimationEndProgress, getSingingLineCount } from "./utils/playbackTiming";
 import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
 import { GenerateEkakiUtaError, generateEkakiUta } from "./services/geminiService";
 import { buildDebugBundleArtifacts, createDebugBundle, createDebugBundleFromArtifacts, createDebugRecordId, DebugBundleArtifacts, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
@@ -236,11 +237,6 @@ const getExperimentNoteToneClass = (key: number | null) => {
 
 const getExperimentNoteWidth = (frameLength: number) => Math.max(44, Math.min(150, frameLength * 1.85));
 
-const getSingingLineCount = (lyrics: LyricsResponse | null) => {
-  const singingLineCount = lyrics?.singingKanaLines?.filter((line) => line.trim().length > 0).length ?? 0;
-  return singingLineCount || lyrics?.lines.filter((line) => line.trim().length > 0).length || 0;
-};
-
 const serializeSingingScore = (score: SingingScore | null) => JSON.stringify(score, null, 2);
 
 const sanitizeFileName = (value: string) =>
@@ -282,26 +278,6 @@ const downloadTextFile = (fileName: string, content: string, mimeType: string) =
   link.click();
 
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-};
-
-const getDrawingAnimationEndProgress = (lyrics: LyricsResponse | null, score: SingingScore | null) => {
-  const lineCount = getSingingLineCount(lyrics);
-
-  if (!score || lineCount <= 1) {
-    return 1;
-  }
-
-  const totalFrames = score.notes.reduce((sum, note) => sum + note.frame_length, 0);
-
-  if (totalFrames <= 0) {
-    return 1;
-  }
-
-  const leadingRestFrames = score.notes[0]?.key === null && score.notes[0]?.lyric === "" ? score.notes[0].frame_length : 0;
-  const phraseFrames = (totalFrames - leadingRestFrames) / lineCount;
-  const lastLineStartFrame = leadingRestFrames + phraseFrames * (lineCount - 1);
-
-  return Math.min(1, Math.max(0.1, lastLineStartFrame / totalFrames));
 };
 
 const isEditableAppKeyboardTarget = (target: EventTarget | null) => {
@@ -3062,6 +3038,9 @@ const App: React.FC = () => {
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
+                {import.meta.env.DEV && <a href="/gallery" target="_blank" rel="noopener noreferrer" className="rounded-full border-2 border-yellow-300 bg-yellow-100 px-4 py-2 text-sm font-black text-orange-800 hover:bg-yellow-200">
+                  展示ギャラリーを開く
+                </a>}
                 <div className="flex rounded-full bg-orange-50 p-1">
                   <button
                     type="button"
