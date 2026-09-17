@@ -12,6 +12,14 @@ const pipeline = await vite.ssrLoadModule("/services/lyricsPipeline.ts");
 const evaluationDraftDb = await vite.ssrLoadModule("/services/evaluationDraftDb.ts");
 const evaluationSubmission = await vite.ssrLoadModule("/services/evaluationSubmissionService.ts");
 const geminiService = await vite.ssrLoadModule("/services/geminiService.ts");
+const generationConfig = await vite.ssrLoadModule("/config/generationConfig.ts");
+
+test("normal generation defaults to one candidate and A/B comparison is opt-in", () => {
+  for (const setting of [undefined, "", "invalid", "0", "3", "1"]) {
+    assert.equal(generationConfig.resolveLyricsCandidateCount(setting), 1);
+  }
+  assert.equal(generationConfig.resolveLyricsCandidateCount(" 2 "), 2);
+});
 
 const strokeGroups = [
   {

@@ -1254,6 +1254,15 @@ const App: React.FC = () => {
     });
   };
 
+  // A receipt can also be issued for one candidate. Cloud evaluation still
+  // requires a completed A/B choice; browser saving is independent of it.
+  const canSaveEvaluationToCloud = (draft: EvaluationDraft | null) =>
+    !!draft?.firstImpressionSelection
+    && isComparableCandidateSet(draft.candidates)
+    && !!evaluationReceipt
+    && !!evaluationReceiptExpiresAt
+    && Date.parse(evaluationReceiptExpiresAt) > Date.now();
+
   const handleFirstImpressionSelection = async (selection: EvaluationSelection) => {
     if (!isFirstImpressionOpen || evaluationSelection !== null || !isComparableCandidateSet(generatedLyricsCandidates)) return;
 
@@ -1272,9 +1281,7 @@ const App: React.FC = () => {
     });
 
     setIsFirstImpressionOpen(false);
-    const canSaveToCloud = !!evaluationReceipt
-      && !!evaluationReceiptExpiresAt
-      && Date.parse(evaluationReceiptExpiresAt) > Date.now();
+    const canSaveToCloud = canSaveEvaluationToCloud(evaluationDraftRef.current);
     const canSaveInBrowser = appFeatures.debugHistory && !!debugExportSource;
     const needsCandidateActivation = previewCandidateId !== targetCandidateId;
     if (canSaveInBrowser || canSaveToCloud) {
@@ -1391,11 +1398,8 @@ const App: React.FC = () => {
         ...(nextDraft && appFeatures.debugHistory ? [saveEvaluationDraft(nextDraft)] : []),
         saveCurrentResultInBrowser(activationAtConsent, debugSourceAtConsent),
       ]);
-      const canSaveToCloud = !!nextDraft
-        && !!evaluationReceipt
-        && !!evaluationReceiptExpiresAt
-        && Date.parse(evaluationReceiptExpiresAt) > Date.now();
-      const evaluationPayload = canSaveToCloud
+      const canSaveToCloud = canSaveEvaluationToCloud(nextDraft);
+      const evaluationPayload = nextDraft && canSaveToCloud
         ? buildEvaluationSubmission(nextDraft, evaluationReceipt, appBuildId, updatedAt, EVALUATION_EXPERIMENT_ROUND_ID)
         : null;
       const fullArchiveRequested = !!evaluationPayload && !!archiveSnapshotAtConsent && !!archiveTicketAtConsent;
@@ -1432,7 +1436,7 @@ const App: React.FC = () => {
       if (archiveRequestFailed) {
         setSaveToast({ message: archive?.deletionReceipt ? "作品データは送らず、削除レシートをダウンロードしました" : archive?.error ?? "作品データを保存できませんでした。歌はそのまま使えます", tone: "error" });
       } else if (savedInBrowser && (savedToCloud || !canSaveToCloud) && (!archive || archiveSaved)) {
-        setSaveToast({ message: archiveSaved ? "作品を1年間、非公開で保存しました" : "保存しました。ありがとう！", tone: "success" });
+        setSaveToast({ message: archiveSaved ? "作品を1年間、非公開で保存しました" : savedToCloud ? "保存しました。ありがとう！" : "このブラウザに保存しました", tone: "success" });
       } else if (archivePartial) {
         setSaveToast({ message: "回答は保存しましたが、作品データの一部を保存できませんでした", tone: "error" });
       } else if (savedInBrowser) {
@@ -2294,6 +2298,11 @@ const App: React.FC = () => {
           if (isComparableCandidateSet(generatedCandidates) && evaluationDraft) {
             setIsFirstImpressionOpen(true);
             setIsInitialPlaybackPromptVisible(false);
+          } else if (appFeatures.debugHistory && debugExportSourceRef.current) {
+            // Single-candidate and legacy results have no A/B dialog, but still
+            // need their own browser-save choice before the playback prompt.
+            setIsEvaluationConsentOpen(true);
+            setIsInitialPlaybackPromptVisible(false);
           } else {
             setIsInitialPlaybackPromptVisible(true);
           }
@@ -2837,7 +2846,7 @@ const App: React.FC = () => {
         open={isEvaluationConsentOpen}
         pending={isEvaluationSubmissionPending}
         savesInBrowser={appFeatures.debugHistory && !!debugExportSource}
-        savesToCloud={!!evaluationReceipt && !!evaluationReceiptExpiresAt && Date.parse(evaluationReceiptExpiresAt) > Date.now()}
+        savesToCloud={canSaveEvaluationToCloud(evaluationDraftRef.current)}
         savesFullArchive={!!archiveGenerationTicketRef.current && !!creationArchiveSnapshotRef.current}
         onAccept={() => void handleEvaluationCentralConsent("accepted")}
         onDecline={() => void handleEvaluationCentralConsent("declined")}

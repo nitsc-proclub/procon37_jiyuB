@@ -51,7 +51,7 @@ const EvaluationConsentModal: React.FC<EvaluationConsentModalProps> = ({ open, p
       >
         <p className="text-xs font-black tracking-[0.18em] text-sky-500">今回の歌</p>
         <h2 id="evaluation-consent-title" className="mt-1 text-2xl font-black leading-tight text-gray-800">
-          この歌を保存してもいい？
+          {savesInBrowser && !savesToCloud ? "このブラウザに保存する？" : "この歌を保存してもいい？"}
         </h2>
         <div id="evaluation-consent-description" className="mt-4 space-y-2 text-sm font-semibold leading-relaxed text-gray-600">
           {savesInBrowser && <p><span className="font-black text-gray-800">このブラウザ：</span>絵と歌を、あとで開けるように保存します。</p>}

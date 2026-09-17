@@ -1,6 +1,6 @@
 export type LyricsCandidateCount = 1 | 2;
 
-const DEFAULT_LYRICS_CANDIDATE_COUNT: LyricsCandidateCount = 2;
+const DEFAULT_LYRICS_CANDIDATE_COUNT: LyricsCandidateCount = 1;
 
 /** Parse the shared generation setting used by Vite middleware and the Worker. */
 export const resolveLyricsCandidateCount = (value: unknown): LyricsCandidateCount => {
