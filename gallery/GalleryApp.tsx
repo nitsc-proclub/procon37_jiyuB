@@ -6,7 +6,7 @@ import { useGalleryRecords } from "./useGalleryRecords";
 import {
   cardPosition, contentHeight, createNavigationInputFilter, galleryLayout, GALLERY_ACTION_EVENT, GALLERY_ACTIONS, GALLERY_SETTINGS,
   keyAction, nextSelection, pencilPath, preserveSelection, readGalleryVolume, tourEnd,
-  type GalleryAction, type GalleryLayout,
+  selectionScrollFrame, selectionScrollTarget, type GalleryAction, type SelectionScroll,
 } from "./model";
 import "./gallery.css";
 
@@ -45,6 +45,8 @@ export default function GalleryApp() {
   const volumeTimer = useRef<number | null>(null);
   const actionRef = useRef<(action: GalleryAction) => void>(() => {});
   const navigationInput = useRef(createNavigationInputFilter());
+  const selectionScroll = useRef<SelectionScroll | null>(null);
+  const resumeSelectionScroll = useRef(false);
 
   const select = useCallback((id: string | null) => { selection.current = id; setSelectedId(id); }, []);
   const captureAnchor = useCallback((): Anchor | null => {
@@ -58,6 +60,22 @@ export default function GalleryApp() {
     if (!anchor || !viewport.current) return;
     const index = recordsRef.current.findIndex(record => record.recordId === anchor.id);
     if (index >= 0) viewport.current.scrollTop = Math.max(0, cardPosition(index, anchor.id, layoutRef.current).top - anchor.offset);
+  }, []);
+  const revealSelection = useCallback((id: string | null) => {
+    const element = viewport.current;
+    const index = recordsRef.current.findIndex(record => record.recordId === id);
+    if (!element || index < 0) return;
+    const target = selectionScrollTarget(index, recordsRef.current.length, layoutRef.current, element.scrollTop);
+    // Repeated navigation within a row should not restart a journey in progress.
+    if (selectionScroll.current?.to === target) return;
+    selectionScroll.current = Math.abs(target - element.scrollTop) < 1 ? null
+      : { from: element.scrollTop, to: target, startedAt: performance.now() };
+  }, []);
+  const pauseSelectionScroll = useCallback(() => {
+    if (selectionScroll.current) {
+      resumeSelectionScroll.current = true;
+      selectionScroll.current = null;
+    }
   }, []);
   const activity = useCallback(() => {
     lastInput.current = performance.now();
@@ -74,6 +92,7 @@ export default function GalleryApp() {
   }, [select]);
 
   const onSnapshot = useCallback((next: DemoRecordSummary[], initial: boolean) => {
+    pauseSelectionScroll();
     const previous = recordsRef.current;
     const previousIds = new Set(previous.map(record => record.recordId));
     const nextIds = new Set(next.map(record => record.recordId));
@@ -85,33 +104,39 @@ export default function GalleryApp() {
     recordsRef.current = next;
     select(preserveSelection(previous, next, selection.current));
     setRecords(next);
-  }, [captureAnchor, select]);
+  }, [captureAnchor, select, pauseSelectionScroll]);
   const { loading, error, refresh } = useGalleryRecords(onSnapshot);
 
   useLayoutEffect(() => {
     restoreAnchor(anchorToRestore.current);
     anchorToRestore.current = null;
-  }, [records, restoreAnchor]);
+    if (viewport.current) setScrollRow(Math.floor(viewport.current.scrollTop / layout.rowHeight));
+    if (resumeSelectionScroll.current) {
+      resumeSelectionScroll.current = false;
+      revealSelection(selection.current);
+    }
+  }, [records, layout, restoreAnchor, revealSelection]);
 
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;
     const observer = new ResizeObserver(() => {
       if (!element.clientWidth || !element.clientHeight) return;
+      pauseSelectionScroll();
       anchorToRestore.current = captureAnchor();
       setLayout(galleryLayout(element.clientWidth, element.clientHeight));
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [captureAnchor]);
-  useLayoutEffect(() => {
-    restoreAnchor(anchorToRestore.current);
-    anchorToRestore.current = null;
-    if (viewport.current) setScrollRow(Math.floor(viewport.current.scrollTop / layout.rowHeight));
-  }, [layout, restoreAnchor]);
+  }, [captureAnchor, pauseSelectionScroll]);
 
   const open = useCallback((id: string) => {
     activity(); select(id);
+    // Enter may arrive before the scroll finishes. Keep the selected row in
+    // view when returning from playback, without animating a hidden viewport.
+    if (selectionScroll.current && viewport.current) viewport.current.scrollTop = selectionScroll.current.to;
+    selectionScroll.current = null;
+    resumeSelectionScroll.current = false;
     returnAnchor.current = captureAnchor();
     introduction.current = null; setIntroducedId(null);
     work.current = id; setWorkId(id);
@@ -119,6 +144,7 @@ export default function GalleryApp() {
     window.history.pushState({ gallery: true }, "", url);
   }, [activity, select, captureAnchor]);
   const back = useCallback(() => {
+    selectionScroll.current = null;
     audioRef.current?.pause();
     work.current = null; setWorkId(null); activity();
     const url = new URL(window.location.href); url.searchParams.delete("work");
@@ -127,6 +153,7 @@ export default function GalleryApp() {
   }, [activity, restoreAnchor]);
   useEffect(() => {
     const pop = () => {
+      selectionScroll.current = null;
       const id = workFromUrl(); work.current = id; setWorkId(id); activity();
       if (!id) { audioRef.current?.pause(); restoreAnchor(returnAnchor.current); }
     };
@@ -144,6 +171,7 @@ export default function GalleryApp() {
   actionRef.current = action => {
     activity();
     if (!navigationInput.current(action, performance.now())) return;
+    if (action !== "next" && action !== "previous" && action !== "confirm") selectionScroll.current = null;
     if (action === "back") { if (work.current) back(); return; }
     if (action === "refresh") { refresh(); return; }
     if (action === "volumeUp" || action === "volumeDown") {
@@ -166,28 +194,23 @@ export default function GalleryApp() {
     if (action !== "next" && action !== "previous") return;
     const id = nextSelection(recordsRef.current, selection.current, action === "next" ? 1 : -1);
     select(id);
-    const index = recordsRef.current.findIndex(record => record.recordId === id);
-    const element = viewport.current, geometry = layoutRef.current;
-    if (!id || index < 0 || !element) return;
-    const position = cardPosition(index, id, geometry);
-    const margin = 28 * geometry.scale;
-    if (position.top < element.scrollTop + margin) element.scrollTop = Math.max(0, position.top - margin);
-    else if (position.top + geometry.cardHeight > element.scrollTop + element.clientHeight - margin)
-      element.scrollTop = position.top + geometry.cardHeight - element.clientHeight + margin;
+    revealSelection(id);
   };
 
   useEffect(() => {
     let pointer: { x: number; y: number } | null = null;
+    const manualActivity = () => { selectionScroll.current = null; resumeSelectionScroll.current = false; activity(); };
     const pointerMove = (event: PointerEvent) => {
       if (!pointer) { pointer = { x: event.clientX, y: event.clientY }; return; }
       if (Math.abs(event.clientX - pointer.x) + Math.abs(event.clientY - pointer.y) < 3) return;
-      pointer = { x: event.clientX, y: event.clientY }; activity();
+      pointer = { x: event.clientX, y: event.clientY }; manualActivity();
     };
     const key = (event: KeyboardEvent) => {
       activity();
       const target = event.target as HTMLElement | null;
       if (event.isComposing || target?.isContentEditable || target?.matches("input, textarea, select")) return;
       const action = keyAction(event);
+      if (!action) selectionScroll.current = null;
       if (action) {
         event.preventDefault();
         // Holding Enter/Space must not alternate play/pause on every key repeat.
@@ -198,17 +221,17 @@ export default function GalleryApp() {
       const action = (event as CustomEvent<unknown>).detail;
       if (typeof action === "string" && GALLERY_ACTIONS.includes(action as GalleryAction)) actionRef.current(action as GalleryAction);
     };
-    const visibility = () => { if (!document.hidden) activity(); };
+    const visibility = () => { selectionScroll.current = null; if (!document.hidden) activity(); };
     window.addEventListener("pointermove", pointerMove, { passive: true });
-    window.addEventListener("pointerdown", activity, { passive: true });
-    window.addEventListener("wheel", activity, { passive: true });
-    window.addEventListener("touchstart", activity, { passive: true });
+    window.addEventListener("pointerdown", manualActivity, { passive: true });
+    window.addEventListener("wheel", manualActivity, { passive: true });
+    window.addEventListener("touchstart", manualActivity, { passive: true });
     window.addEventListener("keydown", key);
     window.addEventListener(GALLERY_ACTION_EVENT, command);
     document.addEventListener("visibilitychange", visibility);
     return () => {
-      window.removeEventListener("pointermove", pointerMove); window.removeEventListener("pointerdown", activity);
-      window.removeEventListener("wheel", activity); window.removeEventListener("touchstart", activity);
+      window.removeEventListener("pointermove", pointerMove); window.removeEventListener("pointerdown", manualActivity);
+      window.removeEventListener("wheel", manualActivity); window.removeEventListener("touchstart", manualActivity);
       window.removeEventListener("keydown", key); window.removeEventListener(GALLERY_ACTION_EVENT, command);
       document.removeEventListener("visibilitychange", visibility);
       if (volumeTimer.current !== null) window.clearTimeout(volumeTimer.current);
@@ -231,6 +254,12 @@ export default function GalleryApp() {
       const elapsed = Math.min(64, now - previousTime); previousTime = now;
       const element = viewport.current;
       if (!element || document.hidden || work.current || !recordsRef.current.length) { frame = requestAnimationFrame(tick); return; }
+      if (selectionScroll.current) {
+        const travel = selectionScrollFrame(selectionScroll.current, now);
+        element.scrollTop = travel.top;
+        if (travel.done) selectionScroll.current = null;
+        frame = requestAnimationFrame(tick); return;
+      }
       if (introduction.current) {
         if (now >= introduction.current.until) { introduction.current = null; setIntroducedId(null); }
         frame = requestAnimationFrame(tick); return;

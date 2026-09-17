@@ -10,6 +10,7 @@ export const GALLERY_SETTINGS = {
   returnAfterMs: 5_000,
   reconcileEveryMs: 30_000,
   navigationIntervalMs: 180,
+  selectionScrollMs: 360,
 } as const;
 
 export type GalleryAction = "next" | "previous" | "confirm" | "back" | "refresh" | "volumeUp" | "volumeDown" | "togglePlayback";
@@ -104,6 +105,25 @@ export function cardPosition(index: number, id: string, layout: GalleryLayout) {
 
 export function contentHeight(count: number, layout: GalleryLayout) {
   return Math.max(layout.height, layout.topPadding * 2 + Math.ceil(count / layout.columns) * layout.rowHeight);
+}
+
+// Reveal the whole row, not each card's random vertical offset. Moving between
+// neighboring works in the same row must not nudge the viewport up and down.
+export function selectionScrollTarget(index: number, count: number, layout: GalleryLayout, scrollTop: number) {
+  const rowTop = layout.topPadding + Math.floor(index / layout.columns) * layout.rowHeight;
+  let target = scrollTop;
+  if (rowTop < scrollTop) target = rowTop;
+  else if (rowTop + layout.rowHeight > scrollTop + layout.height)
+    target = layout.rowHeight > layout.height ? rowTop : rowTop + layout.rowHeight - layout.height;
+  return Math.max(0, Math.min(contentHeight(count, layout) - layout.height, target));
+}
+
+export type SelectionScroll = { from: number; to: number; startedAt: number };
+
+export function selectionScrollFrame(scroll: SelectionScroll, now: number) {
+  const progress = Math.max(0, Math.min(1, (now - scroll.startedAt) / GALLERY_SETTINGS.selectionScrollMs));
+  const eased = progress * progress * (3 - 2 * progress);
+  return { top: scroll.from + (scroll.to - scroll.from) * eased, done: progress === 1 };
 }
 
 export function tourEnd(count: number, layout: GalleryLayout) {

@@ -85,6 +85,45 @@ test("device keys follow the agreed layout without overriding browser shortcuts 
   assert.ok(!gallery.GALLERY_KEY_BINDINGS.some(binding => binding.action.startsWith("volume")));
 });
 
+test("selection scrolling reveals whole rows and stays still within the same visible row", () => {
+  for (const [width, height] of [[1920, 1080], [1280, 720], [1366, 768]]) {
+    const layout = gallery.galleryLayout(width, height);
+    for (let index = 0; index < 8; index++) assert.equal(gallery.selectionScrollTarget(index, 40, layout, 0), 0);
+    const nextRow = gallery.selectionScrollTarget(8, 40, layout, 0);
+    assert.equal(nextRow, layout.rowHeight);
+    for (let index = 8; index < 12; index++) {
+      assert.equal(gallery.selectionScrollTarget(index, 40, layout, nextRow), nextRow);
+      assert.equal(gallery.selectionScrollTarget(index, 40, layout, nextRow / 2), nextRow);
+    }
+    assert.equal(gallery.selectionScrollTarget(3, 40, layout, nextRow), 0);
+    assert.equal(gallery.selectionScrollTarget(39, 40, layout, 0), gallery.contentHeight(40, layout) - height);
+    assert.equal(gallery.selectionScrollTarget(8, 9, layout, 0), nextRow, "partial final row stays within content");
+    assert.equal(gallery.selectionScrollTarget(7, 40, layout, nextRow / 2), nextRow / 2, "reversing toward a visible row cancels further travel");
+  }
+});
+
+test("selection scroll progresses through intermediate positions without overshoot in either direction", () => {
+  const duration = gallery.GALLERY_SETTINGS.selectionScrollMs;
+  for (const [from, to] of [[0, 540], [1080, 0]]) {
+    const journey = { from, to, startedAt: 1000 };
+    assert.deepEqual(gallery.selectionScrollFrame(journey, 900), { top: from, done: false });
+    const samples = [0, .1, .25, .5, .75, .9, 1].map(fraction => gallery.selectionScrollFrame(journey, 1000 + duration * fraction));
+    assert.equal(samples[0].top, from);
+    assert.equal(samples[3].top, (from + to) / 2);
+    assert.equal(samples[6].top, to);
+    for (let i = 1; i < samples.length; i++) {
+      assert.ok((samples[i].top - samples[i - 1].top) * (to - from) > 0);
+      assert.equal(samples[i].done, i === 6);
+    }
+    assert.deepEqual(gallery.selectionScrollFrame(journey, 5000), { top: to, done: true });
+  }
+  const inFlight = { from: 0, to: 540, startedAt: 0 };
+  const actual = gallery.selectionScrollFrame(inFlight, duration / 2).top;
+  const retargeted = { from: actual, to: 0, startedAt: duration / 2 };
+  assert.equal(gallery.selectionScrollFrame(retargeted, duration / 2).top, actual, "retarget starts at the current visible position");
+  assert.equal(gallery.selectionScrollFrame(retargeted, duration * 1.5).top, 0);
+});
+
 test("rotary duplicate pulses move once immediately, with no delayed extra steps", () => {
   const accept = gallery.createNavigationInputFilter();
   const items = Array.from({ length: 8 }, (_, i) => record(String(i)));
