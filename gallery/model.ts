@@ -9,6 +9,7 @@ export const GALLERY_SETTINGS = {
   introductionMs: 2_800,
   returnAfterMs: 5_000,
   reconcileEveryMs: 30_000,
+  navigationIntervalMs: 180,
 } as const;
 
 export type GalleryAction = "next" | "previous" | "confirm" | "back" | "refresh" | "volumeUp" | "volumeDown" | "togglePlayback";
@@ -31,6 +32,24 @@ export function keyAction(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "altKey
   return bindings.find(binding => binding.key.toLowerCase() === event.key.toLowerCase()
     && !!binding.ctrl === event.ctrlKey && !!binding.alt === event.altKey
     && !!binding.shift === event.shiftKey && !!binding.meta === event.metaKey)?.action;
+}
+
+// Leading-edge throttle: react immediately, then discard duplicate rotary pulses.
+// Ignored pulses never extend the window or queue a delayed move. A direction
+// reversal is always immediate so visitors can correct an overshoot.
+export function createNavigationInputFilter(intervalMs = GALLERY_SETTINGS.navigationIntervalMs) {
+  let previous: "next" | "previous" | null = null;
+  let acceptedAt = -Infinity;
+  return (action: GalleryAction, now: number) => {
+    if (action !== "next" && action !== "previous") {
+      previous = null;
+      return true;
+    }
+    if (action === previous && now - acceptedAt < intervalMs) return false;
+    previous = action;
+    acceptedAt = now;
+    return true;
+  };
 }
 
 export function galleryRecords(records: DemoRecordSummary[]) {

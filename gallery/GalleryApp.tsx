@@ -4,7 +4,7 @@ import GalleryCard from "./GalleryCard";
 import GalleryPlayback from "./GalleryPlayback";
 import { useGalleryRecords } from "./useGalleryRecords";
 import {
-  cardPosition, contentHeight, galleryLayout, GALLERY_ACTION_EVENT, GALLERY_ACTIONS, GALLERY_SETTINGS,
+  cardPosition, contentHeight, createNavigationInputFilter, galleryLayout, GALLERY_ACTION_EVENT, GALLERY_ACTIONS, GALLERY_SETTINGS,
   keyAction, nextSelection, pencilPath, preserveSelection, readGalleryVolume, tourEnd,
   type GalleryAction, type GalleryLayout,
 } from "./model";
@@ -44,6 +44,7 @@ export default function GalleryApp() {
   const [volumeNotice, setVolumeNotice] = useState(false);
   const volumeTimer = useRef<number | null>(null);
   const actionRef = useRef<(action: GalleryAction) => void>(() => {});
+  const navigationInput = useRef(createNavigationInputFilter());
 
   const select = useCallback((id: string | null) => { selection.current = id; setSelectedId(id); }, []);
   const captureAnchor = useCallback((): Anchor | null => {
@@ -142,6 +143,7 @@ export default function GalleryApp() {
 
   actionRef.current = action => {
     activity();
+    if (!navigationInput.current(action, performance.now())) return;
     if (action === "back") { if (work.current) back(); return; }
     if (action === "refresh") { refresh(); return; }
     if (action === "volumeUp" || action === "volumeDown") {

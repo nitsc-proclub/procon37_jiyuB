@@ -85,6 +85,42 @@ test("device keys follow the agreed layout without overriding browser shortcuts 
   assert.ok(!gallery.GALLERY_KEY_BINDINGS.some(binding => binding.action.startsWith("volume")));
 });
 
+test("rotary duplicate pulses move once immediately, with no delayed extra steps", () => {
+  const accept = gallery.createNavigationInputFilter();
+  const items = Array.from({ length: 8 }, (_, i) => record(String(i)));
+  let selected = "0";
+  for (const time of [0, 18, 52]) {
+    if (accept("next", time)) selected = gallery.nextSelection(items, selected, 1);
+  }
+  assert.equal(selected, "1");
+  for (const time of [240, 257, 285]) {
+    if (accept("next", time)) selected = gallery.nextSelection(items, selected, 1);
+  }
+  assert.equal(selected, "2");
+  assert.equal(accept("previous", 300), true, "reverse immediately to correct selection");
+  assert.equal(accept("previous", 322), false);
+  assert.equal(accept("next", 340), true);
+  assert.equal(accept("confirm", 345), true);
+  assert.equal(accept("previous", 350), true, "commands must not delay navigation");
+});
+
+test("continuous rotation is paced without starvation, and both directions stay clamped", () => {
+  for (const action of ["next", "previous"]) {
+    const accept = gallery.createNavigationInputFilter();
+    const times = Array.from({ length: 31 }, (_, i) => i * 30).filter(time => accept(action, time));
+    assert.deepEqual(times, [0, 180, 360, 540, 720, 900]);
+  }
+  const accept = gallery.createNavigationInputFilter();
+  const items = [record("first"), record("last")];
+  let selected = "last";
+  for (const time of [0, 20, 180]) {
+    if (accept("next", time)) selected = gallery.nextSelection(items, selected, 1);
+  }
+  assert.equal(selected, "last");
+  assert.equal(accept("previous", 190), true);
+  assert.equal(gallery.nextSelection(items, selected, -1), "first");
+});
+
 test("pencil line remains a single connected path across a window of rows", () => {
   const layout = gallery.galleryLayout(1920, 1080);
   for (const row of [0, 7, 99]) {
