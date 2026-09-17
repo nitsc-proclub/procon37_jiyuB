@@ -10,7 +10,7 @@ export const GALLERY_SETTINGS = {
   returnAfterMs: 5_000,
   reconcileEveryMs: 30_000,
   navigationIntervalMs: 180,
-  selectionScrollMs: 360,
+  selectionScrollMs: 180,
 } as const;
 
 export type GalleryAction = "next" | "previous" | "confirm" | "back" | "refresh" | "volumeUp" | "volumeDown" | "togglePlayback";
@@ -122,7 +122,8 @@ export type SelectionScroll = { from: number; to: number; startedAt: number };
 
 export function selectionScrollFrame(scroll: SelectionScroll, now: number) {
   const progress = Math.max(0, Math.min(1, (now - scroll.startedAt) / GALLERY_SETTINGS.selectionScrollMs));
-  const eased = progress * progress * (3 - 2 * progress);
+  // Move promptly on input, then decelerate into the row without a hard cut.
+  const eased = 1 - (1 - progress) * (1 - progress);
   return { top: scroll.from + (scroll.to - scroll.from) * eased, done: progress === 1 };
 }
 

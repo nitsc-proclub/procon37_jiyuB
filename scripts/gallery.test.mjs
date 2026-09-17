@@ -109,7 +109,8 @@ test("selection scroll progresses through intermediate positions without oversho
     assert.deepEqual(gallery.selectionScrollFrame(journey, 900), { top: from, done: false });
     const samples = [0, .1, .25, .5, .75, .9, 1].map(fraction => gallery.selectionScrollFrame(journey, 1000 + duration * fraction));
     assert.equal(samples[0].top, from);
-    assert.equal(samples[3].top, (from + to) / 2);
+    const halfwayTravel = (samples[3].top - from) / (to - from);
+    assert.ok(halfwayTravel > .5 && halfwayTravel < .9, "respond promptly, with some travel left to ease into the row");
     assert.equal(samples[6].top, to);
     for (let i = 1; i < samples.length; i++) {
       assert.ok((samples[i].top - samples[i - 1].top) * (to - from) > 0);
