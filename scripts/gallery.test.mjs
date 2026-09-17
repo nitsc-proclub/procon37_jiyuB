@@ -33,7 +33,7 @@ test("card personality stays attached to ID across updates and remains within ag
     gallery.cardTraits(`other-${index}`);
     assert.deepEqual(gallery.cardTraits(`work-${index}`), a);
     assert.ok(Math.abs(a.x) <= 20 && Math.abs(a.y) <= 25 && Math.abs(a.rotation) <= 1);
-    assert.ok(a.amplitude >= 2 && a.amplitude <= 6);
+    assert.ok(a.amplitude >= 6 && a.amplitude <= 12);
     assert.ok(a.duration >= 6 && a.duration <= 11);
   }
 });
@@ -46,9 +46,10 @@ test("eight complete cards fit a landscape viewport, with room for float and sel
       const cards = Array.from({ length: 8 }, (_, index) => {
         const position = gallery.cardPosition(index, `work-${sample}-${index}`, layout);
         // Includes rotation, selection enlargement and float extrema.
-        const margin = layout.cardWidth * .026 + 6 * layout.scale;
-        return { left: position.left - margin, right: position.left + layout.cardWidth + margin,
-          top: position.top - margin, bottom: position.top + layout.cardHeight + margin };
+        const horizontalMargin = layout.cardWidth * .026;
+        const verticalMargin = horizontalMargin + 12 * layout.scale;
+        return { left: position.left - horizontalMargin, right: position.left + layout.cardWidth + horizontalMargin,
+          top: position.top - verticalMargin, bottom: position.top + layout.cardHeight + verticalMargin };
       });
       for (let i = 0; i < cards.length; i++) {
         const a = cards[i];
@@ -69,12 +70,19 @@ test("idle tour ends at work 32 regardless of total history; manual content reta
   assert.equal(gallery.tourEnd(9, layout), 540);
 });
 
-test("device mapping is explicitly unassigned and respects all modifiers when configured", () => {
-  const event = { key: "ArrowRight", ctrlKey: false, altKey: false, shiftKey: false, metaKey: false };
-  assert.equal(gallery.keyAction(event), undefined);
-  const binding = [{ key: "ArrowRight", action: "next" }];
-  assert.equal(gallery.keyAction(event, binding), "next");
-  assert.equal(gallery.keyAction({ ...event, ctrlKey: true }, binding), undefined);
+test("device keys follow the agreed layout without overriding browser shortcuts or assigning volume keys", () => {
+  const event = { ctrlKey: false, altKey: false, shiftKey: false, metaKey: false };
+  for (const [key, action] of [["ArrowRight", "next"], ["ArrowLeft", "previous"], ["Enter", "confirm"],
+    ["Escape", "back"], ["r", "refresh"], ["R", "refresh"], [" ", "togglePlayback"]]) {
+    assert.equal(gallery.keyAction({ ...event, key }), action);
+    for (const modifier of ["ctrlKey", "altKey", "shiftKey", "metaKey"]) {
+      assert.equal(gallery.keyAction({ ...event, key, [modifier]: true }), undefined);
+    }
+  }
+  for (const key of ["ArrowUp", "ArrowDown", "+", "-", "AudioVolumeUp", "AudioVolumeDown", "Tab"]) {
+    assert.equal(gallery.keyAction({ ...event, key }), undefined);
+  }
+  assert.ok(!gallery.GALLERY_KEY_BINDINGS.some(binding => binding.action.startsWith("volume")));
 });
 
 test("pencil line remains a single connected path across a window of rows", () => {

@@ -39,7 +39,6 @@ export default function GalleryApp() {
   const returnAnchor = useRef<Anchor | null>(null);
   const lastInput = useRef(performance.now());
   const endSince = useRef<number | null>(null);
-  const reduced = useRef(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [volume, setVolume] = useState(readGalleryVolume);
   const volumeRef = useRef(volume);
   const [volumeNotice, setVolumeNotice] = useState(false);
@@ -185,17 +184,19 @@ export default function GalleryApp() {
     const key = (event: KeyboardEvent) => {
       activity();
       const target = event.target as HTMLElement | null;
-      if (target?.isContentEditable || target?.matches("input, textarea, select")) return;
+      if (event.isComposing || target?.isContentEditable || target?.matches("input, textarea, select")) return;
       const action = keyAction(event);
-      if (action) { event.preventDefault(); actionRef.current(action); }
+      if (action) {
+        event.preventDefault();
+        // Holding Enter/Space must not alternate play/pause on every key repeat.
+        if (!event.repeat || action === "next" || action === "previous") actionRef.current(action);
+      }
     };
     const command = (event: Event) => {
       const action = (event as CustomEvent<unknown>).detail;
       if (typeof action === "string" && GALLERY_ACTIONS.includes(action as GalleryAction)) actionRef.current(action as GalleryAction);
     };
     const visibility = () => { if (!document.hidden) activity(); };
-    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const motionChange = () => { reduced.current = motion.matches; activity(); };
     window.addEventListener("pointermove", pointerMove, { passive: true });
     window.addEventListener("pointerdown", activity, { passive: true });
     window.addEventListener("wheel", activity, { passive: true });
@@ -203,12 +204,11 @@ export default function GalleryApp() {
     window.addEventListener("keydown", key);
     window.addEventListener(GALLERY_ACTION_EVENT, command);
     document.addEventListener("visibilitychange", visibility);
-    motion.addEventListener("change", motionChange);
     return () => {
       window.removeEventListener("pointermove", pointerMove); window.removeEventListener("pointerdown", activity);
       window.removeEventListener("wheel", activity); window.removeEventListener("touchstart", activity);
       window.removeEventListener("keydown", key); window.removeEventListener(GALLERY_ACTION_EVENT, command);
-      document.removeEventListener("visibilitychange", visibility); motion.removeEventListener("change", motionChange);
+      document.removeEventListener("visibilitychange", visibility);
       if (volumeTimer.current !== null) window.clearTimeout(volumeTimer.current);
     };
   }, [activity]);
@@ -244,7 +244,7 @@ export default function GalleryApp() {
         }
         frame = requestAnimationFrame(tick); return;
       }
-      if (!idleRef.current && !reduced.current && now - lastInput.current >= GALLERY_SETTINGS.idleAfterMs) {
+      if (!idleRef.current && now - lastInput.current >= GALLERY_SETTINGS.idleAfterMs) {
         idleRef.current = true; setIdle(true); endSince.current = null;
       }
       if (pending.current.length && (idleRef.current || (element.scrollTop < 8 && now - lastInput.current > 900))) {

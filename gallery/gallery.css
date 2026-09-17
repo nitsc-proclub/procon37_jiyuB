@@ -24,7 +24,9 @@
 .gallery-viewport.at-top .gallery-slot { transition: top 650ms cubic-bezier(.22, .8, .25, 1), left 650ms cubic-bezier(.22, .8, .25, 1); }
 .gallery-slot.is-waiting { visibility: hidden; pointer-events: none; }
 .gallery-arrival, .gallery-float { width: 100%; height: 100%; position: relative; }
-.gallery-float { animation: gallery-float var(--float-duration) ease-in-out var(--float-delay) infinite; }
+/* This exhibition deliberately keeps its motion even when the shared OS-motion
+   rule in styles.css reduces animations. Scope these overrides to gallery only. */
+.gallery-float { animation: gallery-float var(--float-duration) ease-in-out var(--float-delay) infinite !important; }
 .gallery-card {
   display: flex; flex-direction: column; width: 100%; height: 100%; padding: 0;
   border: 2px solid #ffe9a0; border-radius: clamp(22px, 2vw, 40px);
@@ -38,18 +40,15 @@
 .gallery-art img { display: block; width: 100%; height: 100%; object-fit: contain; user-select: none; }
 .gallery-title { display: flex; flex: 0 0 18%; width: 100%; justify-content: center; align-items: center; padding: 2px 4.5%; border-radius: 50% 50% 0 0 / 12% 12% 0 0; background: #fff8d5; }
 .gallery-title > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-align: center; text-wrap: balance; font-size: var(--title-size); line-height: 1.18; font-weight: 800; overflow-wrap: anywhere; }
-.gallery-ground-shadow { pointer-events: none; position: absolute; z-index: -1; width: 74%; height: 16px; left: 13%; bottom: -17px; border-radius: 50%; background: #c093392d; filter: blur(7px); animation: gallery-shadow var(--float-duration) ease-in-out var(--float-delay) infinite; }
+.gallery-ground-shadow { pointer-events: none; position: absolute; z-index: -1; width: 74%; height: 16px; left: 13%; bottom: -17px; border-radius: 50%; background: #c093392d; filter: blur(7px); animation: gallery-shadow var(--float-duration) ease-in-out var(--float-delay) infinite !important; }
 .gallery-slot.is-selected { z-index: 3; }
 .gallery-slot.is-selected .gallery-card { border-color: #f3a723; box-shadow: 0 0 0 3px #ffd34c7a, 0 10px 30px #e4a12338; transform: rotate(0) scale(1.035); }
-.gallery-slot.is-selected .gallery-float, .gallery-slot:focus-within .gallery-float { animation-play-state: paused; }
-.gallery-slot.is-selected .gallery-ground-shadow { animation-play-state: paused; }
 .gallery-card:focus-visible { outline: 4px solid #c67511; outline-offset: 5px; }
 .gallery-app.is-idle .gallery-slot.is-selected .gallery-card { border-color: #ffe9a0; box-shadow: 0 7px 22px #d7a73520, 0 2px 5px #e7bb4220; transform: rotate(var(--card-rotation)); }
-.gallery-app.is-idle .gallery-slot.is-selected .gallery-float, .gallery-app.is-idle .gallery-slot.is-selected .gallery-ground-shadow { animation-play-state: running; }
 .gallery-slot.is-introducing { z-index: 5; }
-.gallery-slot.is-introducing .gallery-arrival { animation: gallery-arrive 1200ms cubic-bezier(.16, .78, .28, 1) both; }
-.gallery-slot.is-introducing .gallery-card { animation: gallery-glow 2800ms ease-out both; }
-.gallery-welcome { position: absolute; inset: -12%; pointer-events: none; animation: gallery-sparkles 2800ms ease-out both; }
+.gallery-slot.is-introducing .gallery-arrival { animation: gallery-arrive 1200ms cubic-bezier(.16, .78, .28, 1) both !important; }
+.gallery-slot.is-introducing .gallery-card { animation: gallery-glow 2800ms ease-out both !important; }
+.gallery-welcome { position: absolute; inset: -12%; pointer-events: none; animation: gallery-sparkles 2800ms ease-out both !important; }
 .gallery-welcome::before { content: ""; position: absolute; inset: 6%; border: 2px solid #facc1570; border-radius: 50%; transform: rotate(-16deg); }
 .gallery-welcome i { position: absolute; width: 8px; height: 27px; border-radius: 99px; background: linear-gradient(#ffcb50, #ffac32); }
 .gallery-welcome i:nth-child(1) { left: 5%; top: 10%; transform: rotate(-45deg); }
@@ -105,8 +104,4 @@
   .gallery-song-panel { padding: 16px; }
   .gallery-song-panel h1 { margin-bottom: 16px; }
   .gallery-playback { padding-left: 20px; padding-right: 20px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .gallery-slot, .gallery-card, .gallery-fade { transition: none; }
-  .gallery-welcome { display: none; }
 }

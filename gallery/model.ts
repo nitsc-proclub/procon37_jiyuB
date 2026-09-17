@@ -14,9 +14,16 @@ export const GALLERY_SETTINGS = {
 export type GalleryAction = "next" | "previous" | "confirm" | "back" | "refresh" | "volumeUp" | "volumeDown" | "togglePlayback";
 export type GalleryKeyBinding = { key: string; action: GalleryAction; ctrl?: boolean; alt?: boolean; shift?: boolean; meta?: boolean };
 
-// Deliberately unassigned: the exhibition device's keys will be agreed later.
-// Native mouse, Tab / Shift+Tab and button activation work without these bindings.
-export const GALLERY_KEY_BINDINGS: readonly GalleryKeyBinding[] = [];
+// Matches the one-handed device: clockwise sends Right, counterclockwise Left.
+// Volume actions remain available without assigning any keys to them.
+export const GALLERY_KEY_BINDINGS: readonly GalleryKeyBinding[] = [
+  { key: "ArrowRight", action: "next" },
+  { key: "ArrowLeft", action: "previous" },
+  { key: "Enter", action: "confirm" },
+  { key: "Escape", action: "back" },
+  { key: "r", action: "refresh" },
+  { key: " ", action: "togglePlayback" },
+];
 export const GALLERY_ACTION_EVENT = "ekaki-gallery-action";
 export const GALLERY_ACTIONS: readonly GalleryAction[] = ["next", "previous", "confirm", "back", "refresh", "volumeUp", "volumeDown", "togglePlayback"];
 
@@ -52,7 +59,7 @@ export function cardTraits(id: string) {
   };
   return { x: (random() * 2 - 1) * 20, y: (random() * 2 - 1) * 25,
     rotation: (random() * 2 - 1) * .8, duration: 6 + random() * 5,
-    delay: -random() * 11, amplitude: 2 + random() * 4, shadow: .85 + random() * .25 };
+    delay: -random() * 11, amplitude: 6 + random() * 6, shadow: .85 + random() * .25 };
 }
 
 export function galleryLayout(width: number, height: number) {
@@ -62,7 +69,7 @@ export function galleryLayout(width: number, height: number) {
   const cellWidth = (width - padding * 2) / columns;
   const topPadding = columns === 4 ? 0 : padding;
   const rowHeight = columns === 4 ? Math.max(210, height / 2) : Math.max(280, Math.min(490, cellWidth * 1.4));
-  const cardWidth = Math.max(130, Math.min(cellWidth - 72 * scale, (rowHeight - 86 * scale) / 1.18));
+  const cardWidth = Math.max(130, Math.min(cellWidth - 72 * scale, (rowHeight - 94 * scale) / 1.18));
   const cardHeight = cardWidth * 1.18;
   return { width, height, columns, scale, padding, topPadding, cellWidth, rowHeight, cardWidth, cardHeight };
 }
