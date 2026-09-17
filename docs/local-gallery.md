@@ -42,7 +42,7 @@ npm.cmd run dev
 
 ## 公開版との境界
 
-ギャラリーは `import.meta.env.DEV` とローカル機能フラグを満たす場合だけ読み込む。`npm run build` で作る公開用ファイルにはギャラリーの画面・CSS・リンク・SSE購読処理を含めない。公開版の `/gallery` は通常アプリの扱いになる。
+ギャラリーは `import.meta.env.DEV` とローカル機能フラグを満たす場合だけ読み込む。`npm run build` で作る公開用ファイルにはギャラリーの画面・CSS・リンク・SSE購読処理を含めない。公開環境では `/gallery` を提供しない（現在のWorker Static Assets設定では404）。
 
 記録APIとSSEはViteのローカルmiddlewareにのみ存在し、Cloudflare Workerには追加しない。ビルド済みの `preview` では展示画面を提供しないため、展示には上記の `dev` を使う。既存の合奏ブランチとは独立した機能。
 
