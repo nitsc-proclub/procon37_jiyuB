@@ -35,6 +35,7 @@ npm.cmd run dev
 | `confirm` | Enter | 選択作品を再生。再生中は一時停止／再開 |
 | `back` | Esc | 一覧へ戻る |
 | `refresh` | R | ページを壊さず記録一覧を再取得 |
+| `print` | P | 選択中の絵描き歌を既存の印刷レイアウトで印刷 |
 | `volumeUp` / `volumeDown` | 割り当てなし | 音量を5%ずつ変更。設定は同じブラウザーに保存 |
 | `togglePlayback` | Space | 再生中の一時停止／再開。一覧では何もしない |
 

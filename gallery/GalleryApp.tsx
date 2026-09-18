@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { DemoRecordSummary } from "../types";
+import PrintLayout from "../components/PrintLayout";
+import type { DemoRecordDetail, DemoRecordSummary } from "../types";
 import GalleryCard from "./GalleryCard";
 import GalleryPlayback from "./GalleryPlayback";
 import { useGalleryRecords } from "./useGalleryRecords";
@@ -25,6 +26,7 @@ export default function GalleryApp() {
   const [scrollRow, setScrollRow] = useState(0);
   const [atTop, setAtTop] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [printRecord, setPrintRecord] = useState<DemoRecordDetail | null>(null);
   const selection = useRef(selectedId);
   const [workId, setWorkId] = useState(workFromUrl);
   const work = useRef(workId);
@@ -43,7 +45,7 @@ export default function GalleryApp() {
   const volumeRef = useRef(volume);
   const [volumeNotice, setVolumeNotice] = useState(false);
   const volumeTimer = useRef<number | null>(null);
-  const actionRef = useRef<(action: GalleryAction) => void>(() => {});
+  const actionRef = useRef<(action: GalleryAction) => void>(() => { });
   const navigationInput = useRef(createNavigationInputFilter());
   const selectionScroll = useRef<SelectionScroll | null>(null);
   const resumeSelectionScroll = useRef(false);
@@ -168,6 +170,11 @@ export default function GalleryApp() {
     try { localStorage.setItem("ekaki-gallery-volume", String(next)); } catch { /* optional preference */ }
   }, []);
 
+  const handlePrintRecord = useCallback((record: DemoRecordDetail) => {
+    audioRef.current?.pause();
+    setPrintRecord(record);
+  }, []);
+
   actionRef.current = action => {
     activity();
     if (!navigationInput.current(action, performance.now())) return;
@@ -186,7 +193,7 @@ export default function GalleryApp() {
     if (work.current) {
       if (action === "togglePlayback" || action === "confirm") {
         const audio = audioRef.current;
-        if (audio?.paused) void audio.play().catch(() => {}); else audio?.pause();
+        if (audio?.paused) void audio.play().catch(() => { }); else audio?.pause();
       }
       return;
     }
@@ -310,26 +317,31 @@ export default function GalleryApp() {
   const visible = records.slice(firstIndex, (lastRow + 1) * layout.columns);
   const height = contentHeight(records.length, layout);
 
-  return <div className={`gallery-app${idle ? " is-idle" : ""}`} data-mode={workId ? "playback" : idle ? "exhibition" : "browse"}>
-    <div ref={viewport} className={`gallery-viewport${workId ? " is-covered" : ""}${atTop ? " at-top" : ""}`} aria-hidden={!!workId} inert={!!workId}
-      onScroll={() => { if (viewport.current) { setScrollRow(Math.floor(viewport.current.scrollTop / layout.rowHeight)); setAtTop(viewport.current.scrollTop < 8); } }}>
-      <main className="gallery-wall" aria-label="みんなの絵描き歌" style={{ height }}>
-        {!!records.length && <svg className="gallery-pencil" aria-hidden="true" width={layout.width}
-          style={{ top: firstRow * layout.rowHeight }} height={(lastRow - firstRow + 3) * layout.rowHeight}
-          viewBox={`0 ${firstRow * layout.rowHeight} ${layout.width} ${(lastRow - firstRow + 3) * layout.rowHeight}`}>
-          <defs><filter id="gallery-pencil-texture" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency=".07" numOctaves="2" seed="8" result="noise"/><feDisplacementMap in="SourceGraphic" in2="noise" scale="3"/></filter></defs>
-          <path d={pencilPath(firstRow, lastRow + 1, layout)} filter="url(#gallery-pencil-texture)"/>
-        </svg>}
-        {visible.map((record, offset) => <GalleryCard key={record.recordId} record={record} index={firstIndex + offset} layout={layout}
-          selected={record.recordId === selectedId} introducing={record.recordId === introducedId}
-          waiting={pending.current.includes(record.recordId) && record.recordId !== introducedId} idle={idle} onSelect={select} onOpen={open}/>)}
-        {!records.length && <div className="gallery-empty" role="status"><span aria-hidden="true">✎</span><p>{loading ? "みんなの作品を集めています…" : error ?? "最初の絵描き歌を待っています"}</p>{error && <button type="button" onClick={refresh}>もう一度読み込む</button>}</div>}
-      </main>
+  return <>
+    {printRecord && <PrintLayout lyrics={printRecord.lyrics} drawingData={printRecord.drawingData} onBack={() => setPrintRecord(null)} autoPrint />}
+    <div className={printRecord ? "hidden" : undefined}>
+      <div className={`gallery-app${idle ? " is-idle" : ""}`} data-mode={workId ? "playback" : idle ? "exhibition" : "browse"}>
+        <div ref={viewport} className={`gallery-viewport${workId ? " is-covered" : ""}${atTop ? " at-top" : ""}`} aria-hidden={!!workId} inert={!!workId}
+          onScroll={() => { if (viewport.current) { setScrollRow(Math.floor(viewport.current.scrollTop / layout.rowHeight)); setAtTop(viewport.current.scrollTop < 8); } }}>
+          <main className="gallery-wall" aria-label="みんなの絵描き歌" style={{ height }}>
+            {!!records.length && <svg className="gallery-pencil" aria-hidden="true" width={layout.width}
+              style={{ top: firstRow * layout.rowHeight }} height={(lastRow - firstRow + 3) * layout.rowHeight}
+              viewBox={`0 ${firstRow * layout.rowHeight} ${layout.width} ${(lastRow - firstRow + 3) * layout.rowHeight}`}>
+              <defs><filter id="gallery-pencil-texture" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency=".07" numOctaves="2" seed="8" result="noise" /><feDisplacementMap in="SourceGraphic" in2="noise" scale="3" /></filter></defs>
+              <path d={pencilPath(firstRow, lastRow + 1, layout)} filter="url(#gallery-pencil-texture)" />
+            </svg>}
+            {visible.map((record, offset) => <GalleryCard key={record.recordId} record={record} index={firstIndex + offset} layout={layout}
+              selected={record.recordId === selectedId} introducing={record.recordId === introducedId}
+              waiting={pending.current.includes(record.recordId) && record.recordId !== introducedId} idle={idle} onSelect={select} onOpen={open} />)}
+            {!records.length && <div className="gallery-empty" role="status"><span aria-hidden="true">✎</span><p>{loading ? "みんなの作品を集めています…" : error ?? "最初の絵描き歌を待っています"}</p>{error && <button type="button" onClick={refresh}>もう一度読み込む</button>}</div>}
+          </main>
+        </div>
+        <div className={`gallery-fade${fading ? " is-visible" : ""}`} aria-hidden="true" />
+        {!!records.length && error && !workId && <div className="gallery-connection" role="status">接続を確認しています。保存済みの作品を表示しています。</div>}
+        <GalleryPlayback recordId={workId} audioRef={audioRef} volume={volume} onVolume={updateVolume} onBack={back} onPrint={handlePrintRecord} />
+        {volumeNotice && <div className="gallery-volume" role="status">音量 {Math.round(volume * 100)}%</div>}
+        <div className="gallery-sr-only" aria-live="polite">{introducedId ? `${records.find(record => record.recordId === introducedId)?.title ?? "新しい作品"}が仲間入りしました` : ""}</div>
+      </div>
     </div>
-    <div className={`gallery-fade${fading ? " is-visible" : ""}`} aria-hidden="true"/>
-    {!!records.length && error && !workId && <div className="gallery-connection" role="status">接続を確認しています。保存済みの作品を表示しています。</div>}
-    <GalleryPlayback recordId={workId} audioRef={audioRef} volume={volume} onVolume={updateVolume} onBack={back}/>
-    {volumeNotice && <div className="gallery-volume" role="status">音量 {Math.round(volume * 100)}%</div>}
-    <div className="gallery-sr-only" aria-live="polite">{introducedId ? `${records.find(record => record.recordId === introducedId)?.title ?? "新しい作品"}が仲間入りしました` : ""}</div>
-  </div>;
+  </>;
 }

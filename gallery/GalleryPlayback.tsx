@@ -11,9 +11,10 @@ type Props = {
   volume: number;
   onVolume: (volume: number) => void;
   onBack: () => void;
+  onPrint: (record: DemoRecordDetail) => void;
 };
 
-export default function GalleryPlayback({ recordId, audioRef, volume, onVolume, onBack }: Props) {
+export default function GalleryPlayback({ recordId, audioRef, volume, onVolume, onBack, onPrint }: Props) {
   const [record, setRecord] = useState<DemoRecordDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [needsPlay, setNeedsPlay] = useState(false);
@@ -80,6 +81,23 @@ export default function GalleryPlayback({ recordId, audioRef, volume, onVolume, 
     return () => { active = false; };
   }, [record, audioRef]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!record || event.isComposing || event.repeat || event.ctrlKey || event.altKey || event.shiftKey || event.metaKey
+        || target?.isContentEditable || target?.matches("input, textarea, select")) return;
+      if (event.key.toLowerCase() !== "p") return;
+
+      event.preventDefault();
+      clearReturn();
+      audioRef.current?.pause();
+      onPrint(record);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [audioRef, onPrint, record]);
+
   return <section className="gallery-playback" hidden={!recordId} aria-label="絵描き歌の再生">
     <button type="button" className="gallery-back" onClick={onBack}><span aria-hidden="true">←</span> 一覧にもどる</button>
     {!record && <div className="gallery-player-message" role="status">{error ?? "歌を準備しています…"}</div>}
@@ -87,12 +105,12 @@ export default function GalleryPlayback({ recordId, audioRef, volume, onVolume, 
       <div className="gallery-canvas">
         {record && <DrawingPlaybackCanvas drawingData={record.drawingData} audioRef={audioRef} mode={displayMode}
           lineStrokeMappings={record.lyrics.lineStrokeMappings} singingScore={record.singingScore}
-          lyricLineCount={getSingingLineCount(record.lyrics)} animationEndProgress={getDrawingAnimationEndProgress(record.lyrics, record.singingScore)}/>}
+          lyricLineCount={getSingingLineCount(record.lyrics)} animationEndProgress={getDrawingAnimationEndProgress(record.lyrics, record.singingScore)} />}
       </div>
       <div className="gallery-song-panel">
         {record && <>
           <h1>{record.title}</h1>
-          <KaraokeLyricsPanel lyrics={record.lyrics} audioRef={audioRef} singingScore={record.singingScore} showKanaLines={false} className="gallery-karaoke"/>
+          <KaraokeLyricsPanel lyrics={record.lyrics} audioRef={audioRef} singingScore={record.singingScore} showKanaLines={false} className="gallery-karaoke" />
         </>}
         <div className="gallery-audio-panel">
           <div className="gallery-display-toggle" role="group" aria-label="絵の表示">
@@ -104,7 +122,7 @@ export default function GalleryPlayback({ recordId, audioRef, volume, onVolume, 
             onVolumeChange={() => { const audio = audioRef.current; if (audio) onVolume(audio.volume); }}
             onSeeking={clearReturn}
             onEnded={() => { clearReturn(); returnTimer.current = window.setTimeout(() => { if (audioRef.current?.ended) backRef.current(); }, GALLERY_SETTINGS.returnAfterMs); }}
-            onError={() => { if (audioRef.current?.getAttribute("src")) setError("音声を再生できませんでした。一覧からもう一度選んでください。"); }}/>
+            onError={() => { if (audioRef.current?.getAttribute("src")) setError("音声を再生できませんでした。一覧からもう一度選んでください。"); }} />
           {needsPlay && <button className="gallery-start-play" type="button" onClick={() => { void audioRef.current?.play().catch(() => setNeedsPlay(true)); }}>▶ 歌を再生する</button>}
           {record && error && <p role="alert">{error}</p>}
         </div>
