@@ -410,6 +410,57 @@ const refinePhraseLengths = (units: PhraseUnit[], original: number[], hint?: Mel
   return result;
 };
 
+// Run after phrase refinement. Expand the editable suffix only when necessary.
+const finalizeCadenceLengths = (units: PhraseUnit[], original: number[]): number[] => {
+  const pitched = units.flatMap((unit, index) => unit.type === "mora" ? [index] : []);
+  if (pitched.length < 2) return original;
+  const last = pitched.at(-1)!;
+  const previous = pitched.at(-2)!;
+  const starts = original.map((_, index) => original.slice(0, index).reduce((sum, value) => sum + value, 0));
+  if (original[last] >= original[previous]) return original;
+
+  type Candidate = { position: number; previousLength: number; changes: number; cost: number; lengths: number[] };
+  const preferredMinimum = units.every((unit, index) => unit.type === "rest"
+    || original[index] >= 2 * (1 + unit.extensionCount)) ? 2 : 1;
+  for (let minimumMora = preferredMinimum; minimumMora >= 1; minimumMora -= 1) {
+    for (let first = previous; first >= 0; first -= 1) {
+      let states: Candidate[] = [{ position: starts[first], previousLength: 0, changes: 0, cost: 0, lengths: [] }];
+      for (let index = first; index <= last; index += 1) {
+        const next = new Map<string, Candidate>();
+        const unit = units[index];
+        const minimum = unit.type === "rest" ? original[index] : minimumMora * (1 + unit.extensionCount);
+        for (const state of states) {
+          for (let length = minimum; state.position + length <= PHRASE_UNITS; length += 1) {
+            if (unit.type === "rest" && length !== original[index]) break;
+            const offset = state.position % UNITS_PER_BEAT;
+            if (offset !== 0 && length > UNITS_PER_BEAT - offset) break;
+            if (length > UNITS_PER_BEAT && length % UNITS_PER_BEAT !== 0) continue;
+            const end = state.position + length;
+            if (unit.type === "rest" && end % 2 !== 0) continue;
+            if (index === last && (end !== PHRASE_UNITS || length < state.previousLength)) continue;
+            const candidate: Candidate = {
+              position: end,
+              previousLength: unit.type === "rest" ? state.previousLength : length,
+              changes: state.changes + Number(length !== original[index]),
+              cost: state.cost + (length - original[index]) ** 2,
+              lengths: [...state.lengths, length],
+            };
+            const key = `${end}:${candidate.previousLength}`;
+            const existing = next.get(key);
+            if (!existing || candidate.changes < existing.changes
+              || (candidate.changes === existing.changes && candidate.cost < existing.cost)) next.set(key, candidate);
+          }
+        }
+        states = [...next.values()];
+      }
+      const best = states.filter(state => state.position === PHRASE_UNITS)
+        .sort((a, b) => a.changes - b.changes || a.cost - b.cost)[0];
+      if (best) return [...original.slice(0, first), ...best.lengths];
+    }
+  }
+  throw new Error("最後のドを直前の音以上の長さにして8拍に収められません。最終行の歌詞を短くしてください。");
+};
+
 const validatePhraseLengths = (units: PhraseUnit[], lengths: number[], expected: number) => {
   let position = 0;
   lengths.forEach((length, index) => {
@@ -553,7 +604,8 @@ const buildPhraseForLine = (
   const beatTemplate =
     rhythmTemplates.get(parsedLine.groups.length) ?? createFallbackBeatTemplate(parsedLine.groups.length);
   const originalLengths = allocateRhythmicPhraseLengths(parsedLine, isFinalLine, phraseLength, beatTemplate);
-  const noteLengths = refinePhraseLengths(phraseUnits, originalLengths, accentLineHint);
+  const refinedLengths = refinePhraseLengths(phraseUnits, originalLengths, accentLineHint);
+  const noteLengths = isFinalLine ? finalizeCadenceLengths(phraseUnits, refinedLengths) : refinedLengths;
   validatePhraseLengths(phraseUnits, noteLengths, phraseLength);
   let currentKey = previousKey;
   let moraIndex = 0;

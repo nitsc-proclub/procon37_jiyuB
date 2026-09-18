@@ -273,3 +273,28 @@ test("default score tempo follows the Vite setting", () => {
   const score = melody.buildSingingScore(lyrics(["あ"]), "env");
   assert.equal(score.notes.reduce((sum, n) => sum + n.frame_length, 0), 2 + Math.round(45000 / bpm));
 });
+
+test("final tonic is at least as long as the preceding pitched note after all refinements", () => {
+  for (const line of ["あーーい", "あいうえおーーか", "あいうえおーー か", "あ".repeat(28) + "いーう", "ねこ", "あ", "あ".repeat(32)]) {
+    const source = lyrics(["まるお かこお", line]);
+    const hints = [{ levels: [], phraseEnds: [6] }, { levels: [], phraseEnds: [melody.getSingingMoras(line).length] }];
+    for (const accent of [undefined, hints]) {
+      const score = buildSingingScore(source, "cadence", accent);
+      assertBeatAligned(score);
+      const sung = score.notes.filter(n => n.key !== null);
+      assert.equal(sung.at(-1).key, 60);
+      assert.ok(sung.at(-1).frame_length >= sung.at(-2).frame_length, line);
+      assert.equal(score.notes.reduce((sum, n) => sum + n.frame_length, 0), 962);
+      assert.deepEqual(score.notes.slice(0, 9).map(n => n.frame_length), [2, 60, 60, 60, 60, 60, 60, 60, 60]);
+      for (const bpm of [105, 125, 180]) {
+        const changed = buildSingingScore(source, "cadence", accent, bpm);
+        assert.equal(changed.notes.reduce((sum, n) => sum + n.frame_length, 0), 2 + 2 * Math.round(45000 / bpm));
+        const tail = changed.notes.filter(n => n.key !== null).slice(-2);
+        assert.ok(tail[1].frame_length >= tail[0].frame_length - 1, "equal musical values may differ by one rounded frame");
+      }
+    }
+  }
+  const pair = buildSingingScore(lyrics(["あーーい"]), "cadence");
+  assert.deepEqual(pair.notes.slice(1).map(n => n.frame_length / 15), [16, 16]);
+  assert.throws(() => buildSingingScore(lyrics(["あ".repeat(29) + "いーう"]), "too-dense"), /最後のド/);
+});
