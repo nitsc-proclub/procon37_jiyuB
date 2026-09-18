@@ -8,6 +8,7 @@ type PrintLayoutProps = {
   drawingData: DrawingData;
   onBack: () => void;
   autoPrint?: boolean;
+  showRomaji?: boolean;
 };
 
 const formatPrintDate = (date: Date) =>
@@ -29,7 +30,7 @@ const getDensityClassName = (lineCount: number) => {
   return "density-standard";
 };
 
-const PrintLayout: React.FC<PrintLayoutProps> = ({ lyrics, drawingData, onBack, autoPrint = false }) => {
+const PrintLayout: React.FC<PrintLayoutProps> = ({ lyrics, drawingData, onBack, autoPrint = false, showRomaji = true }) => {
   const printedAt = useMemo(() => formatPrintDate(new Date()), []);
   const fallbackSourceSize = useMemo(() => getPrintSourceSize(drawingData), [drawingData]);
   const [sourceSize, setSourceSize] = useState(fallbackSourceSize);
@@ -78,7 +79,7 @@ const PrintLayout: React.FC<PrintLayoutProps> = ({ lyrics, drawingData, onBack, 
           <header className="print-topbar">
             <div className="print-brand">
               <img className="print-logo" src="/logo.png" alt="超えかき歌！" />
-              <div className="print-romaji">Cho Ekaki Uta</div>
+              {showRomaji && <div className="print-romaji">Cho Ekaki Uta</div>}
             </div>
 
             <div className="print-title-block">

@@ -318,7 +318,7 @@ export default function GalleryApp() {
   const height = contentHeight(records.length, layout);
 
   return <>
-    {printRecord && <PrintLayout lyrics={printRecord.lyrics} drawingData={printRecord.drawingData} onBack={() => setPrintRecord(null)} autoPrint />}
+    {printRecord && <PrintLayout lyrics={printRecord.lyrics} drawingData={printRecord.drawingData} onBack={() => setPrintRecord(null)} autoPrint showRomaji={false} />}
     <div className={printRecord ? "hidden" : undefined}>
       <div className={`gallery-app${idle ? " is-idle" : ""}`} data-mode={workId ? "playback" : idle ? "exhibition" : "browse"}>
         <div ref={viewport} className={`gallery-viewport${workId ? " is-covered" : ""}${atTop ? " at-top" : ""}`} aria-hidden={!!workId} inert={!!workId}
