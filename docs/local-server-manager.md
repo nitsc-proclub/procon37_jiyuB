@@ -42,6 +42,32 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-local-sh
 - 歌詞・音声生成の設定は従来どおり `.env.local` と VOICEVOX Engine を使用します。管理画面は Vite サーバーを管理します。
 - ログは `logs/local-server/normal.log` と `normal.error.log` に保存します。
 - ポート3000が別のプログラムに使われている場合は、そのプログラムを停止せずエラーを表示します。
+
+## ローカル版でクラウドの歌声を使う
+
+Vite のローカル版でも、歌声生成サーバーから Cloudflare VPC / Google Cloud Run を選択できます。
+
+接続経路は `ブラウザー → ローカルVite API → 認証付きCloudflare Worker → 選択したVOICEVOX` です。ローカルVOICEVOXの合成・アクセント解析は従来どおり `/voicevox` 経由です。
+
+`.env.local` に次のサーバー専用設定を追加し、管理画面から再起動してください。
+
+```dotenv
+VOICEVOX_REMOTE_API_URL=https://cho-ekaki-uta.nitsc-proclub.workers.dev
+VOICEVOX_LOCAL_ACCESS_TOKEN=<32バイトの暗号学的乱数をbase64url化した43文字>
+```
+
+同じトークンを `npx.cmd wrangler secret put VOICEVOX_LOCAL_ACCESS_TOKEN` で公開Workerにも登録します。秘密の値はコマンド引数に書かず、標準入力で渡してください。`.env.local` はGit管理外です。トークンに `VITE_` を付けたり、ブラウザーの設定・ログ・公開ファイルに記録したりしないでください。変更時はWorkerとローカルを同時に更新します。
+
+ローカルの歌詞生成は公開版の音声チケットを発行しないため、ローカルViteがサーバー認証を付けて専用の `/api/voicevox/local/*` に中継します。この経路もスコアとサイズを検証します。公開版の `/api/voicevox/synthesize` は引き続き一度限りの音声チケットを必須とします。
+
+「バージョンを確認」は、ローカル版ではVPC・Cloud Runそれぞれの実Engineへ問い合わせます。Cloud Runの初回起動で待つ場合があります。公開版のCloud Run確認は起動を伴わない設定確認のままで、画面には「設定確認済み」「接続・バージョンは未確認」と表示します。HTML、未設定、取得失敗を「接続済み」とは表示しません。
+
+設定がない・認証が一致しない場合は、確認または歌声生成時に設定エラーを表示します。ローカルVOICEVOXを使う場合、このクラウド設定は不要です。
+
+回帰確認: `npm.cmd run test:voicevox-local`。HTTP中継、秘密情報を返さないこと、別サイトからの拒否、公開チケットの維持、バージョン確認の誤判定防止を検証します。
+
+## 管理処理の補足
+
 - `.dev-server.pid` だけを根拠にプロセスを停止しません。待受ポートと実行中の Node.js のスクリプトパスを確認します。
 - バッチ起動時・ショートカットからの起動時とも、開始に失敗した場合はメッセージを表示して入力を待ちます。コマンドとして実行する場合の終了コードは失敗時 `1` です。
 - バッチ、入口のPowerShell、管理処理はすべてGit管理対象です。Windows PowerShell 5.1向けに、日本語を含む `.ps1` は UTF-8 BOM付きで保存します。

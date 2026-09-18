@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { defineConfig, loadEnv, type ViteDevServer, type PreviewServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { createGeminiMiddleware } from "./server/geminiMiddleware";
+import { createVoicevoxMiddleware } from "./server/voicevoxMiddleware";
 import { createDemoRecordEventHub, type DemoRecordEventHub } from "./server/demoRecordEvents";
 
 const MAX_RECORD_REQUEST_BYTES = 100 * 1024 * 1024;
@@ -837,6 +838,7 @@ export default defineConfig(({ mode }) => {
       {
         name: "local-api",
         configureServer(server) {
+          server.middlewares.use(createVoicevoxMiddleware(env));
           server.middlewares.use(createGeminiMiddleware(env));
           attachDemoRecords(server);
         },

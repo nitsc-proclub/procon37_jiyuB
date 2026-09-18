@@ -88,13 +88,12 @@ const synthesizeThroughWorker = async (
   onServerResolved: ((server: VoicevoxResolvedServerId) => void) | undefined,
 ) => {
   // The Worker owns both VOICEVOX Engine calls and fixed speaker IDs. The
-  // browser submits only its generated score, a short-lived grant, and the
-  // optional routing override. The routing field is a temporary frontend
-  // contract; the Worker may ignore `auto` and apply its own priority order.
+  // public browser submits a score and a short-lived grant. Local development
+  // uses the Vite relay's server-only credential instead of a public grant.
   onProgress?.("query_ready");
   onProgress?.("synthesis_requested");
   const shortLivedVoiceGrant = voiceGrant?.trim();
-  if (!shortLivedVoiceGrant) {
+  if (!shortLivedVoiceGrant && !isDevelopmentVoicevox()) {
     throw new Error("歌声の音声チケットが見つかりません。新しい歌を作ってから、もう一度試してください。");
   }
   const synthesisResponse = await fetchVoicevox("/synthesize", {
@@ -104,7 +103,7 @@ const synthesizeThroughWorker = async (
     },
     body: JSON.stringify({ voiceGrant: shortLivedVoiceGrant, score, backend: toBackendName(server) }),
   }, {
-    timeoutMs: 120_000,
+    timeoutMs: 190_000,
     failureMessage: "歌声のサーバーに合成を依頼できませんでした。少し待ってから、もう一度試してください。",
   });
 

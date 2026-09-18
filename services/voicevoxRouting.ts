@@ -27,7 +27,7 @@ export const VOICEVOX_SERVER_SHORT_LABELS: Record<VoicevoxServerId | VoicevoxRes
 
 export const VOICEVOX_SERVER_SELECTION_STORAGE_KEY = "ekaki-uta:voicevox-server-selection-v1";
 
-export type VoicevoxServerHealthStatus = "unknown" | "checking" | "connected" | "unavailable";
+export type VoicevoxServerHealthStatus = "unknown" | "checking" | "configured" | "connected" | "unavailable";
 
 export type VoicevoxServerHealth = {
   status: VoicevoxServerHealthStatus;
@@ -42,4 +42,3 @@ export const normalizeVoicevoxServerId = (value: unknown): VoicevoxServerId =>
 
 export const getVoicevoxServerLabel = (server: VoicevoxServerId | VoicevoxResolvedServerId | null | undefined) =>
   server ? VOICEVOX_SERVER_SHORT_LABELS[server] : "未選択";
-

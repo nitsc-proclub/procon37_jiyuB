@@ -1082,9 +1082,11 @@ const App: React.FC = () => {
       setVoicevoxServerHealth((current) => ({
         ...current,
         [server]: {
-          status: "connected",
+          status: result.liveCheck ? "connected" : "configured",
           version: result.version,
-          message: `接続できました${resolvedLabel}`,
+          message: result.liveCheck
+            ? `接続できました${resolvedLabel}`
+            : `設定を確認しました${resolvedLabel}。接続・バージョンは未確認です。`,
         },
       }));
     } catch (error) {
@@ -1520,7 +1522,7 @@ const App: React.FC = () => {
           && voicevoxConnectionStatus === "connected";
         const canUseRemoteVoicevox = voicevoxServerSelection !== "local"
           && appFeatures.voicevox
-          && !!voiceGrant;
+          && (isDevelopmentVoicevox() || !!voiceGrant);
         const canUseVoicevox = canUseLocalVoicevox || canUseRemoteVoicevox;
         const accentLineHints = isDevelopmentVoicevox() && canUseLocalVoicevox
           ? await analyzeLyricsAccents(candidate)
@@ -1916,7 +1918,7 @@ const App: React.FC = () => {
       const initialVoiceGrant = initialCandidateId
         ? voicevoxGrantsRef.current[initialCandidateId]
         : generationResult.voiceGrant;
-      const canUseInitialRemoteVoicevox = selectedVoicevoxServer !== "local" && appFeatures.voicevox && !!initialVoiceGrant;
+      const canUseInitialRemoteVoicevox = selectedVoicevoxServer !== "local" && appFeatures.voicevox && (isDevelopmentVoicevox() || !!initialVoiceGrant);
       const canUseInitialVoicevox = canUseLocalVoicevox || canUseInitialRemoteVoicevox;
       if (selectedVoicevoxServer === "local" && appFeatures.localVoicevox && !canUseLocalVoicevox) {
         voicevoxStatus = "unavailable";
@@ -1985,7 +1987,7 @@ const App: React.FC = () => {
         const voiceGrant = candidateId === "legacy"
           ? generationResult.voiceGrant
           : voicevoxGrantsRef.current[candidateId];
-        const canUseRemoteVoicevox = selectedVoicevoxServer !== "local" && appFeatures.voicevox && !!voiceGrant;
+        const canUseRemoteVoicevox = selectedVoicevoxServer !== "local" && appFeatures.voicevox && (isDevelopmentVoicevox() || !!voiceGrant);
         const canUseVoicevox = canUseLocalVoicevox || canUseRemoteVoicevox;
         let candidateWarning: string | null = canUseVoicevox
           ? null

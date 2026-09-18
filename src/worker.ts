@@ -429,7 +429,7 @@ const issueVoiceGrants = async (env: Env, generationId: string, result: LyricsRe
   }
 };
 
-const handleVoicevoxStatus = async (request: Request, env: Env) => {
+const handleVoicevoxStatus = async (request: Request, env: Env, trustedLocal = false) => {
   if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
   const origin = request.headers.get("Origin");
   if (origin && origin !== new URL(request.url).origin) return json({ error: "同じサイトからのみ確認できます。", code: "invalid-origin" }, 403);
@@ -437,7 +437,7 @@ const handleVoicevoxStatus = async (request: Request, env: Env) => {
   if (backend !== "vpc" && backend !== "cloud-run") return json({ error: "確認する歌声サーバーを指定してください。", code: "invalid-voice-backend" }, 400);
   // Do not let an unauthenticated status probe start a billed Cloud Run
   // instance. Real synthesis remains protected by a one-time generation grant.
-  if (backend === "cloud-run") {
+  if (backend === "cloud-run" && !trustedLocal) {
     try {
       getVoicevoxBackendOrder(env, backend);
       return json({ available: true, backend, version: null, latencyMs: null, liveCheck: false });
@@ -447,9 +447,9 @@ const handleVoicevoxStatus = async (request: Request, env: Env) => {
   }
   const startedAt = Date.now();
   try {
-    const response = await fetchVoicevoxBackend(env, backend, "/version", { method: "GET", headers: { Accept: "application/json" } }, VOICEVOX_STATUS_TIMEOUT_MS);
+    const response = await fetchVoicevoxBackend(env, backend, "/version", { method: "GET", headers: { Accept: "application/json" } }, trustedLocal && backend === "cloud-run" ? 55_000 : VOICEVOX_STATUS_TIMEOUT_MS);
     const version = parseVoicevoxVersion(await readBoundedResponseText(response, 4 * 1024));
-    if (!response.ok) {
+    if (!response.ok || !version || response.headers.get("Content-Type")?.includes("text/html")) {
       console.warn("VOICEVOX status check failed", { backend, responseStatus: response.status });
       return json({ available: false, backend, code: "voice-status-failed" }, 502);
     }
@@ -465,19 +465,19 @@ const handleVoicevoxStatus = async (request: Request, env: Env) => {
 const isVoicevoxSynthesisPayload = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
-const handleVoicevoxSynthesis = async (request: Request, env: Env) => {
+const handleVoicevoxSynthesis = async (request: Request, env: Env, trustedLocal = false) => {
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
   if (request.headers.get("Origin") !== new URL(request.url).origin) return json({ error: "同じサイトからのみ利用できます。", code: "invalid-origin" }, 403);
   if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) return json({ error: "Content-Type must be application/json" }, 415);
   const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > VOICEVOX_REQUEST_MAX_BYTES) return json({ error: "歌声データが大きすぎます。", code: "voice-request-too-large" }, 413);
-  if (!env.EVALUATIONS_DB) return json({ error: "歌声機能はまだ利用できません。", code: "voice-unavailable" }, 503);
+  if (!trustedLocal && !env.EVALUATIONS_DB) return json({ error: "歌声機能はまだ利用できません。", code: "voice-unavailable" }, 503);
 
   try {
-    const body = await request.arrayBuffer();
-    if (body.byteLength > VOICEVOX_REQUEST_MAX_BYTES) return json({ error: "歌声データが大きすぎます。", code: "voice-request-too-large" }, 413);
-    const payload = JSON.parse(new TextDecoder().decode(body)) as unknown;
-    if (!isVoicevoxSynthesisPayload(payload) || !Object.keys(payload).every((key) => key === "voiceGrant" || key === "score" || key === "backend") || !Object.prototype.hasOwnProperty.call(payload, "score") || typeof payload.voiceGrant !== "string" || !VOICE_GRANT_PATTERN.test(payload.voiceGrant)) {
+    const body = await readBoundedResponseText(new Response(request.body), VOICEVOX_REQUEST_MAX_BYTES + 1);
+    if (new TextEncoder().encode(body).byteLength > VOICEVOX_REQUEST_MAX_BYTES) return json({ error: "歌声データが大きすぎます。", code: "voice-request-too-large" }, 413);
+    const payload = JSON.parse(body) as unknown;
+    if (!isVoicevoxSynthesisPayload(payload) || !Object.keys(payload).every((key) => key === "voiceGrant" || key === "score" || key === "backend") || !Object.prototype.hasOwnProperty.call(payload, "score") || (!trustedLocal && (typeof payload.voiceGrant !== "string" || !VOICE_GRANT_PATTERN.test(payload.voiceGrant)))) {
       return json({ error: "音声チケットを確認できません。新しい歌を作ってください。", code: "invalid-or-expired-voice-grant" }, 403);
     }
     const voiceGrant = payload.voiceGrant as string;
@@ -487,13 +487,16 @@ const handleVoicevoxSynthesis = async (request: Request, env: Env) => {
     // missing optional backend is fine (auto mode), but an explicitly
     // unavailable backend should not make the user regenerate lyrics.
     getVoicevoxBackendOrder(env, backendSelection);
-    const consumed = await env.EVALUATIONS_DB.prepare(
-      "UPDATE voicevox_grants SET consumed_at = ?, score_hash = ? WHERE grant_hash = ? AND expires_at > ? AND consumed_at IS NULL",
-    ).bind(Date.now(), await sha256Hex(JSON.stringify(score)), await sha256Hex(voiceGrant), Date.now()).run();
-    if (consumed.meta?.changes !== 1) return json({ error: "音声チケットを確認できません。新しい歌を作ってください。", code: "invalid-or-expired-voice-grant" }, 403);
+    if (!trustedLocal) {
+      const consumed = await env.EVALUATIONS_DB!.prepare(
+        "UPDATE voicevox_grants SET consumed_at = ?, score_hash = ? WHERE grant_hash = ? AND expires_at > ? AND consumed_at IS NULL",
+      ).bind(Date.now(), await sha256Hex(JSON.stringify(score)), await sha256Hex(voiceGrant), Date.now()).run();
+      if (consumed.meta?.changes !== 1) return json({ error: "音声チケットを確認できません。新しい歌を作ってください。", code: "invalid-or-expired-voice-grant" }, 403);
+    }
 
     const { response: synthesisResponse, backend, fallback } = await synthesizeWithVoicevoxFallback(env, backendSelection, score);
-    const length = Number(synthesisResponse.headers.get("content-length"));
+    const lengthHeader = synthesisResponse.headers.get("content-length");
+    const length = lengthHeader === null ? NaN : Number(lengthHeader);
     return new Response(synthesisResponse.body, {
       headers: {
         "Content-Type": "audio/wav",
@@ -510,6 +513,20 @@ const handleVoicevoxSynthesis = async (request: Request, env: Env) => {
     }
     return json({ error: "歌声の合成に失敗しました。", code: "voice-failed" }, 502);
   }
+};
+
+// This credential is shared only with the local Node server, never browsers.
+// Keep it separate from public grants and from the Google service account.
+const isTrustedLocalVoicevoxRequest = async (request: Request, env: Env) => {
+  const secret = env.VOICEVOX_LOCAL_ACCESS_TOKEN;
+  const token = request.headers.get("Authorization")?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1];
+  if (!secret || !token || !VOICE_GRANT_PATTERN.test(secret) || !VOICE_GRANT_PATTERN.test(token)) return false;
+  // WebCrypto verification compares the MAC in constant time, in both Node
+  // tests and Workers, without an early-return string comparison of secrets.
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+  const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(token));
+  return crypto.subtle.verify("HMAC", key, mac, encoder.encode(secret));
 };
 
 const handleGemini = async (request: Request, env: Env) => {
@@ -673,6 +690,10 @@ export default {
       return handleVoicevoxJobApi(request, { EVALUATIONS_DB: env.EVALUATIONS_DB, TEMPORARY_AUDIO: env.TEMPORARY_AUDIO, VOICEVOX_JOB_QUEUES: { vpc: { send: async message => { await env.VOICEVOX_JOBS!.send(message); } }, "cloud-run": { send: async message => { await env.VOICEVOX_CLOUD_RUN_JOBS!.send(message); } } }, EVALUATION_RECEIPT_SECRET: env.EVALUATION_RECEIPT_SECRET, CLOUD_RUN_OVERFLOW_GENERATIONS: env.CLOUD_RUN_OVERFLOW_GENERATIONS });
     }
     if (pathname === "/api/gemini/generate-ekaki-uta") return handleGemini(request, env);
+    if (pathname === "/api/voicevox/local/status" || pathname === "/api/voicevox/local/synthesize") {
+      if (!await isTrustedLocalVoicevoxRequest(request, env)) return json({ error: "ローカル版のクラウド歌声認証に失敗しました。サーバーの設定を確認してください。", code: "voice-local-unauthorized" }, 401);
+      return pathname.endsWith("/status") ? handleVoicevoxStatus(request, env, true) : handleVoicevoxSynthesis(request, env, true);
+    }
     if (pathname === "/api/voicevox/status") return handleVoicevoxStatus(request, env);
     if (pathname === "/api/voicevox/synthesize") return handleVoicevoxSynthesis(request, env);
     if (pathname === "/api/evaluations") return handleEvaluation(request, env);

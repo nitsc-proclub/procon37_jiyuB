@@ -20,6 +20,8 @@ const getStatusLabel = (status: VoicevoxServerHealth["status"] | undefined) => {
   switch (status) {
     case "connected":
       return "接続済み";
+    case "configured":
+      return "設定確認済み";
     case "checking":
       return "確認中";
     case "unavailable":
@@ -35,6 +37,8 @@ const getStatusClass = (status: VoicevoxServerHealth["status"] | undefined) => {
       return "bg-emerald-500";
     case "checking":
       return "animate-pulse bg-orange-400";
+    case "configured":
+      return "bg-sky-400";
     case "unavailable":
       return "bg-amber-500";
     default:
@@ -130,7 +134,7 @@ const VoicevoxServerSelector: React.FC<VoicevoxServerSelectorProps> = ({
 
           <div className="rounded-xl bg-orange-50 p-2.5 leading-relaxed text-orange-900">
             <p className="font-black">デバッグ用の切り替え</p>
-            <p className="mt-1">自動以外を選ぶと、そのサーバーだけを指定して歌声を生成します。確認ボタンを押したときだけ、選択中のサーバーへversionを問い合わせます。</p>
+            <p className="mt-1">自動以外を選ぶと、そのサーバーだけを指定して歌声を生成します。確認ボタンでバージョンを問い合わせます。公開版のGoogle Cloud Runは設定のみを確認し、接続確認済みとは表示しません。</p>
           </div>
         </div>
       </details>

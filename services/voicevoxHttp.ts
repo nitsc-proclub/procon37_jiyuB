@@ -186,21 +186,15 @@ export const resetVoicevoxConnection = () => {
 };
 
 /**
- * Development uses the existing Vite proxy and local Engine. Built apps call
- * only the Worker's fixed VOICEVOX routes; browsers never receive the Cloud
- * Run URL or credentials. The one-time voice grant travels only inside the
- * fixed synthesis request body, not as a reusable authorization header.
+ * Remote synthesis always uses the same-origin API. In development the Vite
+ * middleware authenticates to the Worker with a server-only credential.
+ * Local Engine requests must use fetchLocalVoicevox instead.
  */
 export const fetchVoicevox = async (
   path: string,
   init: RequestInit,
   options?: VoicevoxFetchOptions,
 ) => {
-  if (isDevelopmentVoicevox()) {
-    const baseUrl = await probeVoicevox();
-    return fetchWithTimeout(`${baseUrl}${path}`, init, options);
-  }
-
   return fetchWithTimeout(`${WORKER_VOICEVOX_BASE_URL}${path}`, init, {
     ...options,
     failureMessage: options?.failureMessage ?? "歌声のサーバーに接続できませんでした。少し待ってから、もう一度試してください。",

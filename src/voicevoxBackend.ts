@@ -341,6 +341,7 @@ export const readBoundedResponseText = async (response: Response, maxBytes: numb
       if (chunk.byteLength < next.value.byteLength) break;
     }
   } finally {
+    await reader.cancel();
     reader.releaseLock();
   }
   const bytes = new Uint8Array(total);
@@ -354,12 +355,14 @@ export const readBoundedResponseText = async (response: Response, maxBytes: numb
 
 export const parseVoicevoxVersion = (value: string) => {
   if (!value) return null;
+  const validVersion = (text: string) => /^\d+(?:\.\d+){1,3}(?:[-+][\w.-]+)?$/.test(text.trim()) ? text.trim() : null;
   try {
     const payload = JSON.parse(value) as unknown;
-    if (typeof payload === "string") return payload.trim().slice(0, 256) || null;
-    if (isRecord(payload) && typeof payload.version === "string") return payload.version.trim().slice(0, 256) || null;
+    if (typeof payload === "string") return validVersion(payload);
+    if (isRecord(payload) && typeof payload.version === "string") return validVersion(payload.version);
+    return null;
   } catch {
     // Some Engine versions return a plain text version. Keep that compatible.
   }
-  return value.slice(0, 256);
+  return validVersion(value);
 };
