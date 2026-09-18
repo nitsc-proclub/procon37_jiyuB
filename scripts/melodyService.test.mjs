@@ -2,13 +2,83 @@ import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { createServer } from "vite";
 
-const vite = await createServer({ configFile: false, server: { middlewareMode: true }, optimizeDeps: { noDiscovery: true }, appType: "custom" });
+const vite = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true }, appType: "custom" });
 after(() => vite.close());
 const melody = await vite.ssrLoadModule("/services/melodyService.ts");
 const { rhythmNotesToSingingNotes, resolveSingingBpm, SINGING_BPM } = melody;
 const buildSingingScore = (lyrics, seed, hints, bpm = 93.75) => melody.buildSingingScore(lyrics, seed, hints, bpm);
 const { buildLineTimings } = await vite.ssrLoadModule("/utils/playbackTiming.ts");
 const lyrics = (lines) => ({ title: "test", identifiedObject: "test", lines, singingKanaLines: lines });
+const { buildAlignedAccentHint, analyzeAccentLines } = await vite.ssrLoadModule("/services/voicevoxAccentService.ts");
+const phrases = (...groups) => groups.map(group => ({
+  moras: group.map(text => ({ text, pitch: 5 })), accent: 1, pause_mora: null,
+}));
+
+test("talk phrases align normalized kana, small kana and repeated long vowels without moving offsets", () => {
+  const hint = buildAlignedAccentHint("ｷｬｰｰ、 ねこ", phrases(["キャ", "ア", "ア"], ["ネ", "コ"]));
+  assert.deepEqual(hint.phraseEnds, [3, 5]);
+  assert.equal(hint.levels.length, 5);
+  assert.deepEqual(buildAlignedAccentHint("きゃーねこ", phrases(["キャ", "ー"], ["ネ", "コ"])).phraseEnds, [2, 4]);
+  assert.deepEqual(buildAlignedAccentHint("おさらを かきましょう", phrases(["オ", "サ", "ラ", "オ"], ["カ", "キ", "マ", "ショ", "オ"])).phraseEnds, [4, 9]);
+  assert.deepEqual(buildAlignedAccentHint("えい", phrases(["エ", "エ"])).phraseEnds, [2]);
+  assert.deepEqual(buildAlignedAccentHint("はな", phrases(["ワ", "ナ"])), { levels: [] });
+  for (const reading of [phrases(["ネ", "コ", "オ"]), phrases(["イ", "ヌ"]), phrases(["ネコ"]), []]) {
+    assert.deepEqual(buildAlignedAccentHint("ねこ", reading), { levels: [] });
+  }
+});
+
+test("local accent response carries phrase boundaries to score generation in the same request", async () => {
+  const nativeFetch = globalThis.fetch;
+  const nativeWindow = globalThis.window;
+  globalThis.window = { setTimeout, clearTimeout };
+  const calls = [];
+  globalThis.fetch = async url => {
+    calls.push(String(url));
+    return String(url).includes("/version") ? Response.json("0.25.1")
+      : Response.json(phrases(["ア", "イ", "ウ", "エ", "オ"]));
+  };
+  try {
+    const analysis = await analyzeAccentLines(["あいうえお"]);
+    assert.deepEqual(analysis.hints[0].phraseEnds, [5]);
+    assert.equal(calls.filter(url => url.includes("/accent_phrases?")).length, 1);
+    const score = buildSingingScore(lyrics(["あいうえお"]), "test", analysis.hints);
+    assert.deepEqual(score.notes.slice(1).map(n => n.frame_length / 15), [4, 4, 4, 4, 16]);
+  } finally { globalThis.fetch = nativeFetch; globalThis.window = nativeWindow; }
+});
+
+test("post allocation repairs only internal holds and keeps phrase endpoints, pitches and rests", () => {
+  const source = lyrics(["あいうえお かきくけこ", "あいうえお"]);
+  const baseline = buildSingingScore(source, "test");
+  const refined = buildSingingScore(source, "test", [
+    { levels: [], phraseEnds: [5, 10] }, { levels: [], phraseEnds: [5] },
+  ]);
+  assert.deepEqual(refined.notes.map(n => [n.lyric, n.key]), baseline.notes.map(n => [n.lyric, n.key]));
+  // The unaffected first line and its explicit/breath rests stay exactly as generated.
+  assert.deepEqual(refined.notes.slice(0, -5), baseline.notes.slice(0, -5));
+  assert.deepEqual(refined.notes.slice(-5).map(n => n.frame_length / 15), [4, 4, 4, 4, 16]);
+  assertBeatAligned(refined);
+  assert.equal(refined.notes.reduce((s, n) => s + n.frame_length, 0), 962);
+  const separate = buildSingingScore(lyrics(["あいうえお"]), "test", [{ levels: [], phraseEnds: [2, 5] }]);
+  assert.deepEqual(separate, buildSingingScore(lyrics(["あいうえお"]), "test"), "a phrase-final hold is not an internal hold");
+});
+
+test("refinement preserves long-vowel minima, handles dense lines and bounds recipient growth", () => {
+  for (const line of ["ねこ", "あーいうえ", "きゃーーねこ", "あ".repeat(28), "あー".repeat(11), "あいう えおか"]) {
+    const count = melody.getSingingMoras(line).length;
+    const source = lyrics([line]);
+    const baseline = buildSingingScore(source, "test");
+    const refined = buildSingingScore(source, "test", [{ levels: [], phraseEnds: [count] }]);
+    assertBeatAligned(refined);
+    refined.notes.forEach((note, i) => assert.ok(note.frame_length <= baseline.notes[i].frame_length + 60));
+    if (line === "きゃーーねこ") assert.ok(refined.notes[1].frame_length >= 90);
+    if (line === "あーいうえ") assert.ok(refined.notes[1].frame_length >= 60);
+    for (const phraseEnds of [[count + 1], [0, count], [count, count]]) {
+      assert.deepEqual(buildSingingScore(source, "test", [{ levels: [], phraseEnds }]), baseline);
+    }
+    const at125 = buildSingingScore(source, "test", [{ levels: [], phraseEnds: [count] }], 125);
+    assert.equal(at125.notes.reduce((s, n) => s + n.frame_length, 0), 362);
+  }
+});
 
 // At 93.75 BPM, 15 frames are exactly one sixteenth. Inspect musical
 // positions independently of the allocator and production frame rounding.

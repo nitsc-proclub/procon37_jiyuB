@@ -156,7 +156,7 @@ export interface SingingScore {
 - 先頭に短い休符を追加
 - 各モーラに音高と長さを割り当てる
 - 最終行の末尾には終止感のある音型を適用する
-- `voicevoxAccentService` で行ごとのアクセント傾向を補助的に読む
+- 開発版のローカルVOICEVOXでは、`voicevoxAccentService` で読みを照合して音高と句境界を取得する。従来の配分後、句内の過剰な伸ばしだけを同じ句内で補正し、8拍と拍位置を再検証する（詳細は `ekaki-uta-generation.md`）。照合不一致・解析失敗時は従来方式に戻る
 
 `voicevoxService` は `SingingScore` を VOICEVOX Engine に送り、2 段階で音声を生成します。
 

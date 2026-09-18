@@ -85,6 +85,8 @@ export type MelodyAccentLevel = "low" | "mid" | "high" | "neutral";
 
 export type MelodyAccentLineHint = {
   levels: MelodyAccentLevel[];
+  /** Exclusive mora offsets, including long-vowel extensions, without rests. */
+  phraseEnds?: number[];
 };
 
 const normalizeKana = (text: string) =>
@@ -177,6 +179,10 @@ const splitIntoPhraseUnits = (line: string) => {
 
   return units;
 };
+
+// Share exactly the score's normalization and mora boundaries with talk analysis.
+export const getSingingMoras = (line: string): string[] => splitIntoPhraseUnits(line)
+  .flatMap((unit) => unit.type === "rest" ? [] : [unit.lyric, ...Array<string>(unit.extensionCount).fill("ー")]);
 
 const groupPhraseUnits = (units: PhraseUnit[]) => {
   const groups: PhraseGroup[] = [];
@@ -326,6 +332,101 @@ const allocateRhythmicPhraseLengths = (
   return lengths;
 };
 
+/** Refine only an affected phrase; its endpoints and all explicit rests stay fixed. */
+const refinePhraseLengths = (units: PhraseUnit[], original: number[], hint?: MelodyAccentLineHint): number[] => {
+  if (!hint?.phraseEnds?.length) return original;
+  const totalMoras = units.reduce((sum, unit) => sum + (unit.type === "mora" ? 1 + unit.extensionCount : 0), 0);
+  const ends = hint.phraseEnds;
+  if (ends.at(-1) !== totalMoras || ends.some((end, index) =>
+    !Number.isSafeInteger(end) || end <= (ends[index - 1] ?? 0))) return original;
+  const boundaries = new Set(ends);
+  const result = [...original];
+  const minimumMora = units.every((unit, index) => unit.type === "rest"
+    || original[index] >= 2 * (1 + unit.extensionCount)) ? 2 : 1;
+  let moraPosition = 0;
+  let position = 0;
+  let segmentStart = 0;
+  let segmentPosition = 0;
+
+  const refine = (end: number, endPosition: number) => {
+    if (end - segmentStart < 2) return;
+    const limit = (index: number) => {
+      const unit = units[index] as MoraUnit;
+      return Math.max(UNITS_PER_BEAT, 2 * (1 + unit.extensionCount));
+    };
+    const originalExcess = original.slice(segmentStart, end - 1)
+      .reduce((sum, length, offset) => sum + Math.max(0, length - limit(segmentStart + offset)), 0);
+    if (originalExcess === 0) return;
+    type Candidate = { excess: number; changes: number; deviation: number; lengths: number[] };
+    const better = (a: Candidate, b: Candidate) => a.excess < b.excess
+      || (a.excess === b.excess && (a.changes < b.changes
+        || (a.changes === b.changes && a.deviation < b.deviation)));
+    let states = new Map<number, Candidate>([[segmentPosition, { excess: 0, changes: 0, deviation: 0, lengths: [] }]]);
+    for (let index = segmentStart; index < end; index += 1) {
+      const next = new Map<number, Candidate>();
+      const unit = units[index] as MoraUnit;
+      for (const [start, candidate] of states) {
+        for (let length = minimumMora * (1 + unit.extensionCount);
+          start + length <= endPosition && length <= original[index] + UNITS_PER_BEAT; length += 1) {
+          const offset = start % UNITS_PER_BEAT;
+          if (offset !== 0 && length > UNITS_PER_BEAT - offset) break;
+          if (length > UNITS_PER_BEAT && length % UNITS_PER_BEAT !== 0) continue;
+          const excess = index === end - 1 ? 0 : Math.max(0, length - limit(index));
+          // Never introduce a new internal hold to fix another one.
+          if (excess > Math.max(0, original[index] - limit(index))) continue;
+          const value = {
+            excess: candidate.excess + excess,
+            changes: candidate.changes + Number(length !== original[index]),
+            deviation: candidate.deviation + (length - original[index]) ** 2,
+            lengths: [...candidate.lengths, length],
+          };
+          const existing = next.get(start + length);
+          if (!existing || better(value, existing)) next.set(start + length, value);
+        }
+      }
+      states = next;
+    }
+    const best = states.get(endPosition);
+    if (best && best.excess < originalExcess) result.splice(segmentStart, end - segmentStart, ...best.lengths);
+  };
+
+  units.forEach((unit, index) => {
+    if (unit.type === "rest") {
+      refine(index, position);
+      position += original[index];
+      segmentStart = index + 1;
+      segmentPosition = position;
+      return;
+    }
+    moraPosition += 1 + unit.extensionCount;
+    position += original[index];
+    // A boundary inside a sustained long vowel is intentionally ignored.
+    if (boundaries.has(moraPosition)) {
+      refine(index + 1, position);
+      segmentStart = index + 1;
+      segmentPosition = position;
+    }
+  });
+  return result;
+};
+
+const validatePhraseLengths = (units: PhraseUnit[], lengths: number[], expected: number) => {
+  let position = 0;
+  lengths.forEach((length, index) => {
+    const unit = units[index];
+    const minimum = unit.type === "mora" ? 1 + unit.extensionCount : 1;
+    const offset = position % UNITS_PER_BEAT;
+    if (!Number.isSafeInteger(length) || length < minimum
+      || (offset !== 0 && length > UNITS_PER_BEAT - offset)
+      || (length > UNITS_PER_BEAT && length % UNITS_PER_BEAT !== 0)
+      || (unit.type === "rest" && (length > UNITS_PER_BEAT || (position + length) % 2 !== 0))) {
+      throw new Error("歌詞の区切り補正後の音価が拍の条件を満たしていません。");
+    }
+    position += length;
+  });
+  if (position !== expected) throw new Error("歌詞の区切り補正後の行長が一致しません。");
+};
+
 const getAccentTargetKey = (accentLevel: MelodyAccentLevel | undefined) => {
   if (accentLevel === "low") {
     return 64;
@@ -451,7 +552,9 @@ const buildPhraseForLine = (
   const phraseLength = PHRASE_UNITS - breathRestLength;
   const beatTemplate =
     rhythmTemplates.get(parsedLine.groups.length) ?? createFallbackBeatTemplate(parsedLine.groups.length);
-  const noteLengths = allocateRhythmicPhraseLengths(parsedLine, isFinalLine, phraseLength, beatTemplate);
+  const originalLengths = allocateRhythmicPhraseLengths(parsedLine, isFinalLine, phraseLength, beatTemplate);
+  const noteLengths = refinePhraseLengths(phraseUnits, originalLengths, accentLineHint);
+  validatePhraseLengths(phraseUnits, noteLengths, phraseLength);
   let currentKey = previousKey;
   let moraIndex = 0;
   const phraseNotes = phraseUnits.map((unit, unitIndex) => {
