@@ -11,17 +11,18 @@ type Props = {
   volume: number;
   onVolume: (volume: number) => void;
   onBack: () => void;
+  onAdvance: () => void;
   onPrint: (record: DemoRecordDetail) => void;
 };
 
-export default function GalleryPlayback({ recordId, audioRef, volume, onVolume, onBack, onPrint }: Props) {
+export default function GalleryPlayback({ recordId, audioRef, volume, onVolume, onBack, onAdvance, onPrint }: Props) {
   const [record, setRecord] = useState<DemoRecordDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [needsPlay, setNeedsPlay] = useState(false);
   const [displayMode, setDisplayMode] = useState<"animated" | "static">("animated");
   const returnTimer = useRef<number | null>(null);
-  const backRef = useRef(onBack);
-  backRef.current = onBack;
+  const advanceRef = useRef(onAdvance);
+  advanceRef.current = onAdvance;
   const clearReturn = () => {
     if (returnTimer.current !== null) window.clearTimeout(returnTimer.current);
     returnTimer.current = null;
@@ -121,7 +122,7 @@ export default function GalleryPlayback({ recordId, audioRef, volume, onVolume, 
             onPlay={() => { clearReturn(); setNeedsPlay(false); }}
             onVolumeChange={() => { const audio = audioRef.current; if (audio) onVolume(audio.volume); }}
             onSeeking={clearReturn}
-            onEnded={() => { clearReturn(); returnTimer.current = window.setTimeout(() => { if (audioRef.current?.ended) backRef.current(); }, GALLERY_SETTINGS.returnAfterMs); }}
+            onEnded={() => { clearReturn(); returnTimer.current = window.setTimeout(() => { if (audioRef.current?.ended) advanceRef.current(); }, GALLERY_SETTINGS.returnAfterMs); }}
             onError={() => { if (audioRef.current?.getAttribute("src")) setError("音声を再生できませんでした。一覧からもう一度選んでください。"); }} />
           {needsPlay && <button className="gallery-start-play" type="button" onClick={() => { void audioRef.current?.play().catch(() => setNeedsPlay(true)); }}>▶ 歌を再生する</button>}
           {record && error && <p role="alert">{error}</p>}

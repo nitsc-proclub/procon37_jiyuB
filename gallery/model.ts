@@ -64,6 +64,12 @@ export function nextSelection(records: DemoRecordSummary[], selectedId: string |
   return records[Math.max(0, Math.min(records.length - 1, index < 0 ? 0 : index + delta))].recordId;
 }
 
+export function nextLoopSelection(records: DemoRecordSummary[], selectedId: string | null) {
+  if (!records.length) return null;
+  const index = records.findIndex(record => record.recordId === selectedId);
+  return records[(index < 0 ? 0 : index + 1) % records.length].recordId;
+}
+
 export function preserveSelection(previous: DemoRecordSummary[], next: DemoRecordSummary[], selectedId: string | null) {
   if (next.some(record => record.recordId === selectedId)) return selectedId;
   const oldIndex = Math.max(0, previous.findIndex(record => record.recordId === selectedId));

@@ -7,7 +7,7 @@ import { useGalleryRecords } from "./useGalleryRecords";
 import {
   cardPosition, contentHeight, createNavigationInputFilter, galleryLayout, GALLERY_ACTION_EVENT, GALLERY_ACTIONS, GALLERY_SETTINGS,
   keyAction, nextSelection, pencilPath, preserveSelection, readGalleryVolume, tourEnd,
-  selectionScrollFrame, selectionScrollTarget, type GalleryAction, type SelectionScroll,
+  nextLoopSelection, selectionScrollFrame, selectionScrollTarget, type GalleryAction, type SelectionScroll,
 } from "./model";
 import "./gallery.css";
 
@@ -153,6 +153,16 @@ export default function GalleryApp() {
     window.history.replaceState({ gallery: true }, "", url);
     restoreAnchor(returnAnchor.current);
   }, [activity, restoreAnchor]);
+  const advance = useCallback(() => {
+    const nextId = nextLoopSelection(recordsRef.current, work.current);
+    if (!nextId) { back(); return; }
+    if (nextId === work.current) {
+      const audio = audioRef.current;
+      if (audio) { audio.currentTime = 0; void audio.play().catch(() => { }); }
+      return;
+    }
+    open(nextId);
+  }, [back, open]);
   useEffect(() => {
     const pop = () => {
       selectionScroll.current = null;
@@ -338,7 +348,7 @@ export default function GalleryApp() {
         </div>
         <div className={`gallery-fade${fading ? " is-visible" : ""}`} aria-hidden="true" />
         {!!records.length && error && !workId && <div className="gallery-connection" role="status">接続を確認しています。保存済みの作品を表示しています。</div>}
-        <GalleryPlayback recordId={workId} audioRef={audioRef} volume={volume} onVolume={updateVolume} onBack={back} onPrint={handlePrintRecord} />
+        <GalleryPlayback recordId={workId} audioRef={audioRef} volume={volume} onVolume={updateVolume} onBack={back} onAdvance={advance} onPrint={handlePrintRecord} />
         {volumeNotice && <div className="gallery-volume" role="status">音量 {Math.round(volume * 100)}%</div>}
         <div className="gallery-sr-only" aria-live="polite">{introducedId ? `${records.find(record => record.recordId === introducedId)?.title ?? "新しい作品"}が仲間入りしました` : ""}</div>
       </div>

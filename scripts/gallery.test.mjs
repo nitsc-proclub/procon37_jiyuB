@@ -27,6 +27,15 @@ test("new arrivals keep the selected work, while deletion selects the neighborin
   assert.equal(gallery.nextSelection(next, "d", 1), "d");
 });
 
+test("automatic playback advances in gallery order and loops at the end", () => {
+  const items = [record("new"), record("middle"), record("old")];
+  assert.equal(gallery.nextLoopSelection(items, "new"), "middle");
+  assert.equal(gallery.nextLoopSelection(items, "middle"), "old");
+  assert.equal(gallery.nextLoopSelection(items, "old"), "new");
+  assert.equal(gallery.nextLoopSelection(items, "missing"), "new");
+  assert.equal(gallery.nextLoopSelection([], "old"), null);
+});
+
 test("card personality stays attached to ID across updates and remains within agreed limits", () => {
   for (let index = 0; index < 1000; index++) {
     const a = gallery.cardTraits(`work-${index}`);
