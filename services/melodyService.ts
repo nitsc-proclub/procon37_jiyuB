@@ -8,6 +8,7 @@ const PHRASE_UNITS = PHRASE_BEATS * UNITS_PER_BEAT;
 const BREATH_REST_UNITS = UNITS_PER_BEAT;
 const WORD_BREAK_REST_UNITS = 2;
 const LEADING_REST_LENGTH = 2;
+const FINAL_REST_LENGTH = 2;
 const NOTE_POOL = [64, 65, 67];
 const MIN_NOTE_UNITS = 1;
 const GROUP_END_WEIGHT_BONUS = 0.65;
@@ -689,6 +690,12 @@ export const buildSingingScore = (
   if (notes.length <= 1) {
     throw new Error("歌声合成に使える文字が見つかりませんでした。");
   }
+
+  notes.push({
+    lyric: "",
+    key: null,
+    frame_length: FINAL_REST_LENGTH,
+  });
 
   return { notes };
 };

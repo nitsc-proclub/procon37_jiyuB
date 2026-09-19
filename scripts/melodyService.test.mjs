@@ -7,7 +7,7 @@ after(() => vite.close());
 const melody = await vite.ssrLoadModule("/services/melodyService.ts");
 const { rhythmNotesToSingingNotes, resolveSingingBpm, SINGING_BPM } = melody;
 const buildSingingScore = (lyrics, seed, hints, bpm = 93.75) => melody.buildSingingScore(lyrics, seed, hints, bpm);
-const { buildLineTimings } = await vite.ssrLoadModule("/utils/playbackTiming.ts");
+const { buildLineTimings, getScoreFrameLength } = await vite.ssrLoadModule("/utils/playbackTiming.ts");
 const lyrics = (lines) => ({ title: "test", identifiedObject: "test", lines, singingKanaLines: lines });
 const { buildAlignedAccentHint, analyzeAccentLines } = await vite.ssrLoadModule("/services/voicevoxAccentService.ts");
 const phrases = (...groups) => groups.map(group => ({
@@ -42,7 +42,8 @@ test("local accent response carries phrase boundaries to score generation in the
     assert.deepEqual(analysis.hints[0].phraseEnds, [5]);
     assert.equal(calls.filter(url => url.includes("/accent_phrases?")).length, 1);
     const score = buildSingingScore(lyrics(["あいうえお"]), "test", analysis.hints);
-    assert.deepEqual(score.notes.slice(1).map(n => n.frame_length / 15), [4, 4, 4, 4, 16]);
+    assert.deepEqual(score.notes.slice(1, -1).map(n => n.frame_length / 15), [4, 4, 4, 4, 16]);
+    assert.equal(score.notes.at(-1).frame_length, 2);
   } finally { globalThis.fetch = nativeFetch; globalThis.window = nativeWindow; }
 });
 
@@ -54,10 +55,10 @@ test("post allocation repairs only internal holds and keeps phrase endpoints, pi
   ]);
   assert.deepEqual(refined.notes.map(n => [n.lyric, n.key]), baseline.notes.map(n => [n.lyric, n.key]));
   // The unaffected first line and its explicit/breath rests stay exactly as generated.
-  assert.deepEqual(refined.notes.slice(0, -5), baseline.notes.slice(0, -5));
-  assert.deepEqual(refined.notes.slice(-5).map(n => n.frame_length / 15), [4, 4, 4, 4, 16]);
+  assert.deepEqual(refined.notes.slice(0, -6), baseline.notes.slice(0, -6));
+  assert.deepEqual(refined.notes.slice(-6, -1).map(n => n.frame_length / 15), [4, 4, 4, 4, 16]);
   assertBeatAligned(refined);
-  assert.equal(refined.notes.reduce((s, n) => s + n.frame_length, 0), 962);
+  assert.equal(getScoreFrameLength(refined), 962);
   const separate = buildSingingScore(lyrics(["あいうえお"]), "test", [{ levels: [], phraseEnds: [2, 5] }]);
   assert.deepEqual(separate, buildSingingScore(lyrics(["あいうえお"]), "test"), "a phrase-final hold is not an internal hold");
 });
@@ -76,7 +77,7 @@ test("refinement preserves long-vowel minima, handles dense lines and bounds rec
       assert.deepEqual(buildSingingScore(source, "test", [{ levels: [], phraseEnds }]), baseline);
     }
     const at125 = buildSingingScore(source, "test", [{ levels: [], phraseEnds: [count] }], 125);
-    assert.equal(at125.notes.reduce((s, n) => s + n.frame_length, 0), 362);
+    assert.equal(getScoreFrameLength(at125), 362);
   }
 });
 
@@ -85,7 +86,7 @@ test("refinement preserves long-vowel minima, handles dense lines and bounds rec
 const assertBeatAligned = (score) => {
   let position = 0;
   let offBeatNotes = 0;
-  for (const note of score.notes.slice(1)) {
+  for (const note of score.notes.slice(1, -1)) {
     const length = note.frame_length / 15;
     const offset = position % 4;
     assert.ok(Number.isInteger(length) && length > 0);
@@ -120,7 +121,7 @@ test("all lines occupy two bars, with every onset and rest on the sixteenth grid
     assert.equal(score.notes[0].frame_length, 2);
     let frames = 0;
     const boundaries = new Set([0]);
-    for (const note of score.notes.slice(1)) {
+    for (const note of score.notes.slice(1, -1)) {
       assert.ok(Number.isInteger(note.frame_length) && note.frame_length > 0);
       assert.equal(note.frame_length % 15, 0);
       frames += note.frame_length;
@@ -138,7 +139,7 @@ test("identical non-final lines repeat durations and reserve a quarter rest", ()
   const chunks = [];
   let chunk = [];
   let length = 0;
-  for (const note of score.notes.slice(1)) {
+  for (const note of score.notes.slice(1, -1)) {
     chunk.push(note.frame_length);
     length += note.frame_length;
     if (length === 480) { chunks.push(chunk); chunk = []; length = 0; }
@@ -147,13 +148,14 @@ test("identical non-final lines repeat durations and reserve a quarter rest", ()
   assert.deepEqual(chunks[0], chunks[1]);
   assert.deepEqual(chunks[1], chunks[2]);
   assert.equal(chunks[0].at(-1), 60);
-  assert.equal(score.notes.at(-1).key, 60);
+  assert.equal(score.notes.at(-2).key, 60);
+  assert.equal(score.notes.at(-1).frame_length, 2);
 });
 
 test("kana normalization preserves sung moras and long vowels", () => {
   const score = buildSingingScore(lyrics(["キャー ねこ！"]), "kana");
   assert.deepEqual(score.notes.filter(n => n.key !== null).map(n => n.lyric), ["きゃ", "ね", "こ"]);
-  assert.equal(score.notes.slice(1).reduce((sum, n) => sum + n.frame_length, 0), 480);
+  assert.equal(getScoreFrameLength(score), 482);
 });
 
 test("reported lyrics stay on eighths and beats, with full mora lengths for long vowels", () => {
@@ -165,7 +167,7 @@ test("reported lyrics stay on eighths and beats, with full mora lengths for long
   ];
   const score = buildSingingScore(lyrics(lines), "reported-rhythm");
   assertBeatAligned(score);
-  for (const note of score.notes.slice(1)) assert.equal((note.frame_length / 15) % 2, 0);
+  for (const note of score.notes.slice(1, -1)) assert.equal((note.frame_length / 15) % 2, 0);
   const ending = score.notes.filter(n => n.key !== null).slice(-3);
   assert.deepEqual(ending.map(n => n.lyric), ["ほ", "ちょ", "だ"]);
   assert.ok(ending[0].frame_length >= 60);
@@ -180,7 +182,7 @@ test("all supported mora counts return to the beat instead of carrying displacem
     const score = buildSingingScore(lyrics(lines), `density-${count}`);
     assertBeatAligned(score);
     assert.equal(score.notes.filter(n => n.key !== null).length, count * lines.length);
-    assert.equal(score.notes.slice(1).reduce((sum, n) => sum + n.frame_length, 0), lines.length * 480);
+    assert.equal(getScoreFrameLength(score), 2 + lines.length * 480);
   }
 });
 
@@ -196,7 +198,7 @@ test("word breaks and varied group templates preserve beat alignment and lyric o
       const score = buildSingingScore(lyrics([line, line]), String(seed));
       assertBeatAligned(score);
       assert.equal(score.notes.filter(n => n.key !== null).map(n => n.lyric).join(""), line.replace(/[ ー]/g, "").repeat(2));
-      assert.equal(score.notes.slice(1).reduce((sum, n) => sum + n.frame_length, 0), 960);
+      assert.equal(getScoreFrameLength(score), 2 + 960);
     }
   }
 });
@@ -241,13 +243,13 @@ test("arbitrary tempos preserve note values, fixed line lengths and bounded posi
       const base = buildSingingScore(source, String(seed));
       const changed = buildSingingScore(source, String(seed), undefined, bpm);
       const phraseFrames = Math.round(45000 / bpm);
-      assert.equal(changed.notes.reduce((sum, n) => sum + n.frame_length, 0), 2 + phraseFrames * 4);
+      assert.equal(getScoreFrameLength(changed), 2 + phraseFrames * 4);
       assert.deepEqual(changed.notes.map(n => [n.lyric, n.key]), base.notes.map(n => [n.lyric, n.key]));
       let units = 0;
       let frames = 0;
       const phrases = [];
       let phrase = [];
-      for (let i = 1; i < base.notes.length; i += 1) {
+      for (let i = 1; i < base.notes.length - 1; i += 1) {
         units += base.notes[i].frame_length / 15;
         const length = changed.notes[i].frame_length;
         assert.ok(Number.isInteger(length) && length > 0);
@@ -271,7 +273,7 @@ test("arbitrary tempos preserve note values, fixed line lengths and bounded posi
 test("default score tempo follows the Vite setting", () => {
   const bpm = resolveSingingBpm(vite.config.env.VITE_SINGING_BPM);
   const score = melody.buildSingingScore(lyrics(["あ"]), "env");
-  assert.equal(score.notes.reduce((sum, n) => sum + n.frame_length, 0), 2 + Math.round(45000 / bpm));
+  assert.equal(getScoreFrameLength(score), 2 + Math.round(45000 / bpm));
 });
 
 test("final tonic is at least as long as the preceding pitched note after all refinements", () => {
@@ -284,17 +286,17 @@ test("final tonic is at least as long as the preceding pitched note after all re
       const sung = score.notes.filter(n => n.key !== null);
       assert.equal(sung.at(-1).key, 60);
       assert.ok(sung.at(-1).frame_length >= sung.at(-2).frame_length, line);
-      assert.equal(score.notes.reduce((sum, n) => sum + n.frame_length, 0), 962);
+      assert.equal(getScoreFrameLength(score), 962);
       assert.deepEqual(score.notes.slice(0, 9).map(n => n.frame_length), [2, 60, 60, 60, 60, 60, 60, 60, 60]);
       for (const bpm of [105, 125, 180]) {
         const changed = buildSingingScore(source, "cadence", accent, bpm);
-        assert.equal(changed.notes.reduce((sum, n) => sum + n.frame_length, 0), 2 + 2 * Math.round(45000 / bpm));
+        assert.equal(getScoreFrameLength(changed), 2 + 2 * Math.round(45000 / bpm));
         const tail = changed.notes.filter(n => n.key !== null).slice(-2);
         assert.ok(tail[1].frame_length >= tail[0].frame_length - 1, "equal musical values may differ by one rounded frame");
       }
     }
   }
   const pair = buildSingingScore(lyrics(["あーーい"]), "cadence");
-  assert.deepEqual(pair.notes.slice(1).map(n => n.frame_length / 15), [16, 16]);
+  assert.deepEqual(pair.notes.slice(1, -1).map(n => n.frame_length / 15), [16, 16]);
   assert.throws(() => buildSingingScore(lyrics(["あ".repeat(29) + "いーう"]), "too-dense"), /最後のド/);
 });

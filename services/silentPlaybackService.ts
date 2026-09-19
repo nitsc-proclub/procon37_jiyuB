@@ -1,4 +1,5 @@
 import { SingingScore } from "../types";
+import { getScoreFrameLength } from "../utils/playbackTiming";
 
 /** VOICEVOX and the score format both use 93.75 frames per second. */
 export const SCORE_FRAMES_PER_SECOND = 93.75;
@@ -8,7 +9,7 @@ const SILENT_WAV_BYTES_PER_SAMPLE = 2;
 const WAV_HEADER_BYTES = 44;
 
 export const getScoreDurationSeconds = (score: SingingScore) => {
-  const totalFrames = score.notes.reduce((sum, note) => sum + Math.max(0, note.frame_length), 0);
+  const totalFrames = getScoreFrameLength(score);
   return totalFrames / SCORE_FRAMES_PER_SECOND;
 };
 

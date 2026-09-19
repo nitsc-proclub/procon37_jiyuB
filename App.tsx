@@ -13,7 +13,7 @@ import VoicevoxServerSelector from "./components/VoicevoxServerSelector";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
 import { appBuildId } from "./config/buildInfo";
-import { getDrawingAnimationEndProgress, getSingingLineCount } from "./utils/playbackTiming";
+import { getDrawingAnimationEndProgress, getScoreFrameLength, getSingingLineCount } from "./utils/playbackTiming";
 import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
 import { GenerateEkakiUtaError, generateEkakiUta } from "./services/geminiService";
 import { buildDebugBundleArtifacts, createDebugBundle, createDebugBundleFromArtifacts, createDebugRecordId, DebugBundleArtifacts, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
@@ -2255,7 +2255,7 @@ const App: React.FC = () => {
           pointCount: groupedDrawingData.strokes.reduce((sum, stroke) => sum + stroke.points.length, 0),
           lyricLineCount: generatedLyrics?.lines.filter((line) => line.trim().length > 0).length ?? 0,
           noteCount: scoreNotes.length,
-          totalFrames: scoreNotes.reduce((sum, note) => sum + note.frame_length, 0),
+          totalFrames: getScoreFrameLength(generatedScore),
           durationsMs,
           totalMs,
         }).catch(() => {
@@ -2520,7 +2520,7 @@ const App: React.FC = () => {
 
   const experimentPitchedNotes = experimentScore?.notes.filter((note) => note.key !== null) ?? [];
   const experimentLastKey = experimentPitchedNotes.at(-1)?.key ?? null;
-  const experimentTotalFrames = experimentScore?.notes.reduce((sum, note) => sum + note.frame_length, 0) ?? 0;
+  const experimentTotalFrames = getScoreFrameLength(experimentScore);
   const playbackDrawing = selectedDemoDrawing ?? selectedDebugHistoryDrawing ?? generatedDrawing;
   const playbackLyricLineCount = getSingingLineCount(lyrics);
   const playbackAnimationEndProgress = getDrawingAnimationEndProgress(lyrics, playbackScore);
