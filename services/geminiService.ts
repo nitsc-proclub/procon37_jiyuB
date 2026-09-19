@@ -1,4 +1,5 @@
 import { DrawingData, GeneratedEkakiUtaResult, LyricsCandidate, LyricsResponse, Phase1LyricsResponse } from "../types";
+import { appConfig } from "../config/appConfig";
 
 type GenerateEkakiUtaErrorResponse = {
   error?: unknown;
@@ -66,6 +67,48 @@ const parseErrorResponse = async (response: Response) => {
   }
 };
 
+const resizeImageForGemini = (imageUri: string, maxDimension: number): Promise<string> => {
+  if (maxDimension <= 0 || typeof Image === "undefined" || typeof document === "undefined") {
+    return Promise.resolve(imageUri);
+  }
+
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      const sourceWidth = image.naturalWidth || image.width;
+      const sourceHeight = image.naturalHeight || image.height;
+      const largestDimension = Math.max(sourceWidth, sourceHeight);
+
+      if (!sourceWidth || !sourceHeight || largestDimension <= maxDimension) {
+        resolve(imageUri);
+        return;
+      }
+
+      const scale = maxDimension / largestDimension;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+      canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+      const context = canvas.getContext("2d");
+
+      if (!context) {
+        resolve(imageUri);
+        return;
+      }
+
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      try {
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      } catch {
+        resolve(imageUri);
+      }
+    };
+    image.onerror = () => resolve(imageUri);
+    image.src = imageUri;
+  });
+};
+
 const readReceiptMetadata = (value: unknown) => {
   if (!value || typeof value !== "object") return {};
   const metadata = value as GenerationReceiptMetadata;
@@ -90,12 +133,16 @@ const readReceiptMetadata = (value: unknown) => {
 };
 
 export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?: string, generationId?: string): Promise<GeneratedEkakiUtaResult> => {
+  const requestDrawingData = {
+    ...drawingData,
+    imageUri: await resizeImageForGemini(drawingData.imageUri, appConfig.geminiImageMaxDimension),
+  };
   const response = await fetch("/api/gemini/generate-ekaki-uta", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ drawingData, ...(turnstileToken ? { turnstileToken } : {}), ...(generationId ? { generationId } : {}) }),
+    body: JSON.stringify({ drawingData: requestDrawingData, ...(turnstileToken ? { turnstileToken } : {}), ...(generationId ? { generationId } : {}) }),
   });
 
   if (!response.ok) {
