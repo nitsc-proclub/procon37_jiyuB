@@ -12,6 +12,7 @@ import {
   DebugHistoryStats,
   deleteDebugHistoryRecord,
   getDebugHistoryRecord,
+  getDebugHistoryImage,
   getDebugHistoryStats,
   listDebugHistoryRecords,
   saveDebugHistoryRecord,
@@ -102,9 +103,9 @@ const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ onOpenRecord, onBac
     const loadThumbnails = async () => {
       const entries = await Promise.all(records.map(async (record) => {
         try {
-          const fullRecord = await getDebugHistoryRecord(record.recordId);
-          if (!fullRecord) return null;
-          const thumbnailUrl = URL.createObjectURL(fullRecord.artifacts.imageBlob);
+          const imageBlob = await getDebugHistoryImage(record.recordId);
+          if (!imageBlob) return null;
+          const thumbnailUrl = URL.createObjectURL(imageBlob);
           if (disposed) {
             URL.revokeObjectURL(thumbnailUrl);
             return null;

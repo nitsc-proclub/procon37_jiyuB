@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { build } from "esbuild";
 import { JSDOM } from "jsdom";
-import { indexedDB } from "fake-indexeddb";
+import { indexedDB, IDBFactory, IDBObjectStore } from "fake-indexeddb";
 import { createRequire } from "node:module";
 
 const dom = new JSDOM("<div id='root'></div>", { url: "https://app.test", pretendToBeVisual: true });
@@ -16,8 +16,8 @@ const compile = async contents => {
   new Function("require", "module", "exports", result.outputFiles[0].text)(createRequire(import.meta.url), module, module.exports);
   return module.exports;
 };
-const api = await compile('export * from "./services/debugHistoryDb"; export * from "./gallery/recordSource"; export * from "./services/generationTimingEstimate"; export * from "./utils/generationProgress";');
-const ui = await compile('export * as React from "react"; export { createRoot } from "react-dom/client"; export { GenerationProgressBar } from "./components/GenerationJourney";');
+const api = await compile('export * from "./services/debugHistoryDb"; export * from "./gallery/recordSource"; export * from "./services/generationTimingEstimate"; export * from "./utils/generationProgress"; export { galleryRecords } from "./gallery/model";');
+const ui = await compile('export * as React from "react"; export { createRoot } from "react-dom/client"; export { GenerationProgressBar } from "./components/GenerationJourney"; export { useGenerationCompletion } from "./hooks/useGenerationCompletion"; export { useDemoRecords } from "./hooks/useDemoRecords";');
 const request = req => new Promise((resolve, reject) => { req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); });
 const done = tx => new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onabort = () => reject(tx.error); });
 const artifacts = (recordId, startedAt = "2026-09-21T16:00:00Z") => ({
@@ -107,4 +107,121 @@ test("learning has no third-run threshold and handles corrupt browser storage", 
   assert.equal(api.readTimingEstimate("profile").phaseDurationsMs.gemini, 16000);
   for (const phase of ["gemini", "score", "voicevoxSynthesis", "finalize"]) assert.ok(api.getGenerationPhaseProgressTarget(phase, 1e9) < 100);
 });
+test("completion survives navigation, hidden tabs and unmount; stale callbacks cannot finish a new run", async () => {
+  const { React, createRoot, useGenerationCompletion } = ui;
+  let completion;
+  function Probe({ visible }) { completion = useGenerationCompletion(visible); return null; }
+  const root = createRoot(document.getElementById("root"));
+  const render = visible => React.act(() => root.render(React.createElement(React.StrictMode, null, React.createElement(Probe, { visible }))));
+  const completed = [];
+  await render(true);
+  const first = completion.wait(1).then(() => completed.push(1));
+  await Promise.resolve(); assert.deepEqual(completed, []);
+  await render(false); await first;
+  await completion.wait(2).then(() => completed.push(2));
+  await render(true);
+  const third = completion.wait(3).then(() => completed.push(3));
+  completion.complete(2); await Promise.resolve(); assert.deepEqual(completed, [1, 2]);
+  completion.complete(3); await third;
+  const fourth = completion.wait(4).then(() => completed.push(4));
+  Object.defineProperty(document, "hidden", { configurable: true, value: true });
+  document.dispatchEvent(new Event("visibilitychange")); await fourth;
+  delete document.hidden;
+  const fifth = completion.wait(5).then(() => completed.push(5));
+  await React.act(() => root.unmount()); await fifth;
+  assert.deepEqual(completed, [1, 2, 3, 4, 5]);
+});
+
+test("empty/failed demo lists stop; explicit retry, revisit and new saves refresh", async t => {
+  const { React, createRoot, useDemoRecords } = ui;
+  const requests = [];
+  t.mock.method(globalThis, "fetch", () => new Promise((resolve, reject) => requests.push({ resolve, reject })));
+  let state;
+  function Probe({ active }) { state = useDemoRecords(active); return null; }
+  const root = createRoot(document.getElementById("root"));
+  const render = active => React.act(() => root.render(React.createElement(React.StrictMode, null, React.createElement(Probe, { active }))));
+  try {
+    await render(true); assert.equal(requests.length, 1);
+    await React.act(async () => requests[0].resolve(Response.json({ records: [] })));
+    await render(true); assert.equal(requests.length, 1); assert.equal(state.loading, false);
+    await React.act(() => { void state.reload(); }); assert.equal(requests.length, 2);
+    await React.act(async () => requests[1].reject(new Error("offline")));
+    assert.equal(state.error, "offline"); assert.equal(state.loading, false);
+    await render(true); assert.equal(requests.length, 2);
+    await render(false); await render(true); assert.equal(requests.length, 3);
+    await React.act(async () => requests[2].resolve(Response.json({ records: [{ recordId: "new" }] })));
+    assert.equal(state.records[0].recordId, "new"); assert.equal(state.error, null);
+    await React.act(() => state.invalidate()); assert.equal(requests.length, 4);
+    await render(false); await render(true); assert.equal(requests.length, 4);
+    await React.act(() => state.invalidate()); assert.equal(requests.length, 4);
+    await React.act(async () => requests[3].resolve(Response.json({ records: [] })));
+    assert.equal(requests.length, 5);
+    await React.act(async () => requests[4].resolve(Response.json({ records: [] })));
+  } finally { await React.act(() => root.unmount()); }
+});
+
+test("gallery skips damaged records and reads audio only when a song is opened", async t => {
+  for (const id of ["healthy", "missing-image", "missing-audio", "invalid-metadata"]) await api.saveDebugHistoryRecord(artifacts(id));
+  const db = await request(indexedDB.open("cho-ekaki-uta-debug-history", 3));
+  const tx = db.transaction(["images", "assets", "records"], "readwrite");
+  tx.objectStore("images").delete("missing-image");
+  tx.objectStore("assets").delete("missing-audio");
+  tx.objectStore("records").put({ recordId: "invalid-metadata", manifest: null });
+  await done(tx);
+  let audioReads = 0;
+  for (const method of ["get", "getAll", "openCursor"]) {
+    const original = IDBObjectStore.prototype[method];
+    t.mock.method(IDBObjectStore.prototype, method, function (...args) {
+      if (this.name === "assets") audioReads++;
+      return original.apply(this, args);
+    });
+  }
+  const revoked = [], revoke = URL.revokeObjectURL;
+  t.mock.method(URL, "revokeObjectURL", url => { revoked.push(url); revoke(url); });
+  for (let refresh = 0; refresh < 3; refresh++) {
+    const snapshot = await api.loadGalleryRecords();
+    assert.equal(snapshot.skippedCount, 3);
+    assert.deepEqual(api.galleryRecords(snapshot.records).map(record => record.recordId), ["healthy"]);
+    assert.equal(snapshot.records[0].audioUrl, null); assert.equal(audioReads, 0);
+    snapshot.dispose();
+  }
+  assert.equal(revoked.length, 3);
+  const detail = await api.loadGalleryRecord("healthy");
+  assert.equal(audioReads, 1); assert.ok(detail.record.audioUrl.startsWith("blob:")); detail.dispose();
+  const allInvalid = db.transaction("images", "readwrite"); allInvalid.objectStore("images").delete("healthy"); await done(allInvalid);
+  const empty = await api.loadGalleryRecords();
+  assert.equal(empty.records.length, 0); assert.equal(empty.skippedCount, 4); empty.dispose();
+  await api.clearDebugHistoryRecords();
+  const cleanup = db.transaction("images", "readonly");
+  assert.equal(await request(cleanup.objectStore("images").count()), 0);
+  db.close();
+});
+
+test("version 2 migration retains images, audio, favorites and generation counts", async () => {
+  const isolated = new IDBFactory();
+  globalThis.indexedDB = isolated;
+  try {
+    const opening = isolated.open("cho-ekaki-uta-debug-history", 2);
+    opening.onupgradeneeded = () => { for (const name of ["records", "assets", "generations"]) opening.result.createObjectStore(name, { keyPath: "recordId" }); };
+    const old = await request(opening), item = artifacts("version-two");
+    const tx = old.transaction(["records", "assets", "generations"], "readwrite");
+    tx.objectStore("records").put({ recordId: "version-two", createdAt: item.manifest.createdAt, manifest: item.manifest, byteSize: 100, isFavorite: true });
+    tx.objectStore("assets").put({ recordId: "version-two", imageBlob: item.imageBlob, voiceAudioBlob: item.voiceAudioBlob });
+    tx.objectStore("generations").put({ recordId: "unsaved", date: "2026-09-21", recorded: false });
+    await done(tx); old.close();
+    const upgraded = await compile('export * from "./services/debugHistoryDb";');
+    const record = await upgraded.getDebugHistoryRecord("version-two");
+    assert.equal(record.isFavorite, true);
+    assert.equal(await record.artifacts.imageBlob.text(), "image");
+    assert.equal(await record.artifacts.voiceAudioBlob.text(), "RIFF0000WAVE");
+    assert.equal((await upgraded.getBrowserUsageStats()).unrecordedGenerations, 1);
+    const db = await request(isolated.open("cho-ekaki-uta-debug-history", 3));
+    const read = db.transaction("assets", "readonly");
+    assert.equal("imageBlob" in await request(read.objectStore("assets").get("version-two")), false);
+    await upgraded.deleteDebugHistoryRecord("version-two");
+    assert.equal(await upgraded.getDebugHistoryImage("version-two"), null);
+    db.close();
+  } finally { globalThis.indexedDB = indexedDB; }
+});
+
 test.after(() => dom.window.close());

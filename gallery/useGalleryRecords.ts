@@ -11,6 +11,7 @@ export function useGalleryRecords(onSnapshot: (records: DemoRecordSummary[], ini
   const refreshRef = useRef<() => void>(() => {});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [skippedCount, setSkippedCount] = useState(0);
 
   useEffect(() => {
     let disposed = false, inFlight = false, dirty = false, initialized = false;
@@ -27,6 +28,7 @@ export function useGalleryRecords(onSnapshot: (records: DemoRecordSummary[], ini
         releaseSnapshot = data.dispose;
         initialized = true;
         setError(null);
+        setSkippedCount(data.skippedCount);
       } catch (error) {
         if (!disposed) setError(error instanceof Error ? error.message : "作品を読み込めませんでした。");
       } finally {
@@ -59,5 +61,5 @@ export function useGalleryRecords(onSnapshot: (records: DemoRecordSummary[], ini
       refreshRef.current = () => {};
     };
   }, []);
-  return { loading, error, refresh: () => refreshRef.current() };
+  return { loading, error, skippedCount, refresh: () => refreshRef.current() };
 }

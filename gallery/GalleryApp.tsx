@@ -107,7 +107,7 @@ export default function GalleryApp() {
     select(preserveSelection(previous, next, selection.current));
     setRecords(next);
   }, [captureAnchor, select, pauseSelectionScroll]);
-  const { loading, error, refresh } = useGalleryRecords(onSnapshot);
+  const { loading, error, skippedCount, refresh } = useGalleryRecords(onSnapshot);
 
   useLayoutEffect(() => {
     restoreAnchor(anchorToRestore.current);
@@ -343,11 +343,12 @@ export default function GalleryApp() {
             {visible.map((record, offset) => <GalleryCard key={record.recordId} record={record} index={firstIndex + offset} layout={layout}
               selected={record.recordId === selectedId} introducing={record.recordId === introducedId}
               waiting={pending.current.includes(record.recordId) && record.recordId !== introducedId} idle={idle} onSelect={select} onOpen={open} />)}
-            {!records.length && <div className="gallery-empty" role="status"><span aria-hidden="true">✎</span><p>{loading ? "みんなの作品を集めています…" : error ?? "最初の絵描き歌を待っています"}</p>{error && <button type="button" onClick={refresh}>もう一度読み込む</button>}</div>}
+            {!records.length && <div className="gallery-empty" role="status"><span aria-hidden="true">✎</span><p>{loading ? "みんなの作品を集めています…" : error ?? (skippedCount > 0 ? "読み込める作品がありませんでした。" : "最初の絵描き歌を待っています")}</p>{error && <button type="button" onClick={refresh}>もう一度読み込む</button>}</div>}
           </main>
         </div>
         <div className={`gallery-fade${fading ? " is-visible" : ""}`} aria-hidden="true" />
         {!!records.length && error && !workId && <div className="gallery-connection" role="status">接続を確認しています。保存済みの作品を表示しています。</div>}
+        {!error && skippedCount > 0 && !workId && <div className="gallery-connection" role="status">{skippedCount}件の作品を読み込めませんでした。</div>}
         <GalleryPlayback recordId={workId} audioRef={audioRef} volume={volume} onVolume={updateVolume} onBack={back} onAdvance={advance} onPrint={handlePrintRecord} />
         {volumeNotice && <div className="gallery-volume" role="status">音量 {Math.round(volume * 100)}%</div>}
         <div className="gallery-sr-only" aria-live="polite">{introducedId ? `${records.find(record => record.recordId === introducedId)?.title ?? "新しい作品"}が仲間入りしました` : ""}</div>

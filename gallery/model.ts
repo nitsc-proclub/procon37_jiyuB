@@ -54,7 +54,7 @@ export function createNavigationInputFilter(intervalMs = GALLERY_SETTINGS.naviga
 }
 
 export function galleryRecords(records: DemoRecordSummary[]) {
-  return [...new Map(records.filter(record => !!record.audioUrl).map(record => [record.recordId, record])).values()]
+  return [...new Map(records.filter(record => record.hasAudio ?? !!record.audioUrl).map(record => [record.recordId, record])).values()]
     .sort((a, b) => b.savedAt.localeCompare(a.savedAt) || b.recordId.localeCompare(a.recordId));
 }
 

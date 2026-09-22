@@ -6,9 +6,10 @@ export const DEBUG_HISTORY_MAX_RECORDS = 50;
 export const DEBUG_HISTORY_MAX_BYTES = 100 * 1024 * 1024;
 
 const DB_NAME = "cho-ekaki-uta-debug-history";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const RECORDS_STORE = "records";
 const ASSETS_STORE = "assets";
+const IMAGES_STORE = "images";
 const GENERATIONS_STORE = "generations";
 type BrowserGeneration = { recordId: string; date: string; recorded: boolean };
 const japanDate = (iso: string) => new Date(iso).toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
@@ -23,9 +24,10 @@ type StoredDebugHistoryRecord = {
 
 type StoredDebugHistoryAssets = {
   recordId: string;
-  imageBlob: Blob;
   voiceAudioBlob: Blob | null;
 };
+
+type StoredDebugHistoryImage = { recordId: string; imageBlob: Blob; hasVoice: boolean };
 
 export type DebugHistoryRecordSummary = StoredDebugHistoryRecord & {
   title: string;
@@ -87,6 +89,21 @@ const openDatabase = () => {
       if (!database.objectStoreNames.contains(ASSETS_STORE)) {
         database.createObjectStore(ASSETS_STORE, { keyPath: "recordId" });
       }
+      if (!database.objectStoreNames.contains(IMAGES_STORE)) {
+        const images = database.createObjectStore(IMAGES_STORE, { keyPath: "recordId" });
+        // Split existing assets once, atomically. Gallery refreshes then read
+        // images independently without cloning every saved audio Blob.
+        const cursor = request.transaction!.objectStore(ASSETS_STORE).openCursor();
+        cursor.onsuccess = () => {
+          const current = cursor.result;
+          if (!current) return;
+          const asset = current.value as StoredDebugHistoryAssets & { imageBlob?: Blob };
+          if (asset.imageBlob instanceof Blob) images.put({ recordId: asset.recordId, imageBlob: asset.imageBlob,
+            hasVoice: asset.voiceAudioBlob instanceof Blob && asset.voiceAudioBlob.size > 0 } satisfies StoredDebugHistoryImage);
+          current.update({ recordId: asset.recordId, voiceAudioBlob: asset.voiceAudioBlob } satisfies StoredDebugHistoryAssets);
+          current.continue();
+        };
+      }
       if (!database.objectStoreNames.contains(GENERATIONS_STORE)) {
         const generations = database.createObjectStore(GENERATIONS_STORE, { keyPath: "recordId" });
         // Older public builds only retained saved records. Recover those once;
@@ -96,7 +113,10 @@ const openDatabase = () => {
           const current = cursor.result;
           if (!current) return;
           const record = current.value as StoredDebugHistoryRecord;
-          generations.put({ recordId: record.recordId, date: japanDate(record.manifest.generation.startedAt), recorded: true } satisfies BrowserGeneration);
+          const startedAt = record.manifest?.generation?.startedAt;
+          if (startedAt && Number.isFinite(Date.parse(startedAt))) {
+            generations.put({ recordId: record.recordId, date: japanDate(startedAt), recorded: true } satisfies BrowserGeneration);
+          }
           current.continue();
         };
       }
@@ -192,7 +212,7 @@ export const saveDebugHistoryRecord = async (artifacts: DebugBundleArtifacts): P
 
   try {
     const database = await openDatabase();
-    const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, GENERATIONS_STORE], "readwrite");
+    const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, IMAGES_STORE, GENERATIONS_STORE], "readwrite");
     const recordsStore = transaction.objectStore(RECORDS_STORE);
     const records = await requestResult(recordsStore.getAll() as IDBRequest<StoredDebugHistoryRecord[]>);
     const generations = transaction.objectStore(GENERATIONS_STORE);
@@ -221,9 +241,10 @@ export const saveDebugHistoryRecord = async (artifacts: DebugBundleArtifacts): P
     if (generation) generations.put({ ...generation, recorded: true });
     transaction.objectStore(ASSETS_STORE).put({
       recordId: artifacts.manifest.recordId,
-      imageBlob: artifacts.imageBlob,
       voiceAudioBlob: artifacts.voiceAudioBlob,
     } satisfies StoredDebugHistoryAssets);
+    transaction.objectStore(IMAGES_STORE).put({ recordId: artifacts.manifest.recordId, imageBlob: artifacts.imageBlob,
+      hasVoice: artifacts.voiceAudioBlob !== null && artifacts.voiceAudioBlob.size > 0 } satisfies StoredDebugHistoryImage);
     await transactionDone(transaction);
     notifyBrowserRecordsChanged();
     return getSummary(storedRecord);
@@ -240,20 +261,61 @@ export const listDebugHistoryRecords = async (): Promise<DebugHistoryRecordSumma
   return records.map(getSummary).sort((first, second) => second.createdAt.localeCompare(first.createdAt));
 };
 
+/** One gallery snapshot reads metadata/images, and only audio keys (not Blobs). */
+export const listDebugHistoryGalleryRecords = async () => {
+  const database = await openDatabase();
+  const transaction = database.transaction([RECORDS_STORE, IMAGES_STORE, ASSETS_STORE], "readonly");
+  const completed = transactionDone(transaction);
+  const [records, images, audioKeys] = await Promise.all([
+    requestResult(transaction.objectStore(RECORDS_STORE).getAll() as IDBRequest<StoredDebugHistoryRecord[]>),
+    requestResult(transaction.objectStore(IMAGES_STORE).getAll() as IDBRequest<StoredDebugHistoryImage[]>),
+    requestResult(transaction.objectStore(ASSETS_STORE).getAllKeys()),
+    completed,
+  ]);
+  const imagesById = new Map(images.map(image => [image.recordId, image]));
+  const audioIds = new Set(audioKeys);
+  const available: { summary: DebugHistoryRecordSummary; imageBlob: Blob }[] = [];
+  let skippedCount = 0;
+  for (const record of records) {
+    const manifest = record.manifest;
+    if (!manifest) { skippedCount++; continue; }
+    // Lyrics-only/failed generations are valid records, but not gallery songs.
+    if (!manifest.lyrics || !manifest.audio) continue;
+    const image = imagesById.get(record.recordId);
+    if (!(image?.imageBlob instanceof Blob) || !image.imageBlob.size || !image.hasVoice || !audioIds.has(record.recordId)
+      || typeof manifest.lyrics.title !== "string" || !Array.isArray(manifest.lyrics.lines)
+      || !Array.isArray(manifest.drawing?.strokes) || typeof record.createdAt !== "string") {
+      skippedCount++;
+      continue;
+    }
+    available.push({ summary: getSummary(record), imageBlob: image.imageBlob });
+  }
+  return { records: available, skippedCount };
+};
+
+export const getDebugHistoryImage = async (recordId: string): Promise<Blob | null> => {
+  const database = await openDatabase();
+  const transaction = database.transaction(IMAGES_STORE, "readonly");
+  const image = await requestResult(transaction.objectStore(IMAGES_STORE).get(recordId) as IDBRequest<StoredDebugHistoryImage | undefined>);
+  await transactionDone(transaction);
+  return image?.imageBlob instanceof Blob ? image.imageBlob : null;
+};
+
 export const getDebugHistoryRecord = async (recordId: string): Promise<DebugHistoryRecord | null> => {
   const database = await openDatabase();
-  const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE], "readonly");
+  const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, IMAGES_STORE], "readonly");
   const record = await requestResult(transaction.objectStore(RECORDS_STORE).get(recordId) as IDBRequest<StoredDebugHistoryRecord | undefined>);
   const assets = await requestResult(transaction.objectStore(ASSETS_STORE).get(recordId) as IDBRequest<StoredDebugHistoryAssets | undefined>);
+  const image = await requestResult(transaction.objectStore(IMAGES_STORE).get(recordId) as IDBRequest<StoredDebugHistoryImage | undefined>);
   await transactionDone(transaction);
   if (!record) return null;
-  if (!assets) throw new DebugHistoryError("corrupt", "The stored image data is missing.");
+  if (!assets || !(image?.imageBlob instanceof Blob)) throw new DebugHistoryError("corrupt", "この作品の画像または音声データが見つかりません。");
 
   return {
     ...getSummary(record),
     artifacts: {
       manifest: record.manifest,
-      imageBlob: assets.imageBlob,
+      imageBlob: image.imageBlob,
       voiceAudioBlob: assets.voiceAudioBlob,
     },
   };
@@ -261,18 +323,20 @@ export const getDebugHistoryRecord = async (recordId: string): Promise<DebugHist
 
 export const deleteDebugHistoryRecord = async (recordId: string) => {
   const database = await openDatabase();
-  const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE], "readwrite");
+  const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, IMAGES_STORE], "readwrite");
   transaction.objectStore(RECORDS_STORE).delete(recordId);
   transaction.objectStore(ASSETS_STORE).delete(recordId);
+  transaction.objectStore(IMAGES_STORE).delete(recordId);
   await transactionDone(transaction);
   notifyBrowserRecordsChanged();
 };
 
 export const clearDebugHistoryRecords = async () => {
   const database = await openDatabase();
-  const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE], "readwrite");
+  const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, IMAGES_STORE], "readwrite");
   transaction.objectStore(RECORDS_STORE).clear();
   transaction.objectStore(ASSETS_STORE).clear();
+  transaction.objectStore(IMAGES_STORE).clear();
   await transactionDone(transaction);
   notifyBrowserRecordsChanged();
 };

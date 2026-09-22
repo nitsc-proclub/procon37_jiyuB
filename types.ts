@@ -244,6 +244,8 @@ export interface DemoRecordSummary {
   audioUrl: string | null;
   participantAge: number | null;
   isFavorite: boolean;
+  /** Browser galleries defer loading the audio Blob until playback. */
+  hasAudio?: boolean;
 }
 
 export interface DemoRecordDetail extends DemoRecordSummary {

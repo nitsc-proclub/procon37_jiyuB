@@ -4,6 +4,8 @@ import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
 import GenerationStats from "./components/GenerationStats";
+import { useGenerationCompletion } from "./hooks/useGenerationCompletion";
+import { useDemoRecords } from "./hooks/useDemoRecords";
 import { readTimingEstimate, rememberTiming } from "./services/generationTimingEstimate";
 import Turnstile, { TurnstileHandle, TurnstileStatus } from "./components/Turnstile";
 import DebugExportDialog from "./components/DebugExportDialog";
@@ -15,7 +17,7 @@ import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
 import { appBuildId } from "./config/buildInfo";
 import { getDrawingAnimationEndProgress, getScoreFrameLength, getSingingLineCount } from "./utils/playbackTiming";
-import { deleteDemoRecord, getDemoRecord, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
+import { deleteDemoRecord, getDemoRecord, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
 import { GenerateEkakiUtaError, generateEkakiUta } from "./services/geminiService";
 import { buildDebugBundleArtifacts, createDebugBundle, createDebugBundleFromArtifacts, createDebugRecordId, DebugBundleArtifacts, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
 import { DebugHistoryRecord, saveDebugHistoryRecord, recordBrowserGeneration } from "./services/debugHistoryDb";
@@ -176,11 +178,6 @@ const loadVoicevoxServerSelection = (): VoicevoxServerId => {
   } catch {
     return "auto";
   }
-};
-
-type GenerationCompletionWaiter = {
-  runKey: number;
-  resolve: () => void;
 };
 
 const EXPERIMENT_LYRICS: LyricsResponse = {
@@ -401,11 +398,13 @@ const App: React.FC = () => {
   const [isRecordConsentOpen, setIsRecordConsentOpen] = useState(false);
   const [recordConsentError, setRecordConsentError] = useState<string | null>(null);
   const [appView, setAppView] = useState<AppView>("maker");
+  const { wait: waitForGenerationDisplay, complete: handleGenerationProgressDisplayComplete, cancel: cancelGenerationDisplay } = useGenerationCompletion(appView === "maker");
   const [demoBrowseMode, setDemoBrowseMode] = useState<DemoBrowseMode>("drawings");
   const [showFavoriteOnly, setShowFavoriteOnly] = useState(false);
-  const [demoRecords, setDemoRecords] = useState<DemoRecordSummary[]>([]);
-  const [isDemoRecordsLoading, setIsDemoRecordsLoading] = useState(false);
-  const [demoRecordsError, setDemoRecordsError] = useState<string | null>(null);
+  const { records: demoRecords, setRecords: setDemoRecords, loading: isDemoRecordsLoading,
+    error: demoRecordsError, setError: setDemoRecordsError, reload: loadDemoRecords,
+    refresh: refreshDemoRecords, invalidate: invalidateDemoRecords } = useDemoRecords(
+    appFeatures.demoRecords && (appView === "demoRecords" || appView === "melodyExperiment"));
   const [loadingDemoRecordId, setLoadingDemoRecordId] = useState<string | null>(null);
   const [updatingDemoRecordId, setUpdatingDemoRecordId] = useState<string | null>(null);
   const [deletingDemoRecordId, setDeletingDemoRecordId] = useState<string | null>(null);
@@ -453,7 +452,6 @@ const App: React.FC = () => {
   const generationSequenceRef = useRef(0);
   const voiceJobAbortRef = useRef<AbortController | null>(null);
   const generationTimingRunKeyRef = useRef(0);
-  const generationCompletionWaiterRef = useRef<GenerationCompletionWaiter | null>(null);
   const turnstileWidgetRef = useRef<TurnstileHandle>(null);
   const turnstileTokenRef = useRef<string | null>(null);
   const isMountedRef = useRef(true);
@@ -503,14 +501,6 @@ const App: React.FC = () => {
     turnstileWidgetRef.current?.reset();
   }, [handleTurnstileToken]);
 
-  const handleGenerationProgressDisplayComplete = (runKey: number) => {
-    const waiter = generationCompletionWaiterRef.current;
-    if (!waiter || waiter.runKey !== runKey) return;
-
-    generationCompletionWaiterRef.current = null;
-    waiter.resolve();
-  };
-
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -520,9 +510,6 @@ const App: React.FC = () => {
       voiceJobAbortRef.current?.abort();
       candidateActivationSequenceRef.current += 1;
       candidatePlaybackCacheRef.current.clear();
-      const completionWaiter = generationCompletionWaiterRef.current;
-      generationCompletionWaiterRef.current = null;
-      completionWaiter?.resolve();
 
       if (isBlobUrl(audioUrlRef.current)) {
         URL.revokeObjectURL(audioUrlRef.current);
@@ -614,41 +601,6 @@ const App: React.FC = () => {
     const timer = window.setTimeout(() => setSaveToast(null), 2600);
     return () => window.clearTimeout(timer);
   }, [saveToast]);
-
-  const loadDemoRecords = async () => {
-    setIsDemoRecordsLoading(true);
-    setDemoRecordsError(null);
-
-    try {
-      setDemoRecords(await listDemoRecords());
-    } catch (loadError) {
-      setDemoRecordsError(loadError instanceof Error ? loadError.message : "デモ記録を読み込めませんでした。");
-    } finally {
-      setIsDemoRecordsLoading(false);
-    }
-  };
-
-  const refreshDemoRecords = async () => {
-    setDemoRecordsError(null);
-
-    try {
-      setDemoRecords(await listDemoRecords());
-    } catch (loadError) {
-      setDemoRecordsError(loadError instanceof Error ? loadError.message : "デモ記録を読み込めませんでした。");
-    }
-  };
-
-  useEffect(() => {
-    if (!appFeatures.demoRecords) {
-      return;
-    }
-
-    if ((appView !== "demoRecords" && appView !== "melodyExperiment") || demoRecords.length > 0 || isDemoRecordsLoading) {
-      return;
-    }
-
-    void loadDemoRecords();
-  }, [appView, demoRecords.length, isDemoRecordsLoading]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -903,6 +855,10 @@ const App: React.FC = () => {
   };
 
   const handleSelectDemoRecord = async (recordId: string) => {
+    if (generationRunRef.current) {
+      setSaveToast({ message: "歌ができてから、保存した作品を開いてください", tone: "error" });
+      return;
+    }
     setLoadingDemoRecordId(recordId);
     setDemoRecordsError(null);
 
@@ -1101,6 +1057,10 @@ const App: React.FC = () => {
   };
 
   const handleOpenDebugHistoryRecord = (record: DebugHistoryRecord) => {
+    if (generationRunRef.current) {
+      setSaveToast({ message: "歌ができてから、保存した作品を開いてください", tone: "error" });
+      return;
+    }
     const { manifest, artifacts } = record;
     const drawingData: DrawingData = {
       imageUri: "",
@@ -1782,11 +1742,7 @@ const App: React.FC = () => {
 
     generationRunRef.current = true;
     const runKey = generationTimingRunKeyRef.current + 1;
-    let resolveGenerationCompletion!: () => void;
-    const generationCompletion = new Promise<void>((resolve) => {
-      resolveGenerationCompletion = resolve;
-    });
-    generationCompletionWaiterRef.current = { runKey, resolve: resolveGenerationCompletion };
+    cancelGenerationDisplay();
     generationTimingRunKeyRef.current = runKey;
     setGenerationTimingRunKey(runKey);
     setGenerationProgressPhase("gemini");
@@ -2190,7 +2146,7 @@ const App: React.FC = () => {
             participantAge: recordOptions.participantAge,
             aiModel: generatedLyrics?.modelName ?? null,
           });
-          setDemoRecords([]);
+          invalidateDemoRecords();
           setSaveToast({ message: "記録しました", tone: "success" });
         } catch (saveError) {
           if (import.meta.env.DEV) {
@@ -2252,10 +2208,10 @@ const App: React.FC = () => {
       }
       if (generationErrorMessage === null) {
         setIsGenerationProgressComplete(true);
-        await generationCompletion;
+        await waitForGenerationDisplay(runKey);
         if (!isCurrentGeneration()) return;
-      } else if (generationCompletionWaiterRef.current?.runKey === runKey) {
-        generationCompletionWaiterRef.current = null;
+      } else {
+        cancelGenerationDisplay();
       }
       if (isMountedRef.current && generationTimingRunKeyRef.current === runKey) {
         setIsGenerating(false);
@@ -2323,9 +2279,7 @@ const App: React.FC = () => {
     generationRunRef.current = false;
     setIsGenerating(false);
     setIsGenerationProgressComplete(false);
-    const completionWaiter = generationCompletionWaiterRef.current;
-    generationCompletionWaiterRef.current = null;
-    completionWaiter?.resolve();
+    cancelGenerationDisplay();
     if (isTurnstileRequired) {
       handleTurnstileToken(null);
       setTurnstileStatus("verifying");

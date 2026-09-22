@@ -1,6 +1,6 @@
 import { appFeatures } from "../config/appConfig";
 import { getDemoRecord, listDemoRecords } from "../services/demoRecordService";
-import { getDebugHistoryRecord, listDebugHistoryRecords, type DebugHistoryRecord } from "../services/debugHistoryDb";
+import { getDebugHistoryRecord, listDebugHistoryGalleryRecords, type DebugHistoryRecord } from "../services/debugHistoryDb";
 import type { DemoRecordDetail, DemoRecordSummary } from "../types";
 
 function browserDetail(record: DebugHistoryRecord, urls: string[]): DemoRecordDetail {
@@ -23,14 +23,17 @@ export async function loadGalleryRecords() {
   const urls: string[] = [];
   const dispose = () => urls.forEach(url => URL.revokeObjectURL(url));
   try {
-    if (appFeatures.demoRecords) return { records: await listDemoRecords(), dispose };
+    if (appFeatures.demoRecords) return { records: await listDemoRecords(), skippedCount: 0, dispose };
     const records: DemoRecordSummary[] = [];
-    for (const summary of await listDebugHistoryRecords()) {
-      if (!summary.hasVoice || !summary.manifest.lyrics) continue;
-      const record = await getDebugHistoryRecord(summary.recordId);
-      if (record) records.push(browserDetail(record, urls));
+    const snapshot = await listDebugHistoryGalleryRecords();
+    for (const { summary, imageBlob } of snapshot.records) {
+      const imageUrl = URL.createObjectURL(imageBlob);
+      urls.push(imageUrl);
+      records.push({ recordId: summary.recordId, savedAt: summary.createdAt, title: summary.title,
+        identifiedObject: summary.identifiedObject, imageUrl, audioUrl: null, hasAudio: true,
+        participantAge: null, isFavorite: summary.isFavorite === true });
     }
-    return { records, dispose };
+    return { records, skippedCount: snapshot.skippedCount, dispose };
   } catch (error) { dispose(); throw error; }
 }
 
