@@ -8,7 +8,6 @@ import { readTimingEstimate, rememberTiming } from "./services/generationTimingE
 import Turnstile, { TurnstileHandle, TurnstileStatus } from "./components/Turnstile";
 import DebugExportDialog from "./components/DebugExportDialog";
 import EvaluationConsentModal from "./components/EvaluationConsentModal";
-import CreationArchiveManager from "./components/CreationArchiveManager";
 import EvaluationFollowUpModal, { EvaluationFollowUpAnswers } from "./components/EvaluationFollowUpModal";
 import DebugHistoryView from "./components/DebugHistoryView";
 import VoicevoxServerSelector from "./components/VoicevoxServerSelector";
@@ -371,7 +370,6 @@ const App: React.FC = () => {
   const [followUpPreferencePrefill, setFollowUpPreferencePrefill] = useState<LyricsCandidate["candidateId"] | null>(null);
   const [isEvaluationFollowUpPending, setIsEvaluationFollowUpPending] = useState(false);
   const [isEvaluationCentrallySaved, setIsEvaluationCentrallySaved] = useState(false);
-  const [isCreationArchiveManagerOpen, setIsCreationArchiveManagerOpen] = useState(false);
   const [hasAlternativePreviewed, setHasAlternativePreviewed] = useState(false);
   const [hasPlaybackStartedForGeneration, setHasPlaybackStartedForGeneration] = useState(false);
   const [isCandidatePreviewLoading, setIsCandidatePreviewLoading] = useState<LyricsCandidate["candidateId"] | null>(null);
@@ -2821,12 +2819,6 @@ const App: React.FC = () => {
         onDecline={() => void handleEvaluationCentralConsent("declined")}
       />
 
-      <CreationArchiveManager
-        open={isCreationArchiveManagerOpen}
-        onClose={() => setIsCreationArchiveManagerOpen(false)}
-        onToast={(message, tone) => setSaveToast({ message, tone })}
-      />
-
       {isComparableCandidateSet(generatedLyricsCandidates) && followUpFinalPreferenceSelection !== null && (
         <EvaluationFollowUpModal
           open={isEvaluationFollowUpOpen}
@@ -2985,14 +2977,6 @@ const App: React.FC = () => {
               }`}
           >
             デモ記録
-          </button>}
-          {!isCompactPortraitLayout && <button
-            type="button"
-            onClick={() => setIsCreationArchiveManagerOpen(true)}
-            title="クラウド保存した作品を確認・削除"
-            className="rounded-full px-5 py-2 text-sm font-black text-gray-600 transition-all hover:bg-sky-50"
-          >
-            以前のクラウド保存
           </button>}
         </div>
       </header>

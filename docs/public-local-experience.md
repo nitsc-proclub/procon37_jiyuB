@@ -2,7 +2,7 @@
 
 ## 保存方針
 
-新しいクラウド長期保存を暫定停止する。公開・stagingの `EVALUATION_CENTRAL_STORAGE_ENABLED=false`、公開の `CREATION_ARCHIVES_ENABLED=false`、フロントの `appFeatures.cloudSaving=false` を揃える。APIは評価・追回答・アーカイブ予約・ファイル追加・確定を拒否する。過去のクラウド作品の照会・削除と実装自体は残す。「以前のクラウド保存」から管理できる。
+新しいクラウド長期保存を暫定停止する。公開・stagingの `EVALUATION_CENTRAL_STORAGE_ENABLED=false`、公開の `CREATION_ARCHIVES_ENABLED=false`、フロントの `appFeatures.cloudSaving=false` を揃える。APIは評価・追回答・アーカイブ予約・ファイル追加・確定を拒否する。過去のクラウド作品の照会・削除APIと管理画面の実装自体は残すが、公開・ローカルとも「以前のクラウド保存」の入口と画面の組み込みを外す。既存の保存データは削除しない。
 
 公開の保存確認は「この歌を保存しますか？」「このブラウザ内に絵と歌を保存します。外部への送信はされません。」「保存してつづける／保存せずつづける」。完了は「作品を保存しました」。ここでの外部送信なしは保存操作を指す。AI作詞と歌声生成の通信・音声待ち行列の一時保管は引き続き必要であり停止しない。保存拒否時は作品を永続化しない。
 
