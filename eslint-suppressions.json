@@ -1,0 +1,24 @@
+{
+  "App.tsx": {
+    "no-unsafe-finally": { "count": 2 },
+    "react-hooks/exhaustive-deps": { "count": 2 }
+  },
+  "components/KaraokeLyricsPanel.tsx": {
+    "react-hooks/exhaustive-deps": { "count": 2 }
+  },
+  "components/PaintCanvas.tsx": {
+    "react-hooks/exhaustive-deps": { "count": 5 }
+  },
+  "services/debugBundleService.ts": {
+    "no-useless-escape": { "count": 1 }
+  },
+  "services/voicevoxHealthService.ts": {
+    "preserve-caught-error": { "count": 1 }
+  },
+  "services/voicevoxService.ts": {
+    "preserve-caught-error": { "count": 1 }
+  },
+  "src/voicevoxBackend.ts": {
+    "no-useless-assignment": { "count": 1 }
+  }
+}

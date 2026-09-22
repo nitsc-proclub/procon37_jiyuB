@@ -1,3 +1,11 @@
+export type MelodyAccentLevel = "low" | "mid" | "high" | "neutral";
+
+export type MelodyAccentLineHint = {
+  levels: MelodyAccentLevel[];
+  /** Exclusive mora offsets, including long-vowel extensions, without rests. */
+  phraseEnds?: number[];
+};
+
 
 export interface Point {
   x: number;
@@ -81,7 +89,7 @@ export interface LyricsCandidate extends LyricsResponse {
   candidateId: "candidate-a" | "candidate-b";
 }
 
-/** Models actually used by the two-stage Phase 1 pipeline. */
+/** Models actually used; drawingAnalysis is not-run for single-stage generation. */
 export interface Phase1ModelInfo {
   drawingAnalysis: string;
   lyricsGeneration: string;
@@ -90,12 +98,13 @@ export interface Phase1ModelInfo {
 export interface Phase1LyricsResponse {
   archiveGenerationTicket?: string;
   voiceJobCapability?: string;
-  pipelineMode: "phase1";
-  drawingAnalysis: DrawingAnalysis;
+  accentHints?: Partial<Record<LyricsCandidate["candidateId"], MelodyAccentLineHint[]>>;
+  pipelineMode: "phase1" | "single";
+  drawingAnalysis: DrawingAnalysis | null;
   candidates: LyricsCandidate[];
   selectedCandidateId: "candidate-a" | "candidate-b";
   modelInfo: Phase1ModelInfo;
-  /** The exact prompt contract used for this two-stage lyric generation. */
+  /** The exact prompt contract used for this generation. */
   lyricsPromptVersion: string;
   generationId?: string;
   evaluationReceipt?: string;
@@ -107,13 +116,16 @@ export interface Phase1LyricsResponse {
 }
 
 export interface GeneratedEkakiUtaResult {
+  /** Exact optimized image submitted to the Worker and bound to its archive ticket. */
+  generationImageUri?: string;
   archiveGenerationTicket?: string;
   voiceJobCapability?: string;
   lyrics: LyricsResponse;
+  accentHints?: Phase1LyricsResponse["accentHints"];
   candidates: LyricsCandidate[] | null;
   drawingAnalysis: DrawingAnalysis | null;
   modelInfo: Phase1ModelInfo | null;
-  /** Present for Phase 1; legacy one-stage responses deliberately have no prompt contract. */
+  /** Present for public single/phase1 responses; old local responses may omit it. */
   lyricsPromptVersion: string | null;
   /** Optional Worker-issued metadata; absent for local development and legacy responses. */
   generationId?: string;
@@ -148,11 +160,11 @@ export interface EvaluationSubmissionPayload {
   experimentRoundId: string | null;
   drawingAnalysisSchemaVersion: DrawingAnalysis["schemaVersion"];
   lyricsPromptVersion: string | null;
-  firstImpressionSelection: Exclude<EvaluationSelection, null>;
-  displayOrder: [LyricsCandidate["candidateId"], LyricsCandidate["candidateId"]];
-  candidates: [LyricsCandidate, LyricsCandidate];
+  firstImpressionSelection: EvaluationSelection;
+  displayOrder: LyricsCandidate["candidateId"][];
+  candidates: LyricsCandidate[];
   strokeGroupIds: string[];
-  drawingAnalysis: DrawingAnalysis;
+  drawingAnalysis: DrawingAnalysis | null;
   modelInfo: Phase1ModelInfo;
   activeCandidateId: LyricsCandidate["candidateId"] | null;
   alternativePreviewed: boolean;
@@ -207,7 +219,7 @@ export interface EvaluationDraft {
   ratings?: EvaluationStructuredRatings;
   /** Separate consent for a later central follow-up submission. */
   followUpCentralConsent?: EvaluationCentralConsent;
-  drawingAnalysis: DrawingAnalysis;
+  drawingAnalysis: DrawingAnalysis | null;
   modelInfo: Phase1ModelInfo;
   drawingAnalysisSchemaVersion: DrawingAnalysis["schemaVersion"];
   lyricsPromptVersion: string | null;

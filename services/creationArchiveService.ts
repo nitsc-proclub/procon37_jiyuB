@@ -46,7 +46,7 @@ export interface CreationArchiveCandidateSnapshot {
 export interface CreationArchiveSnapshot {
   drawingData: DrawingData;
   drawingAnalysis: EvaluationSubmissionPayload["drawingAnalysis"];
-  candidates: readonly [CreationArchiveCandidateSnapshot, CreationArchiveCandidateSnapshot];
+  candidates: readonly CreationArchiveCandidateSnapshot[];
   displayOrder: EvaluationSubmissionPayload["displayOrder"];
   activeCandidateId: EvaluationSubmissionPayload["activeCandidateId"];
   buildId: string;
@@ -245,7 +245,7 @@ const parseImage = async (imageUri: string, fetcher: typeof fetch) => {
   if (!response.ok) throw new Error("入力画像を読み込めませんでした。");
   const raw = await response.blob();
   const contentType = raw.type.toLowerCase() || (/^data:image\/webp/i.test(imageUri) ? "image/webp" : "image/png");
-  if (contentType !== "image/png" && contentType !== "image/webp") throw new Error("入力画像はPNGまたはWebPで保存します。");
+  if (!["image/png", "image/webp", "image/jpeg"].includes(contentType)) throw new Error("入力画像はPNG、WebP、JPEGで保存します。");
   if (raw.size < 1 || raw.size > CREATION_ARCHIVE_IMAGE_MAX_BYTES) throw new Error("入力画像が大きすぎます。");
   return new Blob([await raw.arrayBuffer()], { type: contentType });
 };
@@ -287,7 +287,7 @@ const validateInitResponse = (value: unknown): CreationArchiveInitResponse => {
 const snapshotAssets = async (input: StartCreationArchiveInput, fetcher: typeof fetch) => {
   if (input.consentVersion !== CREATION_ARCHIVE_CONSENT_VERSION) throw new Error("新しい作品保存の同意が必要です。");
   const candidates = [...input.snapshot.candidates].sort((a, b) => a.candidate.candidateId.localeCompare(b.candidate.candidateId));
-  if (candidates.length !== 2 || candidates[0].candidate.candidateId !== "candidate-a" || candidates[1].candidate.candidateId !== "candidate-b") throw new Error("A/B候補がそろっていません。");
+  if (![1, 2].includes(candidates.length) || candidates[0].candidate.candidateId !== "candidate-a" || (candidates.length === 2 && candidates[1].candidate.candidateId !== "candidate-b")) throw new Error("保存する歌の候補が正しくありません。");
   const image = await parseImage(input.snapshot.drawingData.imageUri, fetcher);
   // Ticket verification signs this exact, insertion-order-preserving JSON.
   const drawing = { strokes: input.snapshot.drawingData.strokes, strokeGroups: input.snapshot.drawingData.strokeGroups ?? [] };

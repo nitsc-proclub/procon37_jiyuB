@@ -44,7 +44,7 @@ export default { async fetch(request,env){
 
 test("Workers runtime: D1 registration -> actual DO lease -> mock VPC -> private R2 -> authenticated audio", async t => {
  const mf = new Miniflare({ host: "127.0.0.1", port: 0, workers: [{ config: { name: "jobs-test", type: "worker", compatibilityDate: "2026-08-31", manifest: { mainModule: "worker.mjs", modules: { "worker.mjs": { type: "esm", contents: bundled.outputFiles[0].text } } }, env: {
-  EVALUATIONS_DB: { type: "d1", name: "jobs-test" }, TEMPORARY_AUDIO: { type: "r2", name: "audio-test" }, EVALUATION_RECEIPT_SECRET: { type: "text", value: "test-only-secret-not-production-0000" }, VPC_CAPACITY: { type: "text", value: "1" }, CLOUD_RUN_CAPACITY: { type: "text", value: "1" }, VOICEVOX_BACKEND_POOL: { type: "durable-object", workerName: "jobs-test", exportName: "VoicevoxBackendPool" },
+  EVALUATIONS_DB: { type: "d1", name: "jobs-test" }, TEMPORARY_AUDIO: { type: "r2", name: "audio-test" }, EVALUATION_RECEIPT_SECRET: { type: "text", value: "test-only-secret-not-production-0000" }, VPC_CAPACITY: { type: "text", value: "1" }, CLOUD_RUN_CAPACITY: { type: "text", value: "1" }, VOICEVOX_BACKEND_POOL: { type: "durable-object", worker: "jobs-test", exportName: "VoicevoxBackendPool" },
  }, exports: { VoicevoxBackendPool: { type: "durable-object", storage: "sqlite" } } } }] });
  t.after(() => mf.dispose());
  const seed = await (await mf.dispatchFetch("https://app.test/seed?init")).json();

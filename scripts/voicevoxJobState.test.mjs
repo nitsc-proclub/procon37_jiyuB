@@ -71,11 +71,11 @@ test("registers A/B atomically with generation/candidate idempotency keys", () =
   );
 });
 
-test("requires exactly one candidate-a and candidate-b", () => {
+test("rejects candidate-b alone and duplicate candidates", () => {
   assert.throws(
     () =>
       register({
-        candidates: [{ candidateId: "candidate-a", jobId: "only-job" }],
+        candidates: [{ candidateId: "candidate-b", jobId: "only-job" }],
       }),
     (error) => error.code === "invalid-input",
   );

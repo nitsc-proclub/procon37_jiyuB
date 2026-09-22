@@ -47,6 +47,9 @@ import { createVoicevoxJobCapability, handleVoicevoxJobApi } from "./voicevoxJob
 import { consumeVoicevoxJob, voicevoxPoolRpcFromService, type VoicevoxJobQueueMessage, type VoicevoxPoolServiceRpc } from "./voicevoxJobConsumer";
 import { issueArchiveGenerationTicket } from "./creationArchiveTicket";
 import { handleCreationArchiveRequest, cleanupCreationArchives } from "./creationArchiveApi";
+import { generateSingableLyrics } from "../services/singableLyricsGeneration";
+import { resolveSingingBpm, SingingCapacityError } from "../services/melodyService";
+import { analyzePublicAccents } from "./voicevoxAccent";
 import { resolveLyricsCandidateCount } from "../config/generationConfig";
 
 // Production binding types come from Wrangler; optional bindings preserve the
@@ -55,6 +58,8 @@ type Env = Pick<Cloudflare.Env, "ASSETS"> & Partial<Omit<Cloudflare.Env, "ASSETS
   GEMINI_MODEL?: string;
   GEMINI_MODEL_CANDIDATES?: string;
   GEMINI_MODEL_SUB?: string;
+  SINGING_BPM?: string;
+  VOICEVOX_ACCENT_ENABLED?: string;
   VOICEVOX_INFRASTRUCTURE?: VoicevoxPoolServiceRpc;
 };
 
@@ -266,13 +271,13 @@ const getStrokeGroups = (drawingData: DrawingData): StrokeGroup[] => {
 
 const isRetriableStatus = (status: number) => status === 404 || status === 408 || status === 429 || status >= 500;
 
-const generateLegacyLyrics = async (drawingData: DrawingData, env: Env): Promise<LyricsResponse> => {
+const generateLegacyLyrics = async (drawingData: DrawingData, env: Env, feedback = ""): Promise<LyricsResponse> => {
   if (!env.GEMINI_API_KEY) throw httpError("Gemini API の設定がまだ完了していません。", 503, "gemini-config", "config");
   const inlineImage = parseInlineImage(drawingData.imageUri);
   if (!inlineImage) throw httpError("画像データが正しくありません。", 400);
   const strokeGroups = getStrokeGroups(drawingData);
   const requestBody = {
-    contents: [{ parts: [{ text: buildLegacyLyricsPrompt(strokeGroups) }, { inlineData: inlineImage }] }],
+    contents: [{ parts: [{ text: buildLegacyLyricsPrompt(strokeGroups) + feedback }, { inlineData: inlineImage }] }],
     generationConfig: {
       responseMimeType: "application/json",
       responseSchema: createLegacyLyricsResponseSchema({ OBJECT: "OBJECT", ARRAY: "ARRAY", STRING: "STRING", INTEGER: "INTEGER" }),
@@ -347,16 +352,18 @@ const generatePhase1Lyrics = async (drawingData: DrawingData, env: Env): Promise
   );
   const drawingAnalysis = normalizeDrawingAnalysis(JSON.parse(drawingAnalysisText), strokeGroups);
   const candidateCount = resolveLyricsCandidateCount(env.LYRICS_CANDIDATE_COUNT);
-  const candidatesText = await getGeneratedText(
-    lyricsModel,
-    {
-      // The lyrics stage receives only the structured analysis: no image URI or raw stroke data.
-      contents: [{ parts: [{ text: buildLyricsCandidatesPrompt(drawingAnalysis, promptVersion, candidateCount) }] }],
-      generationConfig: { responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(schemaTypes, candidateCount) },
-    },
-    env,
-  );
-  const candidates = normalizeLyricsCandidates(JSON.parse(candidatesText), strokeGroups, drawingAnalysis, candidateCount).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
+  const candidates = await generateSingableLyrics(async feedback => {
+    const candidatesText = await getGeneratedText(
+      lyricsModel,
+      {
+        // The lyrics stage receives only the structured analysis: no image URI or raw stroke data.
+        contents: [{ parts: [{ text: buildLyricsCandidatesPrompt(drawingAnalysis, promptVersion, candidateCount) + feedback }] }],
+        generationConfig: { responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(schemaTypes, candidateCount) },
+      },
+      env,
+    );
+    return normalizeLyricsCandidates(JSON.parse(candidatesText), strokeGroups, drawingAnalysis, candidateCount).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
+  }, result => result, resolveSingingBpm(env.SINGING_BPM));
   const selectedCandidate = candidates.find((candidate) => candidate.candidateId === "candidate-a") ?? candidates[0];
   if (!selectedCandidate) throw new Error("No valid lyrics candidate");
   return {
@@ -373,14 +380,25 @@ const shouldUsePhase1 = (env: Env) => {
   return env.LYRICS_PIPELINE_MODE?.trim().toLowerCase() === "phase1";
 };
 
-const generateEkakiUta = async (drawingData: DrawingData, env: Env): Promise<LyricsResponse | Phase1LyricsResponse> => {
-  if (!shouldUsePhase1(env)) return generateLegacyLyrics(drawingData, env);
+const generateSingleLyrics = async (drawingData: DrawingData, env: Env): Promise<Phase1LyricsResponse> => {
+  const lyrics = await generateSingableLyrics(feedback => generateLegacyLyrics(drawingData, env, feedback), result => [result], resolveSingingBpm(env.SINGING_BPM));
+  return {
+    pipelineMode: "single", drawingAnalysis: null,
+    candidates: [{ candidateId: "candidate-a", title: lyrics.title, lines: lyrics.lines, singingKanaLines: lyrics.singingKanaLines, identifiedObject: lyrics.identifiedObject, lineStrokeMappings: lyrics.lineStrokeMappings, modelName: lyrics.modelName }],
+    selectedCandidateId: "candidate-a",
+    modelInfo: { drawingAnalysis: "not-run", lyricsGeneration: lyrics.modelName! },
+    lyricsPromptVersion: "single-v1",
+  };
+};
 
+const generateEkakiUta = async (drawingData: DrawingData, env: Env): Promise<Phase1LyricsResponse> => {
+  if (!shouldUsePhase1(env)) return generateSingleLyrics(drawingData, env);
   try {
     return await generatePhase1Lyrics(drawingData, env);
-  } catch {
-    // Preserve the established one-stage experience when either phase is unavailable or malformed.
-    return generateLegacyLyrics(drawingData, env);
+  } catch (error) {
+    // Capacity retries are already bounded; do not silently restart their budget.
+    if (error instanceof SingingCapacityError) throw error;
+    return generateSingleLyrics(drawingData, env);
   }
 };
 
@@ -411,7 +429,7 @@ const issueVoiceGrant = async (env: Env, generationId: string, candidateId?: Lyr
 
 const issueVoiceGrants = async (env: Env, generationId: string, result: LyricsResponse | Phase1LyricsResponse) => {
   try {
-    if ("pipelineMode" in result && result.pipelineMode === "phase1") {
+    if ("pipelineMode" in result) {
       const entries = await Promise.all(result.candidates.map(async (candidate) => [candidate.candidateId, await issueVoiceGrant(env, generationId, candidate.candidateId)] as const));
       const voiceGrants = Object.fromEntries(
         entries
@@ -551,9 +569,10 @@ const handleGemini = async (request: Request, env: Env) => {
     const generationId = typeof payload.generationId === "string" ? payload.generationId : null;
     await verifyTurnstile(request, assertTurnstileToken(payload.turnstileToken), env);
     const result = await generateEkakiUta(drawingData, env);
+    result.accentHints = await analyzePublicAccents(result.candidates, env);
     const voiceMetadata = generationId ? await issueVoiceGrants(env, generationId, result) : {};
     const centralStorageEnabled = env.EVALUATION_CENTRAL_STORAGE_ENABLED?.trim().toLowerCase() === "true";
-    if (centralStorageEnabled && result && "pipelineMode" in result && result.pipelineMode === "phase1" && generationId && env.EVALUATION_RECEIPT_SECRET) {
+    if (generationId && env.EVALUATION_RECEIPT_SECRET) {
       try {
         const configuredTtl = Number(env.EVALUATION_RECEIPT_TTL_SECONDS);
         const ttlSeconds = Number.isFinite(configuredTtl) ? configuredTtl : DEFAULT_EVALUATION_RECEIPT_TTL_SECONDS;
@@ -564,7 +583,7 @@ const handleGemini = async (request: Request, env: Env) => {
         }
         if (env.CREATION_ARCHIVES_ENABLED?.trim() === "true" && env.CREATION_ARCHIVES) {
           const originalImage = parseInlineImage(drawingData.imageUri);
-          if (originalImage && ["image/png", "image/webp"].includes(originalImage.mimeType)) {
+          if (originalImage && ["image/png", "image/webp", "image/jpeg"].includes(originalImage.mimeType)) {
             const fingerprint = await evaluationFingerprint(result);
             const ticket = await issueArchiveGenerationTicket({
               generationId,
@@ -576,7 +595,7 @@ const handleGemini = async (request: Request, env: Env) => {
             extra.archiveGenerationTicket = ticket.value;
           }
         }
-        return json({ ...result, ...voiceMetadata, ...extra, generationId, evaluationReceipt: receipt.value, evaluationReceiptExpiresAt: receipt.expiresAt });
+        return json({ ...result, ...voiceMetadata, ...extra, generationId, ...(centralStorageEnabled || extra.archiveGenerationTicket ? { evaluationReceipt: receipt.value, evaluationReceiptExpiresAt: receipt.expiresAt } : {}) });
       } catch {
         // A central-storage configuration error must not discard valid lyrics.
         console.warn("Evaluation receipt was not issued", { code: "evaluation-receipt-unavailable" });
@@ -584,6 +603,7 @@ const handleGemini = async (request: Request, env: Env) => {
     }
     return json({ ...result, ...voiceMetadata });
   } catch (error) {
+    if (error instanceof SingingCapacityError) return json({ error: error.message, code: "lyrics-too-long", stage: "gemini" }, 422);
     const httpFailure =
       typeof error === "object" && error !== null && "status" in error && typeof error.status === "number"
         ? (error as HttpError)

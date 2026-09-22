@@ -38,7 +38,7 @@ const isLyricsResponse = (value: GenerateEkakiUtaResponse): value is LyricsRespo
 
 const isPhase1LyricsResponse = (value: GenerateEkakiUtaResponse): value is Phase1LyricsResponse =>
   "pipelineMode" in value &&
-  value.pipelineMode === "phase1" &&
+  (value.pipelineMode === "phase1" || value.pipelineMode === "single") &&
   "drawingAnalysis" in value &&
   "candidates" in value &&
   Array.isArray(value.candidates) &&
@@ -162,7 +162,7 @@ export const generateEkakiUta = async (drawingData: DrawingData, turnstileToken?
     if (!selected) {
       throw new GenerateEkakiUtaError("絵かき歌の生成に失敗しました。もう一度試してください。", response.status, null, null);
     }
-    return { lyrics: selected, candidates: result.candidates, drawingAnalysis: result.drawingAnalysis, modelInfo: result.modelInfo, lyricsPromptVersion: result.lyricsPromptVersion, ...readReceiptMetadata(result) };
+    return { generationImageUri: requestDrawingData.imageUri, accentHints: result.accentHints, lyrics: selected, candidates: result.candidates, drawingAnalysis: result.drawingAnalysis, modelInfo: result.modelInfo, lyricsPromptVersion: result.lyricsPromptVersion, ...readReceiptMetadata(result) };
   }
 
   if (!isLyricsResponse(result)) {

@@ -14,8 +14,8 @@ class D1 { constructor(){this.db=new DatabaseSync(":memory:");this.db.exec("PRAG
 class Bucket { constructor(){this.items=new Map();} async put(key,value){const bytes=value instanceof Uint8Array?value:new Uint8Array(value);this.items.set(key,{key,size:bytes.byteLength,body:new ReadableStream({start(c){c.enqueue(bytes);c.close();}})});return {key,size:bytes.byteLength};} async get(key){return this.items.get(key)??null;} async delete(key){this.items.delete(key);} async list(){return {objects:[],truncated:false};} }
 const sha = value => createHash("sha256").update(value).digest("hex");
 const score = { notes:[{lyric:"あ",key:60,frame_length:20}] };
-test("real SQLite public registration is idempotent and capability protects status", async () => {
-  const db=new D1();await db.migrate();const bucket=new Bucket(), generationId=randomUUID(), now=Date.now(), secret="x".repeat(32), grants=["candidate-a","candidate-b"].map(id=>({id,value:`grant-${id}`}));
+for (const ids of [["candidate-a"], ["candidate-a", "candidate-b"]]) test(`real SQLite public registration (${ids.length} candidates) is idempotent and capability protects status`, async () => {
+  const db=new D1();await db.migrate();const bucket=new Bucket(), generationId=randomUUID(), now=Date.now(), secret="x".repeat(32), grants=ids.map(id=>({id,value:`grant-${id}`}));
   for(const grant of grants)db.db.prepare("INSERT INTO voicevox_grants (grant_hash,generation_id,candidate_id,issued_at,expires_at) VALUES (?,?,?,?,?)").run(sha(grant.value),generationId,grant.id,now-1,now+100000);
   const capability=await api.createVoicevoxJobCapability(generationId,secret,now,100000);
   const queue={send:async()=>{}};const env={EVALUATIONS_DB:db,TEMPORARY_AUDIO:bucket,EVALUATION_RECEIPT_SECRET:secret,VOICEVOX_JOB_QUEUES:{vpc:queue,"cloud-run":queue}};

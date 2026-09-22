@@ -14,6 +14,8 @@
 - [Cloudflare 公開版の運用](cloudflare-deployment.md)
 - [デバッグ記録の保存計画](public-debug-record-storage-plan.md)
 
+> 2026-09-22: 現在の通常公開は暫定で1段・1候補。2段生成のコードと設定を保持する。本書の段階別計画と過去の公開記録より、[公開生成の暫定仕様](public-generation-parity.md)を現在の運用として参照。SFT等は保留。
+
 ## 1. 結論
 
 第一段階では、AIの仕事を次の2つに分ける。
@@ -73,7 +75,7 @@ melodyService → SingingScore
 - 表示用歌詞と歌唱用かなの作成
 - 歌詞行と stroke group の対応付け
 
-既定値は `LYRICS_PIPELINE_MODE=legacy` で、従来どおり `gemini-3.6-flash` を第一候補とする。`phase1` では `GEMINI_VISION_MODEL=gemini-3.7-flash` と `LYRICS_BASE_MODEL=gemini-3.5-flash` を用いる。3.5は現時点で基礎モデルであり、調整済みモデルの認証・呼び出しは未実装である。二段生成の失敗時は単段の基準経路へ戻る。
+既定値は `LYRICS_PIPELINE_MODE=legacy` で、`gemini-3.8-flash` を第一候補とする。`phase1` では `GEMINI_VISION_MODEL=gemini-3.8-flash` と `LYRICS_BASE_MODEL=gemini-3.5-flash` を用いる。3.5は現時点で基礎モデルであり、調整済みモデルの認証・呼び出しは未実装である。二段生成の失敗時は単段の基準経路へ戻る。
 
 ## 3. 第一段階の新しい仕組み
 

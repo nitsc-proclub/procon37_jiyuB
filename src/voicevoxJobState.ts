@@ -53,7 +53,7 @@ export type VoicevoxJob = {
 export type VoicevoxJobGroup = {
   groupId: string;
   generationId: string;
-  jobIds: readonly [string, string];
+  jobIds: readonly string[];
   status: VoicevoxJobStatus;
   /** Backend fixed for both candidates when the generation is admitted. */
   preferredBackend?: VoicevoxBackend;
@@ -154,12 +154,12 @@ const validateRegistrationInput = (input: RegisterVoicevoxJobGroupInput) => {
   if (!Number.isInteger(input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS) || (input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS) < 1 || (input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS) > MAX_VOICEVOX_JOB_ATTEMPTS) {
     throw new VoicevoxJobStateError("invalid-input", "maxAttempts must be between 1 and 5");
   }
-  if (input.candidates.length !== VOICEVOX_JOB_CANDIDATE_IDS.length) {
-    throw new VoicevoxJobStateError("invalid-input", "a job group must contain exactly candidate-a and candidate-b");
+  if (![1, 2].includes(input.candidates.length)) {
+    throw new VoicevoxJobStateError("invalid-input", "a job group must contain candidate-a, optionally with candidate-b");
   }
   const ids = input.candidates.map(({ candidateId }) => candidateId);
-  if (new Set(ids).size !== VOICEVOX_JOB_CANDIDATE_IDS.length || VOICEVOX_JOB_CANDIDATE_IDS.some((id) => !ids.includes(id))) {
-    throw new VoicevoxJobStateError("invalid-input", "a job group must contain candidate-a and candidate-b exactly once");
+  if (ids.slice().sort().some((id, index) => id !== VOICEVOX_JOB_CANDIDATE_IDS[index])) {
+    throw new VoicevoxJobStateError("invalid-input", "a job group must contain unique candidates starting with candidate-a");
   }
   const jobIds = input.candidates.map(({ jobId }) => jobId);
   for (const jobId of jobIds) assertNonEmpty(jobId, "jobId");
@@ -216,18 +216,18 @@ const isSameCandidate = (job: VoicevoxJob, candidate: VoicevoxJobCandidateInput,
   job.maxAttempts === maxAttempts &&
   job.expiresAt === expiresAt;
 
-/** Register both candidates atomically. Repeating an identical request is a no-op. */
+/** Register one or two candidates atomically. Repeating an identical request is a no-op. */
 export const registerVoicevoxJobGroup = (state: VoicevoxJobState, input: RegisterVoicevoxJobGroupInput): VoicevoxJobState => {
   validateRegistrationInput(input);
   const maxAttempts = input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
-  const candidates = [...input.candidates].sort((a, b) => a.candidateId.localeCompare(b.candidateId)) as [VoicevoxJobCandidateInput, VoicevoxJobCandidateInput];
+  const candidates = [...input.candidates].sort((a, b) => a.candidateId.localeCompare(b.candidateId));
   const existingByKey = candidates.map((candidate) =>
     Object.values(state.jobs).find(
       (job) => job.idempotencyKey === createVoicevoxJobIdempotencyKey(input.generationId, candidate.candidateId),
     ),
   );
   if (existingByKey.some(Boolean)) {
-    if (existingByKey.every((job, index) => job && isSameCandidate(job, candidates[index], input.groupId, input.generationId, maxAttempts, input.expiresAt))) {
+    if (state.groups[input.groupId]?.jobIds.length === candidates.length && existingByKey.every((job, index) => job && isSameCandidate(job, candidates[index], input.groupId, input.generationId, maxAttempts, input.expiresAt))) {
       return state;
     }
     throw new VoicevoxJobStateError("idempotency-conflict", `generation already has a different job for ${input.generationId}`);
@@ -264,14 +264,14 @@ export const registerVoicevoxJobGroup = (state: VoicevoxJobState, input: Registe
       [input.groupId]: {
         groupId: input.groupId,
         generationId: input.generationId,
-        jobIds: [jobs[0].jobId, jobs[1].jobId],
+        jobIds: jobs.map(job => job.jobId),
         status: "accepted",
         createdAt: input.now,
         updatedAt: input.now,
         expiresAt: input.expiresAt,
       },
     },
-    jobs: { ...state.jobs, [jobs[0].jobId]: jobs[0], [jobs[1].jobId]: jobs[1] },
+    jobs: { ...state.jobs, ...Object.fromEntries(jobs.map(job => [job.jobId, job])) },
     leases: { ...state.leases },
   };
 };

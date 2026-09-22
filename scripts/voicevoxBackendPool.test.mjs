@@ -49,7 +49,7 @@ async function createRuntime({ vpcCapacity = "1", cloudRunCapacity = "1" } = {})
           CLOUD_RUN_CAPACITY: { type: "text", value: cloudRunCapacity },
           VOICEVOX_BACKEND_POOL: {
             type: "durable-object",
-            workerName: "voicevox-infrastructure",
+            worker: "voicevox-infrastructure",
             exportName: "VoicevoxBackendPool",
           },
         },

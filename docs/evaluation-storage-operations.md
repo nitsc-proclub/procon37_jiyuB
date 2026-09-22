@@ -200,11 +200,11 @@ Preview DBを操作する場合は各管理コマンドの末尾に`--preview`�
 - [Workers Web Crypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/)
 - [Signing requests with HMAC](https://developers.cloudflare.com/workers/examples/signing-requests/)
 
-## 通常生成と比較評価の切り替え（2026-09-17）
+## 通常生成と比較評価の切り替え（2026-09-22）
 
 通常は公開版・ローカル版とも歌詞を1候補だけ生成する。候補数の設定が未指定・不正な場合も1候補になる。
-比較評価が必要なときだけ、サーバー側の `LYRICS_CANDIDATE_COUNT` とブラウザ側の `VITE_LYRICS_CANDIDATE_COUNT` を両方 `2` に設定し、再起動または再ビルド・デプロイする。
+比較評価が必要なときだけ `LYRICS_PIPELINE_MODE=phase1` とし、サーバー側の `LYRICS_CANDIDATE_COUNT` とブラウザ側の `VITE_LYRICS_CANDIDATE_COUNT` を両方 `2` に設定し、再起動または再ビルド・デプロイする。
 
-公開版は1候補でも生成完了後に、このブラウザへ保存するか毎回確認する。承諾した作品はIndexedDBの「デモ記録」に保存し、拒否しても再生できる。旧生成経路へのフォールバックや歌声なしの結果にも同じ確認を行う。ローカル開発版の既存の生成前記録確認とローカルサーバーへの保存は維持する。
+公開版は1候補でも生成完了後に保存同意を毎回確認する。承諾した作品はIndexedDBの「デモ記録」と非公開D1/R2へ保存し、拒否しても再生できる。旧生成経路へのフォールバックや歌声なしの結果にも同じ確認を行う。ローカル開発版の既存の生成前記録確認とローカルサーバーへの保存は維持する。
 
-D1評価・R2作品保管は、従来どおり2候補の比較と保存同意がそろった場合だけ使用する。1候補の通常生成ではクラウドへの作品保存を案内・実行しない。音声生成に必要な認可情報などの一時的な処理記録とは別である。
+D1評価・R2作品保管は1～2候補を受け付ける。1候補では第一印象選択をnullとし、比較したという記録を作らない。1段生成のDrawingAnalysisもnull。音声生成に必要な一時処理記録と長期保管は分離する。詳細は [公開生成の暫定仕様](public-generation-parity.md)。

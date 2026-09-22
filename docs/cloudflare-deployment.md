@@ -4,12 +4,14 @@
 
 ## 公開版の機能
 
+2026-09-22: 通常は1段・1候補、最大768pxの画像縮小、公開アクセント句解析を使う。実行時設定と復帰設定は [公開生成の暫定仕様](public-generation-parity.md)。
+
 - Gemini APIはWorkerの`GEMINI_API_KEY` Secretを使って歌詞・歌唱用かな・線対応を生成する。
 - 歌詞生成の直前にTurnstileを検証し、成功・`generate-ekaki-uta` action・設定済みhostnameがそろったリクエストだけがGemini APIへ進む。トークンなし、失効、再利用、または不一致ではGemini APIを呼ばない。
 - ブラウザを開いたPCのVOICEVOX Engineへ、固定loopback URLから任意で接続する。
 - VOICEVOXが使える場合は歌声WAVを生成し、描画アニメーションと歌詞を同期再生する。
 - Engine未起動、CORS未設定、ブラウザ権限拒否、合成失敗の場合も、楽譜長の無音WAVを時計としてアニメーションを再生する。
-- A/B歌詞評価と、毎回の同意後に行う評価データのD1保存を公開版で有効にする。demo-records、生成計測、メロディ実験画面は公開版では無効のままにする。
+- 通常の1候補も毎回の同意後にD1/R2へ保存する。比較評価は2段・2候補設定時のみ有効にする。demo-records、生成計測、メロディ実験画面は公開版では無効のままにする。
 
 ## Cloudflare設定
 

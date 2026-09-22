@@ -1232,11 +1232,9 @@ const App: React.FC = () => {
     });
   };
 
-  // A receipt can also be issued for one candidate. Cloud evaluation still
-  // requires a completed A/B choice; browser saving is independent of it.
+  // A single result is saved without inventing an A/B preference.
   const canSaveEvaluationToCloud = (draft: EvaluationDraft | null) =>
-    !!draft?.firstImpressionSelection
-    && isComparableCandidateSet(draft.candidates)
+    !!draft && (draft.candidates.length === 1 || (!!draft.firstImpressionSelection && isComparableCandidateSet(draft.candidates)))
     && !!evaluationReceipt
     && !!evaluationReceiptExpiresAt
     && Date.parse(evaluationReceiptExpiresAt) > Date.now();
@@ -1861,7 +1859,7 @@ const App: React.FC = () => {
       setGeneratedDrawingAnalysis(generationResult.drawingAnalysis);
       setGeneratedPhase1ModelInfo(generationResult.modelInfo);
       const candidateSet = generatedCandidates;
-      if (isComparableCandidateSet(candidateSet) && generationResult.drawingAnalysis && generationResult.modelInfo) {
+      if (candidateSet?.length && generationResult.modelInfo) {
         const generationId = generationResult.generationId ?? requestedGenerationId;
         const displayOrder = shuffleCandidateIds(candidateSet.map((candidate) => candidate.candidateId));
         const initialPreviewCandidate = getInitialPreviewCandidate(candidateSet, displayOrder);
@@ -1935,19 +1933,18 @@ const App: React.FC = () => {
         updateProgress("2つの歌声を準備しているよ");
       }
 
-      // Public A/B requests enter one bounded queue. Both results (including a
-      // per-candidate animation fallback) are ready before asking for a choice.
+      // Every public candidate enters the bounded queue, including single-stage results.
       const queuedVoice = !!generationResult.voiceJobCapability && !!generationResult.generationId
-        && !!comparableCandidates && !canUseLocalVoicevox && appFeatures.voicevox
-        && !!voicevoxGrantsRef.current["candidate-a"] && !!voicevoxGrantsRef.current["candidate-b"]
+        && !!generatedCandidates?.length && !canUseLocalVoicevox && appFeatures.voicevox
+        && generatedCandidates.every(candidate => !!voicevoxGrantsRef.current[candidate.candidateId])
         && selectedVoicevoxServer !== "local" && selectedVoicevoxServer !== "google-cloud-run";
-      if (queuedVoice && comparableCandidates) {
+      if (queuedVoice && generatedCandidates) {
         const abort = new AbortController();
         voiceJobAbortRef.current = abort;
-        const cancelPending = () => { void cancelVoicevoxJobGroup(comparableCandidates.map(candidate => ({ jobId: `${generationResult.generationId}:${candidate.candidateId}` })), generationResult.voiceJobCapability!); };
+        const cancelPending = () => { void cancelVoicevoxJobGroup(generatedCandidates.map(candidate => ({ jobId: `${generationResult.generationId}:${candidate.candidateId}` })), generationResult.voiceJobCapability!); };
         abort.signal.addEventListener("abort", cancelPending, { once: true });
-        const inputs = comparableCandidates.map(candidate => {
-          const score = buildSingingScore(candidate, createSingingSeed(candidate, 0));
+        const inputs = generatedCandidates.map(candidate => {
+          const score = buildSingingScore(candidate, createSingingSeed(candidate, 0), generationResult.accentHints?.[candidate.candidateId]);
           preparedCandidates.set(candidate.candidateId, { score, audioBlob: createSilentPlaybackAudio(score), playbackKind: "animation-only", voicevoxWarning: "歌声を用意できませんでした。絵のアニメーションで再生します。", voicevoxServer: null });
           return { candidateId: candidate.candidateId, voiceGrant: voicevoxGrantsRef.current[candidate.candidateId] ?? "", score };
         });
@@ -1997,7 +1994,7 @@ const App: React.FC = () => {
               ? "音声チケットを受け取れなかったため、絵のアニメーションで再生します。"
               : null;
         let candidateServer: VoicevoxResolvedServerId | null = null;
-        let accentLineHints;
+        let accentLineHints = candidateId === "legacy" ? undefined : generationResult.accentHints?.[candidateId];
 
         try {
           if (isDevelopmentVoicevox() && canUseLocalVoicevox) {
@@ -2105,11 +2102,11 @@ const App: React.FC = () => {
       setVoicevoxWarning(initialPlayback.voicevoxWarning);
       setVoicevoxResolvedServer(initialPlayback.voicevoxServer);
 
-      // Freeze the original drawing and both prepared candidates before a
+      // Freeze the submitted image and all prepared candidates before a
       // choice can change the active UI. Do not reconstruct this from state
       // later: a new song must never redirect an already-consented archive.
-      if (comparableCandidates && evaluationDraft && generationResult.drawingAnalysis && generationResult.modelInfo) {
-        const archivedCandidates = comparableCandidates
+      if (generatedCandidates?.length && evaluationDraft && generationResult.modelInfo) {
+        const archivedCandidates = generatedCandidates
           .map((candidate) => {
             const prepared = preparedCandidates.get(candidate.candidateId);
             if (!prepared) return null;
@@ -2126,11 +2123,11 @@ const App: React.FC = () => {
         if (archivedCandidates.every((item): item is NonNullable<typeof item> => !!item)) {
           const byId = new Map(archivedCandidates.map((item) => [item.candidate.candidateId, item]));
           const a = byId.get("candidate-a"), b = byId.get("candidate-b");
-          if (a && b) creationArchiveSnapshotRef.current = {
-            drawingData: structuredClone(groupedDrawingData),
+          if (a && (generatedCandidates.length === 1 || b)) creationArchiveSnapshotRef.current = {
+            drawingData: structuredClone({ ...groupedDrawingData, imageUri: generationResult.generationImageUri ?? groupedDrawingData.imageUri }),
             drawingAnalysis: structuredClone(generationResult.drawingAnalysis),
-            candidates: [a, b],
-            displayOrder: [...evaluationDraft.displayOrder] as [LyricsCandidate["candidateId"], LyricsCandidate["candidateId"]],
+            candidates: b ? [a, b] : [a],
+            displayOrder: [...evaluationDraft.displayOrder],
             activeCandidateId: evaluationDraft.activeCandidateId,
             buildId: appBuildId,
             mode: appConfig.mode,
@@ -2824,6 +2821,7 @@ const App: React.FC = () => {
         open={isEvaluationConsentOpen}
         pending={isEvaluationSubmissionPending}
         savesInBrowser={appFeatures.debugHistory && !!debugExportSource}
+        candidateCount={generatedLyricsCandidates?.length ?? 1}
         savesToCloud={canSaveEvaluationToCloud(evaluationDraftRef.current)}
         savesFullArchive={!!archiveGenerationTicketRef.current && !!creationArchiveSnapshotRef.current}
         onAccept={() => void handleEvaluationCentralConsent("accepted")}

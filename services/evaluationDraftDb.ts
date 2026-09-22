@@ -120,7 +120,7 @@ type CreateEvaluationDraftInput = {
   createdAt: string;
   candidates: readonly LyricsCandidate[];
   displayOrder: readonly LyricsCandidate["candidateId"][];
-  drawingAnalysis: DrawingAnalysis;
+  drawingAnalysis: DrawingAnalysis | null;
   modelInfo: Phase1ModelInfo;
   lyricsPromptVersion: string | null;
   activeCandidateId?: LyricsCandidate["candidateId"] | null;
@@ -157,12 +157,12 @@ export const createEvaluationDraft = ({
   subjectFeedbackChoice: null,
   ratings: {},
   followUpCentralConsent: "not-asked",
-  drawingAnalysis: copyDrawingAnalysis(drawingAnalysis),
+  drawingAnalysis: drawingAnalysis ? copyDrawingAnalysis(drawingAnalysis) : null,
   modelInfo: {
     drawingAnalysis: modelInfo.drawingAnalysis,
     lyricsGeneration: modelInfo.lyricsGeneration,
   },
-  drawingAnalysisSchemaVersion: drawingAnalysis.schemaVersion,
+  drawingAnalysisSchemaVersion: drawingAnalysis?.schemaVersion ?? 1,
   lyricsPromptVersion,
 });
 

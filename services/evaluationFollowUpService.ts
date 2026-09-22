@@ -151,7 +151,7 @@ const subjectLabelForChoice = (
   if (choice === null) return null;
   if (choice === "other") return "その他";
   const index = choice === "primary" ? 0 : choice === "alternate-1" ? 1 : 2;
-  const label = base.drawingAnalysis.objectCandidates[index]?.label?.trim();
+  const label = base.drawingAnalysis?.objectCandidates[index]?.label?.trim();
   if (!label) {
     throw new EvaluationSubmissionError(400, "invalid-subject-feedback-choice", "その題材候補は選べません。");
   }
@@ -175,6 +175,9 @@ export const saveEvaluationFollowUp = async (
   followUp: EvaluationFollowUpSubmissionPayload,
   now = new Date().toISOString(),
 ) => {
+  if (base.candidates.length === 1 && followUp.finalPreferenceSelection !== null) {
+    throw new EvaluationSubmissionError(400, "invalid-final-preference", "比較していない歌詞には候補の優劣を保存できません。");
+  }
   if (followUp.finalPreferenceSelection && followUp.finalPreferenceSelection !== "neither" && !base.candidates.some((candidate) => candidate.candidateId === followUp.finalPreferenceSelection)) {
     throw new EvaluationSubmissionError(400, "invalid-final-preference", "その歌詞候補は選べません。");
   }

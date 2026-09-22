@@ -85,3 +85,28 @@ test("archive never starts uploads when a deletion receipt cannot persist", asyn
 });
 
 test.after(async () => vite.close());
+
+
+test("one candidate archives the exact optimized JPEG with no phantom B assets", async () => {
+  const source = snapshot(true), requests = [];
+  source.candidates = source.candidates.slice(0, 1);
+  source.displayOrder = ["candidate-a"];
+  source.drawingAnalysis = null;
+  source.drawingData.imageUri = "data:image/jpeg;base64,/9j/2Q==";
+  const jpeg = new Uint8Array([255, 216, 255, 217]);
+  const fetcher = async (url, init = {}) => {
+    requests.push([String(url), init]);
+    if (url === source.drawingData.imageUri) return new Response(jpeg, { headers: { "Content-Type": "image/jpeg" } });
+    if (url === archive.CREATION_ARCHIVE_INIT_URL) {
+      const body = JSON.parse(init.body);
+      assert.deepEqual(body.assets.map(a => a.name), ["input-image", "drawing-json", "candidate-a-json", "candidate-a-wav", "manifest"]);
+      assert.equal(body.assets[0].contentType, "image/jpeg");
+      return Response.json({ archiveId, uploadCapability: capability, deleteCapability: capability, pendingExpiresAt: 1, expiresAt: 2, assets: body.assets.map(a => ({ name: a.name, maxBytes: a.bytes, contentType: a.contentType })) });
+    }
+    return Response.json({ status: "complete" });
+  };
+  const result = await archive.startCreationArchive({ evaluation, generationTicket: "ticket", consentVersion: "creation-archive-v1", snapshot: source }, { fetcher, storage: store() });
+  assert.equal(result.status, "complete", result.error);
+  const uploaded = requests.find(([url]) => url.endsWith("/assets/input-image"))[1];
+  assert.deepEqual(uploaded.body, jpeg);
+});

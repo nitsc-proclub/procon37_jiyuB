@@ -53,6 +53,11 @@ Windows では `超えかき歌_サーバー管理セット/超えかき歌！_�
 | `npm run build` | 本番用ビルドを作成 |
 | `npm run preview` | ビルド結果をローカルで確認 |
 | `npm run type-check` | TypeScript の型チェック |
+| `npm test` | 楽譜・生成・保存・音声基盤の自動テスト |
+| `npm run lint` | 静的検査（既存抑制の内訳は docs/code-quality.md） |
+| `npm run audit` | 依存パッケージの既知の脆弱性監査 |
+
+公開版の暫定仕様は [公開生成の整合](docs/public-generation-parity.md)、品質確認は [code-quality.md](docs/code-quality.md) を参照。
 
 ## 主な機能
 

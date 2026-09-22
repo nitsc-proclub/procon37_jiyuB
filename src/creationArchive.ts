@@ -11,10 +11,9 @@ const TOTAL = 72 * 1024 * 1024,
     "input-image",
     "drawing-json",
     "candidate-a-json",
-    "candidate-b-json",
     "manifest",
   ] as const,
-  NAMES = [...REQUIRED, "candidate-a-wav", "candidate-b-wav"] as const;
+  NAMES = [...REQUIRED, "candidate-b-json", "candidate-a-wav", "candidate-b-wav"] as const;
 type Name = (typeof NAMES)[number];
 type Stmt = {
   bind(...v: unknown[]): Stmt;
@@ -130,7 +129,7 @@ const specs = (v: unknown) => {
       !HEX.test(String(x.sha256)) ||
       !(
         n === "input-image"
-          ? ["image/png", "image/webp"]
+          ? ["image/png", "image/webp", "image/jpeg"]
           : n.endsWith("wav")
             ? ["audio/wav"]
             : ["application/json"]
@@ -156,7 +155,7 @@ const specs = (v: unknown) => {
     );
   if (
     ["drawing-json", "candidate-a-json", "candidate-b-json", "manifest"].reduce(
-      (n, x) => n + m.get(x as Name)!.bytes,
+      (n, x) => n + (m.get(x as Name)?.bytes ?? 0),
       0,
     ) > JSONMAX ||
     m.get("input-image")!.bytes > IMG ||
@@ -234,7 +233,9 @@ const mime = (n: Name, t: string, b: Uint8Array) => {
       ok = false;
     }
   else if (n === "input-image")
-    ok = t === "image/png" ? png : f(0) === "RIFF" && f(8) === "WEBP";
+    ok = t === "image/png" ? png : t === "image/jpeg"
+      ? b.length >= 4 && b[0] === 0xff && b[1] === 0xd8 && b.at(-2) === 0xff && b.at(-1) === 0xd9
+      : f(0) === "RIFF" && f(8) === "WEBP";
   else ok = f(0) === "RIFF" && f(8) === "WAVE";
   if (!ok)
     throw new CreationArchiveError(
@@ -277,9 +278,11 @@ export const initializeCreationArchive = async (
   for (const c of input.evaluation.candidates)
     expected.set(c.candidateId, await canonicalHash(c));
   if (
-    expected.size !== 2 ||
+    ![1, 2].includes(expected.size) ||
     !expected.has("candidate-a") ||
-    !expected.has("candidate-b")
+    (expected.size === 2 && !expected.has("candidate-b"))
+    || [...expected.keys()].some(id => !a.has(`${id}-json` as Name))
+    || [...a.keys()].some(name => name.startsWith("candidate-") && !expected.has(name.slice(0, 11)))
   )
     throw new CreationArchiveError(
       403,

@@ -1,4 +1,6 @@
-# 長時間改善計画
+# UI改善計画の履歴
+
+2026-07-17の完了済み計画。現在の公開生成対応は [公開生成の暫定仕様](docs/public-generation-parity.md)、今後の保留事項は [BACKLOG.md](BACKLOG.md) を参照。
 
 ## 共通準備
 

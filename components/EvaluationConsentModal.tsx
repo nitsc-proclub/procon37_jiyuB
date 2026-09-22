@@ -5,6 +5,7 @@ type EvaluationConsentModalProps = {
   savesInBrowser: boolean;
   savesToCloud: boolean;
   savesFullArchive?: boolean;
+  candidateCount?: number;
   onAccept: () => void;
   onDecline: () => void;
 };
@@ -13,7 +14,7 @@ type EvaluationConsentModalProps = {
  * Presentational only. The caller decides whether a signed receipt and the
  * central-storage feature are available and handles the D1 submission.
  */
-const EvaluationConsentModal: React.FC<EvaluationConsentModalProps> = ({ open, pending, savesInBrowser, savesToCloud, savesFullArchive = false, onAccept, onDecline }) => {
+const EvaluationConsentModal: React.FC<EvaluationConsentModalProps> = ({ open, pending, savesInBrowser, savesToCloud, savesFullArchive = false, candidateCount = 2, onAccept, onDecline }) => {
   const dialogRef = useRef<HTMLElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const onDeclineRef = useRef(onDecline);
@@ -55,8 +56,8 @@ const EvaluationConsentModal: React.FC<EvaluationConsentModalProps> = ({ open, p
         </h2>
         <div id="evaluation-consent-description" className="mt-4 space-y-2 text-sm font-semibold leading-relaxed text-gray-600">
           {savesInBrowser && <p><span className="font-black text-gray-800">このブラウザ：</span>絵と歌を、あとで開けるように保存します。</p>}
-          {savesToCloud && savesFullArchive && <p><span className="font-black text-gray-800">クラウド：</span>絵・描いた線・2つの歌・回答を、改善のため1年間保存します。</p>}
-          {savesToCloud && !savesFullArchive && <p><span className="font-black text-gray-800">クラウド：</span>絵の分析・2つの歌詞・選んだ答えを、アプリの改善に使います。</p>}
+          {savesToCloud && savesFullArchive && <p><span className="font-black text-gray-800">クラウド：</span>{candidateCount === 1 ? "絵・描いた線・歌を、改善のため1年間保存します。" : "絵・描いた線・2つの歌・回答を、改善のため1年間保存します。"}</p>}
+          {savesToCloud && !savesFullArchive && <p><span className="font-black text-gray-800">クラウド：</span>{candidateCount === 1 ? "歌詞と生成時の情報を、アプリの改善に使います。" : "絵の分析・2つの歌詞・選んだ答えを、アプリの改善に使います。"}</p>}
           {savesToCloud && savesFullArchive && <p className="text-xs">非公開です。保護者の方が確認し、このブラウザから削除できます。</p>}
           {savesToCloud && !savesFullArchive && <p className="text-xs">改善用には、絵・歌声・描いた線を保存しません。</p>}
         </div>

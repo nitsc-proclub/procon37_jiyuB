@@ -34,7 +34,7 @@ export const handleVoicevoxJobApi = async (request: Request, env: VoicevoxJobApi
       if (!request.headers.get("Content-Type")?.toLowerCase().startsWith("application/json")) return json({ code: "invalid-content-type" }, 415);
       const value = await body(request); const generationId = typeof value.generationId === "string" ? value.generationId : "";
       if (!await verify(request.headers.get("X-Voicevox-Capability"), generationId, env.EVALUATION_RECEIPT_SECRET, Date.now())) return json({ code: "invalid-capability" }, 403);
-      if (!Array.isArray(value.candidates) || value.candidates.length !== 2 || typeof value.groupId !== "string") return json({ code: "invalid-job-request" }, 400);
+      if (!Array.isArray(value.candidates) || ![1, 2].includes(value.candidates.length) || typeof value.groupId !== "string") return json({ code: "invalid-job-request" }, 400);
       const candidates = await Promise.all(value.candidates.map(async (item) => {
         if (!item || typeof item !== "object") throw new Error("invalid"); const candidate = item as Record<string, unknown>;
         const score = parseSingingScore(candidate.score); const scoreJson = JSON.stringify(score); const rawCandidateId = candidate.candidateId;

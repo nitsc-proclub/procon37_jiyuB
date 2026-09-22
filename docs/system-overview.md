@@ -129,6 +129,8 @@ export interface SingingScore {
 
 ## 6. Gemini 連携
 
+公開経路の現在の設定・容量検査・1候補保存は [公開生成の暫定仕様](public-generation-parity.md) を参照。以下のVite middlewareの説明はローカル開発用。
+
 フロントエンドは `services/geminiService.ts` から `/api/gemini/generate-ekaki-uta` に `DrawingData` を送ります。
 
 サーバー側の `server/geminiMiddleware.ts` は以下を行います。
@@ -153,10 +155,10 @@ export interface SingingScore {
 - 内部は十六分音符単位で管理。行長を固定し、最後に累積位置を丸めてフレームへ変換する（93.75 BPMでは480フレーム、端数なし）
 - 八分音符以上を優先し、拍途中の音は次の拍までに終えて16分位置のずれを持ち越さない。語間の休符も拍頭・八分位置に合わせる
 - 長音「ー」は1文字につき1モーラ分の長さを確保し、直前の音高でつなげる
-- 先頭に短い休符を追加
+- 先頭・末尾に各2フレームの短い休符を追加
 - 各モーラに音高と長さを割り当てる
 - 最終行の末尾には終止感のある音型を適用する
-- 開発版のローカルVOICEVOXでは、`voicevoxAccentService` で読みを照合して音高と句境界を取得する。従来の配分後、句内の過剰な伸ばしだけを同じ句内で補正し、8拍と拍位置を再検証する（詳細は `ekaki-uta-generation.md`）。照合不一致・解析失敗時は従来方式に戻る
+- ローカルVOICEVOXと公開VPCでは、`voicevoxAccentService` で読みを照合して音高と句境界を取得する。従来の配分後、句内の過剰な伸ばしだけを同じ句内で補正し、8拍と拍位置を再検証する（詳細は `ekaki-uta-generation.md`）。照合不一致・解析失敗時は従来方式に戻る
 
 `voicevoxService` は `SingingScore` を VOICEVOX Engine に送り、2 段階で音声を生成します。
 

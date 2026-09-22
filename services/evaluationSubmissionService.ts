@@ -32,7 +32,7 @@ const digest = async (value: unknown) => bytesToBase64Url(await crypto.subtle.di
 const importHmacKey = (secret: string, usages: KeyUsage[]) => crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, usages);
 
 type EvaluationFingerprintInput = {
-  drawingAnalysis: DrawingAnalysis;
+  drawingAnalysis: DrawingAnalysis | null;
   candidates: readonly LyricsCandidate[];
   lyricsPromptVersion: string | null;
   modelInfo: Phase1ModelInfo;
@@ -92,18 +92,23 @@ export const validateEvaluationSubmission = (value: unknown): EvaluationSubmissi
   const record = value as Record<string, unknown>;
   if (!hasExactKeys(record, PAYLOAD_KEYS) || record.schemaVersion !== 1 || typeof record.generationId !== "string" || !UUID_PATTERN.test(record.generationId) || typeof record.evaluationReceipt !== "string" || record.evaluationReceipt.length > 512) fail();
   if (![record.createdAt, record.updatedAt, record.consentedAt].every(isIsoDate) || !isNonEmptyString(record.buildId, 128) || (record.experimentRoundId !== null && (!isNonEmptyString(record.experimentRoundId, 128) || !SAFE_ID_PATTERN.test(String(record.experimentRoundId)))) || record.drawingAnalysisSchemaVersion !== 1 || (record.lyricsPromptVersion !== null && !isNonEmptyString(record.lyricsPromptVersion, 64))) fail();
-  if (!isCandidateId(record.firstImpressionSelection) && record.firstImpressionSelection !== "neither") fail("invalid-selection");
-  if (!Array.isArray(record.displayOrder) || record.displayOrder.length !== 2 || !record.displayOrder.every(isCandidateId) || new Set(record.displayOrder).size !== 2) fail();
-  if (!Array.isArray(record.strokeGroupIds) || record.strokeGroupIds.length < 1 || record.strokeGroupIds.length > 256 || !record.strokeGroupIds.every((id) => typeof id === "string" && SAFE_ID_PATTERN.test(id)) || new Set(record.strokeGroupIds).size !== record.strokeGroupIds.length) fail();
+  const single = Array.isArray(record.candidates) && record.candidates.length === 1;
+  if (single ? record.firstImpressionSelection !== null : !isCandidateId(record.firstImpressionSelection) && record.firstImpressionSelection !== "neither") fail("invalid-selection");
+  if (!Array.isArray(record.displayOrder) || record.displayOrder.length !== (single ? 1 : 2) || !record.displayOrder.every(isCandidateId) || new Set(record.displayOrder).size !== (single ? 1 : 2)) fail();
+  if (!Array.isArray(record.strokeGroupIds) || record.strokeGroupIds.length < (single ? 0 : 1) || record.strokeGroupIds.length > 256 || !record.strokeGroupIds.every((id) => typeof id === "string" && SAFE_ID_PATTERN.test(id)) || new Set(record.strokeGroupIds).size !== record.strokeGroupIds.length) fail();
   const groupIds = new Set(record.strokeGroupIds as string[]);
-  if (!Array.isArray(record.candidates) || record.candidates.length !== 2 || !record.candidates.every((candidate) => validateCandidate(candidate, groupIds)) || new Set(record.candidates.map((candidate) => candidate.candidateId)).size !== 2) fail();
-  if (!validateAnalysis(record.drawingAnalysis, groupIds) || !validateModelInfo(record.modelInfo) || (record.activeCandidateId !== null && !isCandidateId(record.activeCandidateId)) || typeof record.alternativePreviewed !== "boolean" || record.centralConsent !== "accepted") fail();
+  if (!Array.isArray(record.candidates) || record.candidates.length !== (single ? 1 : 2) || !record.candidates.every((candidate) => validateCandidate(candidate, groupIds)) || new Set(record.candidates.map((candidate) => candidate.candidateId)).size !== (single ? 1 : 2)) fail();
+  if ((!(single && record.drawingAnalysis === null) && !validateAnalysis(record.drawingAnalysis, groupIds)) || !validateModelInfo(record.modelInfo) || (record.activeCandidateId !== null && !isCandidateId(record.activeCandidateId)) || typeof record.alternativePreviewed !== "boolean" || record.centralConsent !== "accepted") fail();
+  const ids = new Set((record.candidates as LyricsCandidate[]).map(c => c.candidateId));
+  if ((record.displayOrder as string[]).some(id => !ids.has(id as LyricsCandidate["candidateId"]))
+    || (single && (!ids.has("candidate-a") || record.alternativePreviewed !== false))
+    || (record.activeCandidateId !== null && !ids.has(record.activeCandidateId as LyricsCandidate["candidateId"]))) fail();
   return record as unknown as EvaluationSubmissionPayload;
 };
 
 export const buildEvaluationSubmission = (draft: EvaluationDraft, receipt: string, buildId: string, consentedAt: string, experimentRoundId: string | null): EvaluationSubmissionPayload => {
-  if (!draft.firstImpressionSelection || draft.candidates.length !== 2 || draft.displayOrder.length !== 2 || draft.centralConsent !== "accepted") throw new EvaluationSubmissionError(400, "incomplete-evaluation", "評価下書きがまだ完成していません。");
-  const strokeGroupIds = [...new Set([...draft.drawingAnalysis.parts.flatMap((part) => part.strokeGroupIds), ...draft.candidates.flatMap((candidate) => candidate.lineStrokeMappings?.flatMap((mapping) => mapping.strokeGroupIds) ?? [])])];
+  if ((draft.candidates.length === 2 && !draft.firstImpressionSelection) || ![1, 2].includes(draft.candidates.length) || draft.displayOrder.length !== draft.candidates.length || draft.centralConsent !== "accepted") throw new EvaluationSubmissionError(400, "incomplete-evaluation", "評価下書きがまだ完成していません。");
+  const strokeGroupIds = [...new Set([...(draft.drawingAnalysis?.parts.flatMap((part) => part.strokeGroupIds) ?? []), ...draft.candidates.flatMap((candidate) => candidate.lineStrokeMappings?.flatMap((mapping) => mapping.strokeGroupIds) ?? [])])];
   return validateEvaluationSubmission({
     schemaVersion: 1,
     generationId: draft.generationId,

@@ -1,4 +1,4 @@
-import { LyricsResponse, SingingNote, SingingScore } from "../types";
+import { LyricsResponse, SingingNote, SingingScore, MelodyAccentLevel, MelodyAccentLineHint } from "../types";
 import { SCORE_FRAMES_PER_SECOND } from "./silentPlaybackService";
 
 export const SINGING_BPM = 125;
@@ -88,13 +88,7 @@ export const rhythmNotesToSingingNotes = (notes: RhythmNote[], bpm = SINGING_BPM
   });
 };
 
-export type MelodyAccentLevel = "low" | "mid" | "high" | "neutral";
-
-export type MelodyAccentLineHint = {
-  levels: MelodyAccentLevel[];
-  /** Exclusive mora offsets, including long-vowel extensions, without rests. */
-  phraseEnds?: number[];
-};
+export type { MelodyAccentLevel, MelodyAccentLineHint } from "../types";
 
 const normalizeKana = (text: string) =>
   text

@@ -296,3 +296,17 @@ test("registration snapshots caller input before awaiting the score hash", async
   assert.equal(result.jobs[0].scoreJson, expectedScoreJson);
   assert.equal(database.rows("SELECT score_json FROM voicevox_job_payloads WHERE job_id = ?", result.jobs[0].jobId)[0].score_json, expectedScoreJson);
 });
+
+
+test("one candidate uses one grant and retry cannot change candidate count", async () => {
+  const database = await createDatabase();
+  const entry = fixture();
+  insertGrants(database, entry);
+  const single = { ...entry.request, candidates: entry.candidates.slice(0, 1) };
+  const first = await repository.registerVoicevoxJobs(database, single);
+  assert.equal(first.jobs.length, 1);
+  assert.equal(first.group.jobIds.length, 1);
+  assert.equal((await repository.registerVoicevoxJobs(database, single)).created, false);
+  assert.equal(database.rows("SELECT * FROM voicevox_grants WHERE consumed_at IS NOT NULL").length, 1);
+  await assert.rejects(repository.registerVoicevoxJobs(database, entry.request), e => e.code === "idempotency-conflict");
+});

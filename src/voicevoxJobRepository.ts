@@ -57,7 +57,7 @@ export type VoicevoxStoredJob = VoicevoxJob & { scoreJson: string; scoreHash: st
 export type VoicevoxJobRegistrationResult = {
   created: boolean;
   group: VoicevoxJobGroup;
-  jobs: readonly [VoicevoxStoredJob, VoicevoxStoredJob];
+  jobs: readonly VoicevoxStoredJob[];
 };
 
 export type VoicevoxJobRepositoryErrorCode = "invalid-input" | "grant-invalid" | "idempotency-conflict" | "storage-failed";
@@ -137,7 +137,7 @@ const validateRequest = async (request: RegisterVoicevoxJobGroupRequest) => {
   assert(Number.isInteger(maxAttempts) && maxAttempts >= 1 && maxAttempts <= MAX_VOICEVOX_JOB_ATTEMPTS, "invalid-input", "maxAttempts must be between 1 and 5");
   const cloudRunOverflowGenerations = request.cloudRunOverflowGenerations ?? 2;
   assert(Number.isInteger(cloudRunOverflowGenerations) && cloudRunOverflowGenerations >= 1 && cloudRunOverflowGenerations <= 10, "invalid-input", "cloudRunOverflowGenerations must be between 1 and 10");
-  assert(request.candidates.length === VOICEVOX_JOB_CANDIDATE_IDS.length, "invalid-input", "both candidates are required");
+  assert([1, 2].includes(request.candidates.length), "invalid-input", "one or two candidates are required");
   const sorted = candidatesInOrder(request.candidates);
   assert(sorted.every((candidate, index) => candidate.candidateId === VOICEVOX_JOB_CANDIDATE_IDS[index]), "invalid-input", "candidate-a and candidate-b are required exactly once");
   assert(new Set(sorted.map(({ jobId }) => jobId)).size === sorted.length, "invalid-input", "jobId values must be unique");
@@ -154,7 +154,7 @@ const validateRequest = async (request: RegisterVoicevoxJobGroupRequest) => {
 const groupFromRow = (row: GroupRow, jobs: readonly VoicevoxStoredJob[]): VoicevoxJobGroup => ({
   groupId: row.group_id,
   generationId: row.generation_id,
-  jobIds: [jobs[0].jobId, jobs[1].jobId],
+  jobIds: jobs.map(job => job.jobId),
   status: row.status,
   ...(row.preferred_backend ? { preferredBackend: row.preferred_backend } : {}),
   createdAt: row.created_at,
@@ -192,10 +192,10 @@ const readExisting = async (database: VoicevoxJobDatabase, generationId: string)
 
 const matchesExisting = (existing: { group: GroupRow | null; jobs: JobRow[] }, request: RegisterVoicevoxJobGroupRequest, candidates: readonly VoicevoxJobCandidateRegistration[], maxAttempts: number): VoicevoxJobRegistrationResult | null => {
   if (!existing.group && existing.jobs.length === 0) return null;
-  if (!existing.group || existing.jobs.length !== 2) {
+  if (!existing.group || existing.jobs.length !== candidates.length) {
     throw new VoicevoxJobRepositoryError("idempotency-conflict", "generation has a partial VOICEVOX job group");
   }
-  const jobs = existing.jobs.map(jobFromRow) as [VoicevoxStoredJob, VoicevoxStoredJob];
+  const jobs = existing.jobs.map(jobFromRow) as VoicevoxStoredJob[];
   const group = existing.group;
   const same = group.group_id === request.groupId && group.generation_id === request.generationId && group.expires_at === request.expiresAt &&
     jobs.every((job, index) => {
@@ -242,7 +242,7 @@ const insertPayloadStatement = (request: RegisterVoicevoxJobGroupRequest, candid
 const databaseStatement = (query: string, values: readonly unknown[]) => ({ query, values });
 
 /**
- * Atomically consumes the two candidate grants and creates both jobs.
+ * Atomically consumes the supplied candidate grants and creates their jobs.
  *
  * A matching generation is returned before grants are read, which makes a
  * browser retry safe even though the original one-time grants are consumed.
