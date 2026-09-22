@@ -1,5 +1,6 @@
 import {
   evaluationFingerprint,
+  EvaluationSubmissionError,
   validateEvaluationSubmission,
   verifyEvaluationReceipt,
 } from "../services/evaluationSubmissionService";
@@ -72,9 +73,13 @@ const body = async (r: Request) => {
       "JSONを指定してください。",
     );
   try {
-    return JSON.parse(
+    const value: unknown = JSON.parse(
       new TextDecoder().decode(await bounded(r.body)),
-    ) as Record<string, unknown>;
+    );
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new CreationArchiveError(400, "invalid-json", "リクエストが正しくありません。");
+    }
+    return value as Record<string, unknown>;
   } catch (e) {
     if (e instanceof CreationArchiveError) throw e;
     throw new CreationArchiveError(
@@ -212,7 +217,7 @@ export const handleCreationArchiveRequest = async (
       );
     return json({ code: "not-found" }, 404);
   } catch (e) {
-    if (e instanceof CreationArchiveError)
+    if (e instanceof CreationArchiveError || e instanceof EvaluationSubmissionError)
       return json({ code: e.code, error: e.message }, e.status);
     return json(
       { code: "archive-failed", error: "作品を保存できませんでした。" },

@@ -122,3 +122,14 @@ test("Turnstile rejection never reaches Gemini, accent analysis or grant issuanc
   assert.equal((await run.request()).status, 403);
   assert.equal(run.models.length + run.accentCalls.length + run.writes.length, 0);
 });
+
+
+test("public archive rejects malformed submissions as client errors without creating records", async t => {
+  const run = setup(t);
+  for (const value of [null, [], {}, { evaluation: {} }]) {
+    const response = await worker.fetch(new Request("https://app.test/api/creation-archives", { method: "POST", headers: { Origin: "https://app.test", "Content-Type": "application/json" }, body: JSON.stringify(value) }), run.env);
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+  }
+  assert.equal(run.writes.length, 0);
+});
