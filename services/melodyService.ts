@@ -2,6 +2,12 @@ import { LyricsResponse, SingingNote, SingingScore } from "../types";
 import { SCORE_FRAMES_PER_SECOND } from "./silentPlaybackService";
 
 export const SINGING_BPM = 125;
+export class SingingCapacityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SingingCapacityError";
+  }
+}
 const PHRASE_BEATS = 8;
 const UNITS_PER_BEAT = 4;
 const PHRASE_UNITS = PHRASE_BEATS * UNITS_PER_BEAT;
@@ -257,7 +263,7 @@ const allocateRhythmicPhraseLengths = (
   const moraCount = groups.reduce((sum, group) =>
     sum + group.moras.reduce((count, mora) => count + 1 + mora.extensionCount, 0), 0);
   if (moraCount * MIN_NOTE_UNITS + restCount > phraseLength) {
-    throw new Error("歌詞の1行が長すぎて、固定フレーズ長に入りませんでした。");
+    throw new SingingCapacityError("歌詞の1行が長すぎて、固定フレーズ長に入りませんでした。");
   }
 
   const phraseNoteLength = phraseLength - restCount * WORD_BREAK_REST_UNITS;
@@ -328,7 +334,7 @@ const allocateRhythmicPhraseLengths = (
   const lengths = (moraCount * 2 + restCount * WORD_BREAK_REST_UNITS <= phraseLength ? allocate(2) : undefined)
     ?? allocate(MIN_NOTE_UNITS);
   if (!lengths) {
-    throw new Error("歌詞の1行が長すぎて、拍に沿った固定フレーズ長に入りませんでした。");
+    throw new SingingCapacityError("歌詞の1行が長すぎて、拍に沿った固定フレーズ長に入りませんでした。");
   }
   return lengths;
 };
@@ -459,7 +465,8 @@ const finalizeCadenceLengths = (units: PhraseUnit[], original: number[]): number
       if (best) return [...original.slice(0, first), ...best.lengths];
     }
   }
-  throw new Error("最後のドを直前の音以上の長さにして8拍に収められません。最終行の歌詞を短くしてください。");
+  // Cadence is a preference: never discard an otherwise singable fixed-length line.
+  return original;
 };
 
 const validatePhraseLengths = (units: PhraseUnit[], lengths: number[], expected: number) => {

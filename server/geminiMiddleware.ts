@@ -16,6 +16,8 @@ import {
   resolveDrawingAnalysisSchemaVersion,
 } from "../services/lyricsPipeline";
 import { resolveLyricsCandidateCount } from "../config/generationConfig";
+import { generateSingableLyrics } from "../services/singableLyricsGeneration";
+import { resolveSingingBpm, SingingCapacityError } from "../services/melodyService";
 
 const DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite";
 const DEFAULT_VISION_MODEL = "gemini-3.7-flash";
@@ -25,6 +27,7 @@ const MODEL_LIST_CACHE_MS = 10 * 60 * 1000;
 const MAX_GEMINI_REQUEST_BYTES = 15 * 1024 * 1024;
 
 type GeminiEnv = {
+  VITE_SINGING_BPM?: string;
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
   GEMINI_MODEL_SUB?: string;
@@ -369,13 +372,13 @@ const generateLegacyEkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
   const strokeGroups = getStrokeGroups(drawingData);
   const prompt = buildLegacyLyricsPrompt(strokeGroups);
 
-  const generateWithModel = async (targetModelName: string) => {
+  const generateWithModel = async (targetModelName: string): Promise<LyricsResponse> => generateSingableLyrics(async (feedback) => {
     const response = await ai.models.generateContent({
       model: targetModelName,
       contents: [
         {
           parts: [
-            { text: prompt },
+            { text: prompt + feedback },
             {
               inlineData: inlineImage,
             },
@@ -394,7 +397,7 @@ const generateLegacyEkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
       ...result,
       modelName: targetModelName,
     };
-  };
+  }, result => [result], resolveSingingBpm(env.VITE_SINGING_BPM));
 
   const attempts: ModelAttempt[] = [];
 
@@ -443,13 +446,15 @@ const generatePhase1EkakiUta = async (drawingData: DrawingData, env: GeminiEnv):
   const drawingAnalysis = normalizeDrawingAnalysis(JSON.parse(analysisResponse.text.trim()), strokeGroups);
 
   const candidateCount = resolveLyricsCandidateCount(env.LYRICS_CANDIDATE_COUNT);
-  const candidatesResponse = await ai.models.generateContent({
-    model: lyricsModel,
-    // The lyrics stage deliberately contains only the structured analysis.
-    contents: [{ parts: [{ text: buildLyricsCandidatesPrompt(drawingAnalysis, promptVersion, candidateCount) }] }],
-    config: { responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(Type, candidateCount) },
-  });
-  const candidates = normalizeLyricsCandidates(JSON.parse(candidatesResponse.text.trim()), strokeGroups, drawingAnalysis, candidateCount).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
+  const candidates = await generateSingableLyrics(async (feedback) => {
+    const candidatesResponse = await ai.models.generateContent({
+      model: lyricsModel,
+      // Reuse the structured analysis for retries; do not analyze the image again.
+      contents: [{ parts: [{ text: buildLyricsCandidatesPrompt(drawingAnalysis, promptVersion, candidateCount) + feedback }] }],
+      config: { responseMimeType: "application/json", responseSchema: createLyricsCandidatesResponseSchema(Type, candidateCount) },
+    });
+    return normalizeLyricsCandidates(JSON.parse(candidatesResponse.text.trim()), strokeGroups, drawingAnalysis, candidateCount).map((candidate) => ({ ...candidate, modelName: lyricsModel }));
+  }, result => result, resolveSingingBpm(env.VITE_SINGING_BPM));
   const selectedCandidate = candidates.find((candidate) => candidate.candidateId === "candidate-a") ?? candidates[0];
   if (!selectedCandidate) throw new Error("No valid lyrics candidate");
   return {
@@ -470,7 +475,8 @@ const generateEkakiUta = async (drawingData: DrawingData, env: GeminiEnv): Promi
   if (!shouldUsePhase1(env)) return generateLegacyEkakiUta(drawingData, env);
   try {
     return await generatePhase1EkakiUta(drawingData, env);
-  } catch {
+  } catch (error) {
+    if (error instanceof SingingCapacityError) throw error;
     return generateLegacyEkakiUta(drawingData, env);
   }
 };

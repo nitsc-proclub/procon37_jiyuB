@@ -298,5 +298,86 @@ test("final tonic is at least as long as the preceding pitched note after all re
   }
   const pair = buildSingingScore(lyrics(["あーーい"]), "cadence");
   assert.deepEqual(pair.notes.slice(1, -1).map(n => n.frame_length / 15), [16, 16]);
-  assert.throws(() => buildSingingScore(lyrics(["あ".repeat(29) + "いーう"]), "too-dense"), /最後のド/);
+  const denseLine = "あ".repeat(29) + "いーう";
+  const dense = buildSingingScore(lyrics([denseLine]), "too-dense");
+  assertBeatAligned(dense);
+  assert.equal(dense.notes.reduce((sum, n) => sum + n.frame_length, 0), 484);
+  assert.equal(dense.notes.filter(n => n.key !== null).map(n => n.lyric).join(""), denseLine.replaceAll("ー", ""));
+  assert.equal(dense.notes.filter(n => n.key !== null).at(-1).key, 60);
+});
+
+test("oversized lyrics retry with a shorter prompt while fitting lyrics and cadence fallback need no retry", async () => {
+  const { generateSingableLyrics } = await vite.ssrLoadModule("/services/singableLyricsGeneration.ts");
+  const long = lyrics(["あ".repeat(33)]);
+  const short = lyrics(["ねこ"]);
+  const feedback = [];
+  const result = await generateSingableLyrics(async message => {
+    feedback.push(message);
+    return feedback.length === 1 ? long : short;
+  }, value => [value], 120);
+  assert.equal(result, short);
+  assert.equal(feedback.length, 2);
+  assert.match(feedback[1], /12モーラ/);
+  assert.match(feedback[1], /120 BPM/);
+  assert.match(feedback[1], /4.00秒/);
+  for (const candidate of [short, lyrics(["あ".repeat(29) + "いーう"])]) {
+    let calls = 0;
+    await generateSingableLyrics(async () => { calls++; return candidate; }, value => [value]);
+    assert.equal(calls, 1);
+  }
+  let calls = 0;
+  await assert.rejects(generateSingableLyrics(async message => {
+    calls++;
+    if (calls === 3) assert.match(message, /8モーラ/);
+    return [short, long];
+  }, value => value), /2回作り直し/);
+  assert.equal(calls, 3, "all candidates checked; retries are bounded");
+  calls = 0;
+  await assert.rejects(generateSingableLyrics(async () => { calls++; throw new Error("network"); }, value => [value]), /network/);
+  assert.equal(calls, 1);
+});
+
+test("local Gemini middleware retries long lyrics in legacy and phase1 without repeating vision", async () => {
+  const { Readable } = await import("node:stream");
+  const { createGeminiMiddleware } = await vite.ssrLoadModule("/server/geminiMiddleware.ts");
+  const nativeFetch = globalThis.fetch;
+  const analysis = { schemaVersion: 1, objectCandidates: [{ label: "ねこ", confidence: "high" }],
+    parts: [{ id: "body", shape: "丸", position: "中央", strokeGroupIds: [] }], drawingOrder: ["body"] };
+  try {
+    for (const mode of ["legacy", "phase1"]) {
+      let visionCalls = 0;
+      const prompts = [];
+      globalThis.fetch = async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (!url.includes(":generateContent")) return Response.json({ models: [{ name: "models/test-model", supportedGenerationMethods: ["generateContent"] }] });
+        const body = input instanceof Request ? await input.json() : JSON.parse(init.body);
+        let value;
+        if (url.includes("vision-model")) { visionCalls++; value = analysis; }
+        else {
+          prompts.push(body.contents[0].parts[0].text);
+          const candidate = { ...lyrics(Array(4).fill("ねこ")),
+            singingKanaLines: Array(4).fill(prompts.length === 1 ? "あーーーーいーーーーうーーーーえーーーーお" : "ねこ"),
+            candidateId: "candidate-a", lineStrokeMappings: Array.from({ length: 4 }, (_, lineIndex) => ({ lineIndex, strokeGroupIds: [] })) };
+          value = mode === "phase1" ? { candidates: [candidate] } : candidate;
+        }
+        return Response.json({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(value) }] }, finishReason: "STOP" }] });
+      };
+      const middleware = createGeminiMiddleware({ GEMINI_API_KEY: "test-only", LYRICS_PIPELINE_MODE: mode,
+        GEMINI_MODEL: "test-model", GEMINI_VISION_MODEL: "vision-model", LYRICS_BASE_MODEL: "test-model", VITE_SINGING_BPM: "120" });
+      const request = Readable.from([Buffer.from(JSON.stringify({ drawingData: { imageUri: "data:image/png;base64,YQ==", strokes: [] } }))]);
+      request.url = "/api/gemini/generate-ekaki-uta";
+      request.method = "POST";
+      let payload;
+      const response = { statusCode: 0, setHeader() {}, end(body) { payload = JSON.parse(body); } };
+      await middleware(request, response, () => assert.fail("unexpected next"));
+      assert.equal(response.statusCode, 200, JSON.stringify(payload));
+      assert.equal(prompts.length, 2);
+      assert.match(prompts[1], /120 BPM/);
+      assert.match(prompts[1], /12モーラ/);
+      assert.equal(visionCalls, mode === "phase1" ? 1 : 0);
+      const generated = mode === "phase1" ? payload.candidates[0] : payload;
+      assert.deepEqual(generated.singingKanaLines, Array(4).fill("ねこ"));
+      assert.doesNotThrow(() => buildSingingScore(generated, melody.createSingingSeed(generated)));
+    }
+  } finally { globalThis.fetch = nativeFetch; }
 });
