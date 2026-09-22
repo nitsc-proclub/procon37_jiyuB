@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { generateKeyPairSync } from "node:crypto";
 import { createServer } from "vite";
 
 const vite = await createServer({
@@ -199,18 +200,40 @@ test("Worker synthesis and status routes retain same-origin, audio headers, and 
     VOICEVOX_CLOUD_RUN_URL: "https://voicevox.example.run.app",
     VOICEVOX_GCP_SERVICE_ACCOUNT_JSON: "configured-but-never-read-by-status",
   });
-  assert.deepEqual(await cloudStatus.json(), {
-    available: true,
-    backend: "cloud-run",
-    version: null,
-    latencyMs: null,
-    liveCheck: false,
-  });
+  assert.equal(cloudStatus.status, 502);
+  assert.equal((await cloudStatus.json()).available, false, "Invalid credentials must not be reported as a connection");
   assert.deepEqual(vpcRequests, [
     "http://localhost:50021/sing_frame_audio_query?speaker=6000",
     "http://localhost:50021/frame_synthesis?speaker=3003",
     "http://localhost:50021/version",
   ]);
+});
+
+test("public and local Cloud Run status actually authenticate and request the Engine version", async t => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const calls = [];
+  let engineResponse = () => Response.json("0.25.2");
+  t.mock.method(globalThis, "fetch", async (resource, init) => {
+    const url = String(resource);
+    calls.push(url);
+    if (url === "https://oauth2.googleapis.com/token") return Response.json({ id_token: "test-token".repeat(8) });
+    assert.equal(url, cloudRunUrl + "/version");
+    assert.ok(new Headers(init.headers).get("Authorization").startsWith("Bearer "));
+    return engineResponse();
+  });
+  const env = { VOICEVOX_CLOUD_RUN_URL: cloudRunUrl,
+    VOICEVOX_GCP_SERVICE_ACCOUNT_JSON: JSON.stringify({ client_email: "test@project.iam.gserviceaccount.com", private_key: privateKey.export({ type: "pkcs8", format: "pem" }) }),
+    VOICEVOX_LOCAL_ACCESS_TOKEN: "a".repeat(43) };
+  for (const route of ["/api/voicevox/status", "/api/voicevox/local/status"]) {
+    const response = await workerModule.default.fetch(new Request("https://maker.example" + route + "?backend=cloud-run",
+      { headers: { Origin: "https://maker.example", Authorization: "Bearer " + env.VOICEVOX_LOCAL_ACCESS_TOKEN } }), env);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.version, "0.25.2"); assert.equal(body.liveCheck, true); assert.equal(body.backend, "cloud-run");
+  }
+  assert.equal(calls.filter(url => url.endsWith("/version")).length, 2);
+  engineResponse = () => new Response("<html>not an Engine</html>", { headers: { "Content-Type": "text/html" } });
+  assert.equal((await workerModule.default.fetch(new Request("https://maker.example/api/voicevox/status?backend=cloud-run"), env)).status, 502);
 });
 
 test.after(async () => {

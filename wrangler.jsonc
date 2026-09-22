@@ -11,7 +11,7 @@
   "vars": {
     "VOICEVOX_JOBS_ENABLED": "true",
     "CLOUD_RUN_OVERFLOW_GENERATIONS": "2",
-    "CREATION_ARCHIVES_ENABLED": "true",
+    "CREATION_ARCHIVES_ENABLED": "false",
     "TURNSTILE_EXPECTED_HOSTNAME": "cho-ekaki-uta.nitsc-proclub.workers.dev",
     "LYRICS_PIPELINE_MODE": "legacy",
     "GEMINI_MODEL": "gemini-3.8-flash",
@@ -24,7 +24,7 @@
     "LYRICS_CANDIDATE_COUNT": "1",
     "DRAWING_ANALYSIS_SCHEMA_VERSION": "1",
     "LYRICS_PROMPT_VERSION": "3",
-    "EVALUATION_CENTRAL_STORAGE_ENABLED": "true",
+    "EVALUATION_CENTRAL_STORAGE_ENABLED": "false",
     "EVALUATION_RECEIPT_TTL_SECONDS": "21600",
     "VOICEVOX_CLOUD_RUN_URL": "https://voicevox-engine-1023600737600.asia-northeast1.run.app"
   },
@@ -60,7 +60,8 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*"],
+    "not_found_handling": "single-page-application"
   },
   "d1_databases": [
     {

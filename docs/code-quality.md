@@ -26,6 +26,8 @@ npm.cmd run build
 
 ## lint の対象と段階導入
 
+保存・表示の回帰検証用にjsdom 26.1.0とfake-indexeddb 6.2.5を開発依存へ追加。jsdomは現行Node.js 22.17.1でも動く版を固定する。ブラウザ配信コードには含めない。
+
 `eslint.config.mjs` は JS / MJS / CJS / TS / TSX のソース・設定・テストを対象とする。ビルド結果、node_modules、Wrangler の生成物、ローカル資料、録画データ、生成された Worker 型は除外する。
 
 - ESLint の recommended と、React の `rules-of-hooks` / `exhaustive-deps` を使用する。整形や React Compiler 向けの全ルールは導入していない。

@@ -133,3 +133,22 @@ test("public archive rejects malformed submissions as client errors without crea
   }
   assert.equal(run.writes.length, 0);
 });
+
+test("browser-only policy disables every cloud write while retaining song generation capabilities", async t => {
+  const run = setup(t);
+  run.env.EVALUATION_CENTRAL_STORAGE_ENABLED = "false";
+  run.env.CREATION_ARCHIVES_ENABLED = "false";
+  const response = await run.request(), result = await response.json();
+  assert.equal(response.status, 200);
+  assert.ok(result.voiceGrants["candidate-a"]);
+  assert.ok(result.voiceJobCapability);
+  assert.equal(result.evaluationReceipt, undefined);
+  assert.equal(result.archiveGenerationTicket, undefined);
+  const written = run.writes.length;
+  for (const [path, method] of [["/api/evaluations", "POST"], ["/api/evaluations/follow-up", "POST"],
+    ["/api/creation-archives", "POST"], ["/api/creation-archives/test/assets/input-image", "PUT"], ["/api/creation-archives/test", "POST"]]) {
+    const blocked = await worker.fetch(new Request("https://app.test" + path, { method, headers: { Origin: "https://app.test", "Content-Type": "application/json" }, body: "{}" }), run.env);
+    assert.equal(blocked.status, 503, path);
+  }
+  assert.equal(run.writes.length, written);
+});

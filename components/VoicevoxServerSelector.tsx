@@ -88,7 +88,7 @@ const VoicevoxServerSelector: React.FC<VoicevoxServerSelectorProps> = ({
           </label>
 
           <p className="leading-relaxed text-gray-500">
-            自動では、ローカルVOICEVOXを確認してから、Cloudflare VPC、Google Cloud Runの順に切り替えます。
+            自動では、ローカルVOICEVOXを確認してから、みらいサーバー、Google Cloud Runの順に切り替えます。
           </p>
 
           {isLocal && (
@@ -113,7 +113,7 @@ const VoicevoxServerSelector: React.FC<VoicevoxServerSelectorProps> = ({
                 />
               </label>
               <p id="voicevox-local-url-help" className="leading-relaxed text-gray-500">
-                例: <code className="font-mono">http://127.0.0.1:50021</code>（VOICEVOX Engineの50021番ポート）
+                例: <code className="font-mono">http://127.0.0.1:50021</code>（設定したVOICEVOX EngineのURL）
               </p>
             </>
           )}
@@ -134,7 +134,7 @@ const VoicevoxServerSelector: React.FC<VoicevoxServerSelectorProps> = ({
 
           <div className="rounded-xl bg-orange-50 p-2.5 leading-relaxed text-orange-900">
             <p className="font-black">デバッグ用の切り替え</p>
-            <p className="mt-1">自動以外を選ぶと、そのサーバーだけを指定して歌声を生成します。確認ボタンでバージョンを問い合わせます。公開版のGoogle Cloud Runは設定のみを確認し、接続確認済みとは表示しません。</p>
+            <p className="mt-1">自動以外を選ぶと、そのサーバーだけを指定して歌声を生成します。確認ボタンで接続とバージョンを確認します。</p>
           </div>
         </div>
       </details>

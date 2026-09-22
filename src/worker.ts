@@ -447,32 +447,23 @@ const issueVoiceGrants = async (env: Env, generationId: string, result: LyricsRe
   }
 };
 
-const handleVoicevoxStatus = async (request: Request, env: Env, trustedLocal = false) => {
+const handleVoicevoxStatus = async (request: Request, env: Env) => {
   if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
   const origin = request.headers.get("Origin");
   if (origin && origin !== new URL(request.url).origin) return json({ error: "同じサイトからのみ確認できます。", code: "invalid-origin" }, 403);
   const backend = new URL(request.url).searchParams.get("backend");
   if (backend !== "vpc" && backend !== "cloud-run") return json({ error: "確認する歌声サーバーを指定してください。", code: "invalid-voice-backend" }, 400);
-  // Do not let an unauthenticated status probe start a billed Cloud Run
-  // instance. Real synthesis remains protected by a one-time generation grant.
-  if (backend === "cloud-run" && !trustedLocal) {
-    try {
-      getVoicevoxBackendOrder(env, backend);
-      return json({ available: true, backend, version: null, latencyMs: null, liveCheck: false });
-    } catch {
-      return json({ available: false, backend, version: null, latencyMs: null, liveCheck: false });
-    }
-  }
+  // An explicit connection check probes the selected Engine, including a cold Cloud Run instance.
   const startedAt = Date.now();
   try {
-    const response = await fetchVoicevoxBackend(env, backend, "/version", { method: "GET", headers: { Accept: "application/json" } }, trustedLocal && backend === "cloud-run" ? 55_000 : VOICEVOX_STATUS_TIMEOUT_MS);
+    const response = await fetchVoicevoxBackend(env, backend, "/version", { method: "GET", headers: { Accept: "application/json" } }, backend === "cloud-run" ? 55_000 : VOICEVOX_STATUS_TIMEOUT_MS);
     const version = parseVoicevoxVersion(await readBoundedResponseText(response, 4 * 1024));
     if (!response.ok || !version || response.headers.get("Content-Type")?.includes("text/html")) {
       console.warn("VOICEVOX status check failed", { backend, responseStatus: response.status });
       return json({ available: false, backend, code: "voice-status-failed" }, 502);
     }
     console.info("VOICEVOX status check completed", { backend, latencyMs: Date.now() - startedAt });
-    return json({ available: true, backend, version: version || null, latencyMs: Date.now() - startedAt });
+    return json({ available: true, backend, version, latencyMs: Date.now() - startedAt, liveCheck: true });
   } catch (error) {
     const failure = error && typeof error === "object" && "status" in error ? error as VoicevoxAttemptError : null;
     console.warn("VOICEVOX status check failed", { backend, code: failure?.code ?? "voice-status-failed" });
@@ -712,7 +703,7 @@ export default {
     if (pathname === "/api/gemini/generate-ekaki-uta") return handleGemini(request, env);
     if (pathname === "/api/voicevox/local/status" || pathname === "/api/voicevox/local/synthesize") {
       if (!await isTrustedLocalVoicevoxRequest(request, env)) return json({ error: "ローカル版のクラウド歌声認証に失敗しました。サーバーの設定を確認してください。", code: "voice-local-unauthorized" }, 401);
-      return pathname.endsWith("/status") ? handleVoicevoxStatus(request, env, true) : handleVoicevoxSynthesis(request, env, true);
+      return pathname.endsWith("/status") ? handleVoicevoxStatus(request, env) : handleVoicevoxSynthesis(request, env, true);
     }
     if (pathname === "/api/voicevox/status") return handleVoicevoxStatus(request, env);
     if (pathname === "/api/voicevox/synthesize") return handleVoicevoxSynthesis(request, env);

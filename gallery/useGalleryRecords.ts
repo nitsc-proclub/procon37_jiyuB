@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { DemoRecordSummary } from "../types";
 import { galleryRecords, GALLERY_SETTINGS } from "./model";
+import { loadGalleryRecords } from "./recordSource";
+import { subscribeBrowserRecordsChanged } from "../services/browserRecordEvents";
+import { appFeatures } from "../config/appConfig";
 
 export function useGalleryRecords(onSnapshot: (records: DemoRecordSummary[], initial: boolean) => void) {
   const callback = useRef(onSnapshot);
@@ -11,18 +14,17 @@ export function useGalleryRecords(onSnapshot: (records: DemoRecordSummary[], ini
 
   useEffect(() => {
     let disposed = false, inFlight = false, dirty = false, initialized = false;
-    let controller: AbortController | null = null;
+    let releaseSnapshot = () => {};
     const refresh = async () => {
       if (disposed) return;
       if (inFlight) { dirty = true; return; }
       inFlight = true;
-      controller = new AbortController();
       try {
-        const response = await fetch("/api/demo-records", { cache: "no-store", signal: controller.signal });
-        if (!response.ok) throw new Error("作品を読み込めませんでした。接続を確認しています。");
-        const data = await response.json() as { records: DemoRecordSummary[] };
-        if (disposed) return;
+        const data = await loadGalleryRecords();
+        if (disposed) { data.dispose(); return; }
         callback.current(galleryRecords(data.records), !initialized);
+        releaseSnapshot();
+        releaseSnapshot = data.dispose;
         initialized = true;
         setError(null);
       } catch (error) {
@@ -36,10 +38,11 @@ export function useGalleryRecords(onSnapshot: (records: DemoRecordSummary[], ini
       }
     };
     refreshRef.current = () => { void refresh(); };
-    const source = new EventSource("/api/demo-records/events");
+    const source = import.meta.env.DEV && appFeatures.demoRecords ? new EventSource("/api/demo-records/events") : null;
     // ready is also sent after reconnect: recover anything missed while offline.
-    source.addEventListener("ready", refreshRef.current);
-    source.addEventListener("change", refreshRef.current);
+    source?.addEventListener("ready", refreshRef.current);
+    source?.addEventListener("change", refreshRef.current);
+    const unsubscribe = appFeatures.debugHistory ? subscribeBrowserRecordsChanged(refreshRef.current) : () => {};
     void refresh();
     const interval = window.setInterval(() => { if (!document.hidden) void refresh(); }, GALLERY_SETTINGS.reconcileEveryMs);
     const onVisible = () => { if (!document.hidden) void refresh(); };
@@ -47,8 +50,9 @@ export function useGalleryRecords(onSnapshot: (records: DemoRecordSummary[], ini
     window.addEventListener("online", onVisible);
     return () => {
       disposed = true;
-      controller?.abort();
-      source.close();
+      releaseSnapshot();
+      source?.close();
+      unsubscribe();
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("online", onVisible);

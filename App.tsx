@@ -3,6 +3,8 @@ import PaintCanvas, { DrawingMetrics } from "./components/PaintCanvas";
 import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
+import GenerationStats from "./components/GenerationStats";
+import { readTimingEstimate, rememberTiming } from "./services/generationTimingEstimate";
 import Turnstile, { TurnstileHandle, TurnstileStatus } from "./components/Turnstile";
 import DebugExportDialog from "./components/DebugExportDialog";
 import EvaluationConsentModal from "./components/EvaluationConsentModal";
@@ -14,10 +16,10 @@ import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
 import { appBuildId } from "./config/buildInfo";
 import { getDrawingAnimationEndProgress, getScoreFrameLength, getSingingLineCount } from "./utils/playbackTiming";
-import { deleteDemoRecord, getDemoRecord, getGenerationTimingEstimate, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
+import { deleteDemoRecord, getDemoRecord, listDemoRecords, recordGeneration, saveDemoRecord, saveGenerationTiming, setDemoRecordFavorite } from "./services/demoRecordService";
 import { GenerateEkakiUtaError, generateEkakiUta } from "./services/geminiService";
 import { buildDebugBundleArtifacts, createDebugBundle, createDebugBundleFromArtifacts, createDebugRecordId, DebugBundleArtifacts, DebugBundleSource, downloadDebugBundle } from "./services/debugBundleService";
-import { DebugHistoryRecord, saveDebugHistoryRecord } from "./services/debugHistoryDb";
+import { DebugHistoryRecord, saveDebugHistoryRecord, recordBrowserGeneration } from "./services/debugHistoryDb";
 import { createEvaluationDraft, createGenerationId, getInitialPreviewCandidate, isComparableCandidateSet, saveEvaluationDraft, shuffleCandidateIds, withEvaluationDraftState } from "./services/evaluationDraftDb";
 import { buildEvaluationSubmission, submitEvaluation } from "./services/evaluationSubmissionService";
 import { buildEvaluationFollowUpSubmission, submitEvaluationFollowUp } from "./services/evaluationFollowUpService";
@@ -1234,7 +1236,7 @@ const App: React.FC = () => {
 
   // A single result is saved without inventing an A/B preference.
   const canSaveEvaluationToCloud = (draft: EvaluationDraft | null) =>
-    !!draft && (draft.candidates.length === 1 || (!!draft.firstImpressionSelection && isComparableCandidateSet(draft.candidates)))
+    appFeatures.cloudSaving && !!draft && (draft.candidates.length === 1 || (!!draft.firstImpressionSelection && isComparableCandidateSet(draft.candidates)))
     && !!evaluationReceipt
     && !!evaluationReceiptExpiresAt
     && Date.parse(evaluationReceiptExpiresAt) > Date.now();
@@ -1412,7 +1414,7 @@ const App: React.FC = () => {
       if (archiveRequestFailed) {
         setSaveToast({ message: archive?.deletionReceipt ? "作品データは送らず、削除レシートをダウンロードしました" : archive?.error ?? "作品データを保存できませんでした。歌はそのまま使えます", tone: "error" });
       } else if (savedInBrowser && (savedToCloud || !canSaveToCloud) && (!archive || archiveSaved)) {
-        setSaveToast({ message: archiveSaved ? "作品を1年間、非公開で保存しました" : savedToCloud ? "保存しました。ありがとう！" : "このブラウザに保存しました", tone: "success" });
+        setSaveToast({ message: "作品を保存しました", tone: "success" });
       } else if (archivePartial) {
         setSaveToast({ message: "回答は保存しましたが、作品データの一部を保存できませんでした", tone: "error" });
       } else if (savedInBrowser) {
@@ -1470,7 +1472,7 @@ const App: React.FC = () => {
   };
 
   const handleSendEvaluationFollowUp = async (answers: EvaluationFollowUpAnswers) => {
-    if (isEvaluationFollowUpPending || !evaluationReceipt || !isEvaluationCentrallySaved) return;
+    if (!appFeatures.cloudSaving || isEvaluationFollowUpPending || !evaluationReceipt || !isEvaluationCentrallySaved) return;
     setIsEvaluationFollowUpPending(true);
     let savedLocally = false;
     try {
@@ -1749,6 +1751,7 @@ const App: React.FC = () => {
     };
     const startedAt = new Date().toISOString();
     const debugRecordId = createDebugRecordId();
+    if (appFeatures.debugHistory) void recordBrowserGeneration(debugRecordId, startedAt).catch(() => undefined);
     let generatedLyrics: LyricsResponse | null = null;
     let generatedCandidates: LyricsCandidate[] | null = null;
     let evaluationDraft: EvaluationDraft | null = null;
@@ -1789,21 +1792,10 @@ const App: React.FC = () => {
     generationTimingRunKeyRef.current = runKey;
     setGenerationTimingRunKey(runKey);
     setGenerationProgressPhase("gemini");
-    setGenerationTimingEstimate(null);
+    const timingProfile = `${import.meta.env.DEV ? "local" : "public"}:${voicevoxServerSelection}:${appConfig.lyricsCandidateCount}`;
+    setGenerationTimingEstimate(readTimingEstimate(timingProfile));
     setIsGenerationProgressComplete(false);
     beginTimingPhase("gemini");
-    if (appFeatures.generationTelemetry) {
-      void getGenerationTimingEstimate()
-        .then((estimate) => {
-          if (generationRunRef.current && generationTimingRunKeyRef.current === runKey) setGenerationTimingEstimate(estimate);
-        })
-        .catch((timingEstimateError) => {
-          // Timing estimates are optional and must never interrupt generation.
-          if (import.meta.env.DEV) {
-            console.warn("Failed to load generation timing estimate", timingEstimateError);
-          }
-        });
-    }
     setIsGenerating(true);
     voicevoxGrantsRef.current = {};
     setLyrics(null);
@@ -2242,6 +2234,7 @@ const App: React.FC = () => {
       if (generationErrorMessage === null && evaluationDraftUnavailable) {
         setSaveToast({ message: "このブラウザでは評価下書きを保存できません", tone: "error" });
       }
+      if (generationErrorMessage === null && generatedVoiceAudioBlob) rememberTiming(timingProfile, durationsMs);
       if (appFeatures.generationTelemetry) {
         void saveGenerationTiming({
           success: generationErrorMessage === null,
@@ -2999,7 +2992,7 @@ const App: React.FC = () => {
             title="クラウド保存した作品を確認・削除"
             className="rounded-full px-5 py-2 text-sm font-black text-gray-600 transition-all hover:bg-sky-50"
           >
-            保存した作品
+            以前のクラウド保存
           </button>}
         </div>
       </header>
@@ -3082,6 +3075,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            <GenerationStats refreshKey={isDemoRecordsLoading ? 1 : 0} />
             {demoRecordsError && (
               <div className="mb-5 rounded-2xl border-2 border-red-200 bg-red-50 p-4 text-center font-bold text-red-700">
                 {demoRecordsError}

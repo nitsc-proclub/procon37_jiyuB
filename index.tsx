@@ -11,9 +11,8 @@ if (!rootElement) {
 }
 
 const root = ReactDOM.createRoot(rootElement);
-// A compile-time boundary: gallery code, styling and local-record requests are
-// removed from public builds, even when someone visits /gallery directly.
-if (import.meta.env.DEV && appFeatures.demoRecords && window.location.pathname.replace(/\/$/, '') === '/gallery') {
+// The gallery shares its presentation; each build reads its own local records.
+if (appFeatures.gallery && window.location.pathname.replace(/\/$/, '') === '/gallery') {
   void import('./gallery/GalleryApp').then(({ default: GalleryApp }) => {
     root.render(<React.StrictMode><GalleryApp /></React.StrictMode>);
   });

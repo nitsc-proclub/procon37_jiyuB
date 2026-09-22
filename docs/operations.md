@@ -80,6 +80,8 @@ VOICEVOX Engine は開発中、既定で `http://127.0.0.1:50021` で起動し�
 
 `generation-timings.json` は匿名の生成時間メトリクス専用ファイルです。最大 300 件を保持し、絵・歌詞・音声・年齢は含みません。
 
+生成中の進捗表示は公開・ローカル共通のブラウザ内推定を使う。上記時間記録APIは保守用として残す。保存方針・ギャラリー・集計の現行仕様は [公開・ローカルの保存と表示](public-local-experience.md)。
+
 ## 6. デモ記録 API
 
 `vite.config.ts` の middleware が `demo-records` を API として公開します。

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import DrawingPlaybackCanvas from "./DrawingPlaybackCanvas";
 import KaraokeLyricsPanel from "./KaraokeLyricsPanel";
+import GenerationStats from "./GenerationStats";
 import { createDebugBundleFromArtifacts, downloadDebugBundle } from "../services/debugBundleService";
 import { importDebugBundle } from "../services/debugBundleImportService";
 import {
@@ -14,6 +15,7 @@ import {
   getDebugHistoryStats,
   listDebugHistoryRecords,
   saveDebugHistoryRecord,
+  setDebugHistoryFavorite,
 } from "../services/debugHistoryDb";
 import { createSilentPlaybackAudio } from "../services/silentPlaybackService";
 import { DrawingData } from "../types";
@@ -50,6 +52,7 @@ const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ onOpenRecord, onBac
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
   const [browseMode, setBrowseMode] = useState<DebugBrowseMode>("drawings");
+  const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [importedPreviewRecordId, setImportedPreviewRecordId] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -249,6 +252,17 @@ const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ onOpenRecord, onBac
   };
 
   const isImportedPreview = selected?.recordId === importedPreviewRecordId;
+  const visibleRecords = favoriteOnly ? records.filter(record => record.isFavorite) : records;
+  const toggleFavorite = async (record: DebugHistoryRecordSummary) => {
+    setActionRecordId(record.recordId);
+    try { await setDebugHistoryFavorite(record.recordId, !record.isFavorite); await refresh(); }
+    catch { setError("お気に入りを変更できませんでした。"); }
+    finally { setActionRecordId(null); }
+  };
+  const favoriteButton = (record: DebugHistoryRecordSummary) => <button type="button"
+    onClick={() => void toggleFavorite(record)} disabled={actionRecordId === record.recordId}
+    aria-pressed={record.isFavorite === true} aria-label={`${record.title}のお気に入り`}
+    className="rounded-full border bg-white px-3 py-2 text-amber-600 shadow-sm">{record.isFavorite ? "★" : "☆"}</button>;
 
   const drawingData = useMemo<DrawingData | null>(() => {
     if (!selected) return null;
@@ -267,12 +281,14 @@ const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ onOpenRecord, onBac
         <div className="mb-5 flex flex-col gap-4 border-b-2 border-violet-50 pb-5 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.2em] text-violet-500">Browser-only</p>
-            <h2 className="mt-1 text-2xl font-black text-gray-800">デバッグ履歴</h2>
+            <h2 className="mt-1 text-2xl font-black text-gray-800">デモ記録</h2>
             <p className="mt-2 max-w-2xl text-sm font-semibold leading-relaxed text-gray-500">
               このブラウザだけに保存された生成の記録です。ほかの人へ渡すときは、記録を開いてZIPを保存してください。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <a href="/gallery" target="_blank" rel="noopener noreferrer" className="rounded-full border-2 border-yellow-300 bg-yellow-100 px-4 py-2 text-sm font-black text-orange-800">展示ギャラリーを開く</a>
+            <button type="button" onClick={() => setFavoriteOnly(value => !value)} aria-pressed={favoriteOnly} className="rounded-full border border-violet-100 px-4 py-2 text-sm font-black">★ お気に入りのみ{favoriteOnly ? "：オン" : ""}</button>
             <div className="flex rounded-full bg-violet-50 p-1">
               <button type="button" onClick={() => setBrowseMode("drawings")} aria-pressed={browseMode === "drawings"} className={`rounded-full px-4 py-2 text-sm font-black transition-all ${browseMode === "drawings" ? "bg-white text-violet-700 shadow-sm" : "text-gray-500"}`}>絵の一覧</button>
               <button type="button" onClick={() => setBrowseMode("songs")} aria-pressed={browseMode === "songs"} className={`rounded-full px-4 py-2 text-sm font-black transition-all ${browseMode === "songs" ? "bg-white text-violet-700 shadow-sm" : "text-gray-500"}`}>歌の一覧</button>
@@ -282,6 +298,7 @@ const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ onOpenRecord, onBac
           </div>
         </div>
 
+        <GenerationStats refreshKey={loading ? 1 : 0} />
         <input
           ref={importInputRef}
           type="file"
@@ -324,23 +341,23 @@ const DebugHistoryView: React.FC<DebugHistoryViewProps> = ({ onOpenRecord, onBac
         {error && <p className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700" role="alert">{error}</p>}
         {importMessage && <p className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800" aria-live="polite">{importMessage}</p>}
 
-        {loading ? <p className="py-10 text-center font-bold text-gray-500">履歴を読み込んでいます…</p> : records.length === 0 ? (
+        {loading ? <p className="py-10 text-center font-bold text-gray-500">履歴を読み込んでいます…</p> : visibleRecords.length === 0 ? (
           <div className="rounded-3xl border-2 border-dashed border-violet-100 bg-violet-50/50 px-5 py-12 text-center">
-            <p className="text-lg font-black text-gray-700">まだデバッグ履歴はありません</p>
+            <p className="text-lg font-black text-gray-700">{favoriteOnly ? "お気に入りの記録はありません" : "まだ記録はありません"}</p>
             <p className="mt-2 text-sm font-semibold text-gray-500">メーカーで生成するか、上のZIPを読み込むと内容を確認できます。</p>
           </div>
         ) : (
           <>
-            {browseMode === "drawings" ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">{records.map((record) => (
-              <div key={record.recordId} className="relative">
+            {browseMode === "drawings" ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">{visibleRecords.map((record) => (
+              <div key={record.recordId} className="relative"><div className="absolute left-2 top-2 z-10">{favoriteButton(record)}</div>
                 <button type="button" onClick={() => void selectRecord(record.recordId)} disabled={loadingRecordId !== null || actionRecordId === record.recordId} className={`group h-full w-full overflow-hidden rounded-2xl border-2 bg-violet-50 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-violet-300 hover:shadow-md disabled:opacity-60 ${selected?.recordId === record.recordId && !isImportedPreview ? "border-violet-400 ring-2 ring-violet-200" : "border-violet-100"}`}>
                   <div className="relative aspect-square bg-white">{thumbnailUrls[record.recordId] ? <img src={thumbnailUrls[record.recordId]} alt={record.title} className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center text-xs font-bold text-violet-300">絵を読み込み中…</div>}<span className={`absolute bottom-2 left-2 rounded-full px-2 py-1 text-[10px] font-black shadow-sm ${outcomeClass(record.manifest.outcome.status)}`}>{outcomeLabel(record.manifest.outcome.status)}</span></div>
                   <div className="p-3"><p className="truncate text-sm font-black text-gray-800">{record.title}</p><div className="mt-1 flex items-center justify-between gap-2"><p className="min-w-0 truncate text-xs font-bold text-violet-600">{record.identifiedObject}</p>{record.hasVoice && <span className="shrink-0 text-[10px] font-black text-gray-400">音声</span>}</div><p className="mt-2 text-[10px] font-bold text-gray-400">{new Date(record.createdAt).toLocaleString("ja-JP")}</p>{loadingRecordId === record.recordId && <p className="mt-2 text-xs font-black text-violet-600">読み込み中…</p>}</div>
                 </button>
                 <button type="button" onClick={(event) => { event.stopPropagation(); void deleteRecord(record.recordId); }} disabled={actionRecordId === record.recordId} className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full border border-white/80 bg-white/95 text-gray-500 shadow-sm transition-all hover:bg-red-50 hover:text-red-500 active:scale-95 disabled:opacity-60" title="削除" aria-label={`${record.title}を削除`}><svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
               </div>
-            ))}</div> : <div className="divide-y divide-violet-50 overflow-hidden rounded-2xl border-2 border-violet-100">{records.map((record) => (
-              <div key={record.recordId} className={`flex w-full items-stretch gap-2 px-4 py-3 transition-all hover:bg-violet-50 ${selected?.recordId === record.recordId && !isImportedPreview ? "bg-violet-50" : "bg-white"}`}><button type="button" onClick={() => void selectRecord(record.recordId)} disabled={loadingRecordId !== null || actionRecordId === record.recordId} className="min-w-0 flex-1 text-left disabled:opacity-60"><div className="flex items-center gap-2"><span className="min-w-0 truncate text-base font-black text-gray-800">{record.title}</span><span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${outcomeClass(record.manifest.outcome.status)}`}>{outcomeLabel(record.manifest.outcome.status)}</span>{record.hasVoice && <span className="shrink-0 text-[10px] font-bold text-gray-400">音声あり</span>}</div><span className="mt-1 block text-xs font-bold text-gray-400">{loadingRecordId === record.recordId ? "読み込み中…" : `${record.identifiedObject} ・ ${new Date(record.createdAt).toLocaleString("ja-JP")} ・ ${formatBytes(record.byteSize)}`}</span></button><button type="button" onClick={() => void deleteRecord(record.recordId)} disabled={actionRecordId === record.recordId} className="flex h-9 w-9 shrink-0 items-center justify-center self-center rounded-full border border-white/80 bg-white text-gray-500 shadow-sm transition-all hover:bg-red-50 hover:text-red-500 active:scale-95 disabled:opacity-60" title="削除" aria-label={`${record.title}を削除`}><svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" /></svg></button></div>
+            ))}</div> : <div className="divide-y divide-violet-50 overflow-hidden rounded-2xl border-2 border-violet-100">{visibleRecords.map((record) => (
+              <div key={record.recordId} className={`flex w-full items-stretch gap-2 px-4 py-3 transition-all hover:bg-violet-50 ${selected?.recordId === record.recordId && !isImportedPreview ? "bg-violet-50" : "bg-white"}`}><button type="button" onClick={() => void selectRecord(record.recordId)} disabled={loadingRecordId !== null || actionRecordId === record.recordId} className="min-w-0 flex-1 text-left disabled:opacity-60"><div className="flex items-center gap-2"><span className="min-w-0 truncate text-base font-black text-gray-800">{record.title}</span><span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${outcomeClass(record.manifest.outcome.status)}`}>{outcomeLabel(record.manifest.outcome.status)}</span>{record.hasVoice && <span className="shrink-0 text-[10px] font-bold text-gray-400">音声あり</span>}</div><span className="mt-1 block text-xs font-bold text-gray-400">{loadingRecordId === record.recordId ? "読み込み中…" : `${record.identifiedObject} ・ ${new Date(record.createdAt).toLocaleString("ja-JP")} ・ ${formatBytes(record.byteSize)}`}</span></button>{favoriteButton(record)}<button type="button" onClick={() => void deleteRecord(record.recordId)} disabled={actionRecordId === record.recordId} className="flex h-9 w-9 shrink-0 items-center justify-center self-center rounded-full border border-white/80 bg-white text-gray-500 shadow-sm transition-all hover:bg-red-50 hover:text-red-500 active:scale-95 disabled:opacity-60" title="削除" aria-label={`${record.title}を削除`}><svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" /></svg></button></div>
             ))}</div>}
             <button type="button" onClick={() => void clearRecords()} disabled={actionRecordId === "all"} className="mt-4 w-full rounded-full border border-red-100 bg-white px-4 py-2 text-xs font-black text-red-500 transition hover:bg-red-50 disabled:opacity-60">すべて削除</button>
           </>

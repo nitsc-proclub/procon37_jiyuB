@@ -25,7 +25,8 @@ export const getGenerationPhaseDurationMs = (
 ) => {
   const estimated = timingEstimate?.phaseDurationsMs[phase];
   if (timingEstimate?.determinate && Number.isFinite(estimated) && estimated && estimated > 0) {
-    return estimated;
+    // A few fast requests must not make the next run race ahead.
+    return Math.max(GENERATION_PROGRESS_SEGMENTS[phase].fallbackDurationMs * 0.5, estimated);
   }
 
   return GENERATION_PROGRESS_SEGMENTS[phase].fallbackDurationMs;
@@ -44,17 +45,20 @@ export const getGenerationPhaseProgressTarget = (
   const segment = GENERATION_PROGRESS_SEGMENTS[phase];
   const durationMs = Math.max(1, getGenerationPhaseDurationMs(phase, timingEstimate));
   const heldEnd = Math.max(segment.start, segment.end - SEGMENT_END_GAP);
-  const elapsedRatio = Math.min(1, Math.max(0, elapsedMs) / durationMs);
-  // Most visible movement happens early in a phase. This reduces the catch-up
-  // needed when an operation finishes before its P75 estimate.
-  const easedRatio = 1 - (1 - elapsedRatio) ** 3;
+  const elapsedRatio = Math.max(0, elapsedMs) / durationMs;
+  const easedRatio = 1 - Math.exp(-elapsedRatio);
   return segment.start + (heldEnd - segment.start) * easedRatio;
 };
 
 export const smoothlyAdvanceProgress = (currentValue: number, targetValue: number, elapsedMs: number) => {
   if (targetValue <= currentValue) return currentValue;
 
-  // Reaches about 95% of a newly available target in half a second without a visible jump.
-  const catchUp = 1 - Math.exp((-3 * Math.max(0, elapsedMs)) / 500);
-  return currentValue + (targetValue - currentValue) * catchUp;
+  // Bound both speed and a suspended tab's first frame. Real phase changes can
+  // unlock large targets, but must not cause a visible leap.
+  const frameMs = Math.min(50, Math.max(0, elapsedMs));
+  const catchUp = 1 - Math.exp((-3 * frameMs) / 500);
+  return currentValue + Math.min((targetValue - currentValue) * catchUp, 22 * frameMs / 1000);
 };
+
+export const advanceCompletedProgress = (value: number, elapsedMs: number) =>
+  Math.min(100, value + 40 * Math.min(50, Math.max(0, elapsedMs)) / 1000);

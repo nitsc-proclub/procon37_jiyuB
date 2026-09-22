@@ -12,6 +12,9 @@ export const appConfig = {
 } as const;
 
 export const appFeatures = {
+  // Temporary browser-only saving policy; keep cloud implementation for later.
+  cloudSaving: false,
+  gallery: !isDeploymentPreview,
   // The Worker route holds the Gemini key as a Cloudflare Secret.
   gemini: true,
   // Public builds may talk only to a VOICEVOX Engine on the visitor's own

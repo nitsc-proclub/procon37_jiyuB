@@ -1,19 +1,24 @@
 import { DebugBundleArtifacts } from "./debugBundleService";
-import { DebugBundleManifest } from "../types";
+import { DebugBundleManifest, UsageStats } from "../types";
+import { notifyBrowserRecordsChanged } from "./browserRecordEvents";
 
 export const DEBUG_HISTORY_MAX_RECORDS = 50;
 export const DEBUG_HISTORY_MAX_BYTES = 100 * 1024 * 1024;
 
 const DB_NAME = "cho-ekaki-uta-debug-history";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const RECORDS_STORE = "records";
 const ASSETS_STORE = "assets";
+const GENERATIONS_STORE = "generations";
+type BrowserGeneration = { recordId: string; date: string; recorded: boolean };
+const japanDate = (iso: string) => new Date(iso).toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 
 type StoredDebugHistoryRecord = {
   recordId: string;
   createdAt: string;
   manifest: DebugBundleManifest;
   byteSize: number;
+  isFavorite?: boolean;
 };
 
 type StoredDebugHistoryAssets = {
@@ -71,6 +76,7 @@ const openDatabase = () => {
   }
 
   databasePromise = new Promise<IDBDatabase>((resolve, reject) => {
+    let blocked = false;
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const database = request.result;
@@ -81,9 +87,28 @@ const openDatabase = () => {
       if (!database.objectStoreNames.contains(ASSETS_STORE)) {
         database.createObjectStore(ASSETS_STORE, { keyPath: "recordId" });
       }
+      if (!database.objectStoreNames.contains(GENERATIONS_STORE)) {
+        const generations = database.createObjectStore(GENERATIONS_STORE, { keyPath: "recordId" });
+        // Older public builds only retained saved records. Recover those once;
+        // unknown unsaved generations cannot be reconstructed.
+        const cursor = request.transaction!.objectStore(RECORDS_STORE).openCursor();
+        cursor.onsuccess = () => {
+          const current = cursor.result;
+          if (!current) return;
+          const record = current.value as StoredDebugHistoryRecord;
+          generations.put({ recordId: record.recordId, date: japanDate(record.manifest.generation.startedAt), recorded: true } satisfies BrowserGeneration);
+          current.continue();
+        };
+      }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("Failed to open IndexedDB"));
+    request.onsuccess = () => {
+      const database = request.result;
+      if (blocked) { database.close(); return; }
+      database.onversionchange = () => { database.close(); databasePromise = null; };
+      resolve(database);
+    };
+    request.onblocked = () => { blocked = true; databasePromise = null; reject(new Error("ほかのタブで開いているアプリを更新してから、もう一度お試しください。")); };
+    request.onerror = () => { databasePromise = null; reject(request.error ?? new Error("Failed to open IndexedDB")); };
   });
 
   return databasePromise;
@@ -94,6 +119,7 @@ const getSummary = (record: StoredDebugHistoryRecord): DebugHistoryRecordSummary
   title: record.manifest.lyrics?.title ?? "歌詞を作る前に終了",
   identifiedObject: record.manifest.lyrics?.identifiedObject ?? "未判定",
   hasVoice: record.manifest.audio !== null,
+  isFavorite: record.isFavorite === true,
 });
 
 const getArtifactByteSize = (artifacts: DebugBundleArtifacts) =>
@@ -166,9 +192,11 @@ export const saveDebugHistoryRecord = async (artifacts: DebugBundleArtifacts): P
 
   try {
     const database = await openDatabase();
-    const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE], "readwrite");
+    const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, GENERATIONS_STORE], "readwrite");
     const recordsStore = transaction.objectStore(RECORDS_STORE);
     const records = await requestResult(recordsStore.getAll() as IDBRequest<StoredDebugHistoryRecord[]>);
+    const generations = transaction.objectStore(GENERATIONS_STORE);
+    const generation = await requestResult(generations.get(artifacts.manifest.recordId) as IDBRequest<BrowserGeneration | undefined>);
     const replacing = records.find((record) => record.recordId === artifacts.manifest.recordId);
     const remainingRecords = replacing ? records.filter((record) => record.recordId !== replacing.recordId) : records;
     const storedBytes = remainingRecords.reduce((total, record) => total + record.byteSize, 0);
@@ -187,14 +215,17 @@ export const saveDebugHistoryRecord = async (artifacts: DebugBundleArtifacts): P
       createdAt: artifacts.manifest.createdAt,
       manifest: artifacts.manifest,
       byteSize,
+      isFavorite: replacing?.isFavorite === true,
     };
     recordsStore.put(storedRecord);
+    if (generation) generations.put({ ...generation, recorded: true });
     transaction.objectStore(ASSETS_STORE).put({
       recordId: artifacts.manifest.recordId,
       imageBlob: artifacts.imageBlob,
       voiceAudioBlob: artifacts.voiceAudioBlob,
     } satisfies StoredDebugHistoryAssets);
     await transactionDone(transaction);
+    notifyBrowserRecordsChanged();
     return getSummary(storedRecord);
   } catch (error) {
     throw asDebugHistoryError(error);
@@ -234,6 +265,7 @@ export const deleteDebugHistoryRecord = async (recordId: string) => {
   transaction.objectStore(RECORDS_STORE).delete(recordId);
   transaction.objectStore(ASSETS_STORE).delete(recordId);
   await transactionDone(transaction);
+  notifyBrowserRecordsChanged();
 };
 
 export const clearDebugHistoryRecords = async () => {
@@ -242,6 +274,45 @@ export const clearDebugHistoryRecords = async () => {
   transaction.objectStore(RECORDS_STORE).clear();
   transaction.objectStore(ASSETS_STORE).clear();
   await transactionDone(transaction);
+  notifyBrowserRecordsChanged();
+};
+
+export const setDebugHistoryFavorite = async (recordId: string, favorite: boolean) => {
+  const database = await openDatabase();
+  const transaction = database.transaction(RECORDS_STORE, "readwrite");
+  const store = transaction.objectStore(RECORDS_STORE);
+  const record = await requestResult(store.get(recordId) as IDBRequest<StoredDebugHistoryRecord | undefined>);
+  if (!record) throw new Error("作品が見つかりませんでした。");
+  store.put({ ...record, isFavorite: favorite });
+  await transactionDone(transaction);
+  notifyBrowserRecordsChanged();
+};
+
+/** Count attempts once, without retaining the drawing, lyrics or audio. */
+export const recordBrowserGeneration = async (recordId: string, startedAt: string) => {
+  const database = await openDatabase();
+  const transaction = database.transaction(GENERATIONS_STORE, "readwrite");
+  const store = transaction.objectStore(GENERATIONS_STORE);
+  const existing = await requestResult(store.get(recordId));
+  if (!existing) store.put({ recordId, date: japanDate(startedAt), recorded: false } satisfies BrowserGeneration);
+  await transactionDone(transaction);
+};
+
+export const getBrowserUsageStats = async (): Promise<UsageStats> => {
+  const database = await openDatabase();
+  const transaction = database.transaction(GENERATIONS_STORE, "readonly");
+  const entries = await requestResult(transaction.objectStore(GENERATIONS_STORE).getAll() as IDBRequest<BrowserGeneration[]>);
+  await transactionDone(transaction);
+  const days = new Map<string, UsageStats["days"][number]>();
+  for (const entry of entries) {
+    const day = days.get(entry.date) ?? { date: entry.date, generationCount: 0, recordedCount: 0, unrecordedCount: 0 };
+    day.generationCount++;
+    if (entry.recorded) day.recordedCount++; else day.unrecordedCount++;
+    days.set(entry.date, day);
+  }
+  const recordedGenerations = entries.filter(entry => entry.recorded).length;
+  return { totalGenerations: entries.length, recordedGenerations, unrecordedGenerations: entries.length - recordedGenerations,
+    days: [...days.values()].sort((a, b) => b.date.localeCompare(a.date)) };
 };
 
 export const getDebugHistoryStats = async (): Promise<DebugHistoryStats> => {

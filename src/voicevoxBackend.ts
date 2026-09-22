@@ -104,7 +104,7 @@ export const parseVoicevoxBackendSelection = (value: unknown): VoicevoxBackendSe
 
 export const getVoicevoxBackendOrder = (env: VoicevoxBackendEnv, selection: VoicevoxBackendSelection): VoicevoxBackend[] => {
   if (selection === "vpc") {
-    if (!env.VOICEVOX) throw httpError("Cloudflare VPCの歌声サーバー設定がまだ完了していません。", 503, "voice-vpc-config", "config");
+    if (!env.VOICEVOX) throw httpError("みらいサーバーの歌声サーバー設定がまだ完了していません。", 503, "voice-vpc-config", "config");
     return ["vpc"];
   }
   if (selection === "cloud-run") {
@@ -132,16 +132,16 @@ const createVoicevoxAttemptError = (
 const isRetryableVoicevoxResponse = (status: number) => status === 404 || status === 408 || status === 429 || status >= 500;
 
 const fetchVPCVoicevox = async (env: VoicevoxBackendEnv, path: string, init: RequestInit, timeoutMs: number) => {
-  if (!env.VOICEVOX) throw httpError("Cloudflare VPCの歌声サーバー設定がまだ完了していません。", 503, "voice-vpc-config", "config");
+  if (!env.VOICEVOX) throw httpError("みらいサーバーの歌声サーバー設定がまだ完了していません。", 503, "voice-vpc-config", "config");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await env.VOICEVOX.fetch(new URL(path, `${VOICEVOX_VPC_ORIGIN}/`), { ...init, signal: controller.signal });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw createVoicevoxAttemptError("Cloudflare VPCの歌声サーバーがタイムアウトしました。", "voice-vpc-timeout", "vpc");
+      throw createVoicevoxAttemptError("みらいサーバーの歌声サーバーがタイムアウトしました。", "voice-vpc-timeout", "vpc");
     }
-    throw createVoicevoxAttemptError("Cloudflare VPCの歌声サーバーを利用できません。", "voice-vpc-unavailable", "vpc");
+    throw createVoicevoxAttemptError("みらいサーバーの歌声サーバーを利用できません。", "voice-vpc-unavailable", "vpc");
   } finally {
     clearTimeout(timeout);
   }

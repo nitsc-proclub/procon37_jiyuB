@@ -70,8 +70,7 @@ export const checkVoicevoxServerVersion = async (server: VoicevoxServerId): Prom
   }
 
   if (server === "auto") {
-    // Local relay checks can start Cloud Run; public checks only report its
-    // configuration. Preserve that distinction in the result.
+    // Both builds explicitly probe the selected remote Engine.
     try {
       return await checkRemoteBackend("vpc");
     } catch (vpcError) {
@@ -79,7 +78,7 @@ export const checkVoicevoxServerVersion = async (server: VoicevoxServerId): Prom
         return await checkRemoteBackend("cloud-run");
       } catch (cloudRunError) {
         if (cloudRunError instanceof Error && vpcError instanceof Error) {
-          throw new Error(`Cloudflare VPC: ${vpcError.message} / Google Cloud Run: ${cloudRunError.message}`);
+          throw new Error(`みらいサーバー: ${vpcError.message} / Google Cloud Run: ${cloudRunError.message}`);
         }
         throw cloudRunError;
       }

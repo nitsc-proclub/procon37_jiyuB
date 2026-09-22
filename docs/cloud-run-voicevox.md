@@ -1,5 +1,6 @@
 # Cloud Run VOICEVOX
 
+> 2026-09-22更新: 公開のCloud Run状態確認も実際の認証付き /version を呼ぶ。以下の「設定確認のみ」「liveCheck:false」の記述は旧仕様。現在の仕様は [公開・ローカルの保存と表示](public-local-experience.md)。
 `voicevox/Dockerfile` は、VOICEVOX Engine を Cloud Run で動かすための最小コンテナ定義です。アプリ本体は引き続きCloudflare Worker Static Assetsで公開します。
 
 Cloudflare WorkerからCloud RunへのOIDC認証、入力制限、混雑時のQueue overflowを実装済みです。Cloud Runは1 vCPU、2 GiB、container concurrency 1、min 0、max 3、timeout 120秒、起動時CPUブースト有効です。Cloud Run用Queue consumerとDurable Objectの実行枠も最大3に揃え、1インスタンスが1件ずつ合成する構成です。呼び出しは専用サービスアカウントだけに許可されています。詳細は[実測記録](voicevox-cloud-run-capacity.md)を参照してください。

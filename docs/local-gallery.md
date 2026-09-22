@@ -47,11 +47,11 @@ Ctrl・Alt・Shift・Windows/Commandを押した組み合わせや、文字入�
 
 入力処理は `window` の `ekaki-gallery-action` カスタムイベント（`detail` に上記のアクション名）でも呼び出せる。キー割り当てとは分離している。
 
-## 公開版との境界
+## 公開版との共通化
 
-ギャラリーは `import.meta.env.DEV` とローカル機能フラグを満たす場合だけ読み込む。`npm run build` で作る公開用ファイルにはギャラリーの画面・CSS・リンク・SSE購読処理を含めない。公開環境では `/gallery` を提供しない（現在のWorker Static Assets設定では404）。
+公開版でも同じ `/gallery` 画面を提供する。公開では同じブラウザ・同じoriginのデモ記録（IndexedDB）を読み、ローカルでは既存の記録APIを読む。公開ではサーバーの記録API・SSEを呼ばず、ブラウザ内の保存通知と定期照合で更新する。ギャラリーの再生・印刷・巡回・デバイス操作は共通。詳しくは [公開・ローカルの保存と表示](public-local-experience.md)。
 
-記録APIとSSEはViteのローカルmiddlewareにのみ存在し、Cloudflare Workerには追加しない。ビルド済みの `preview` では展示画面を提供しないため、展示には上記の `dev` を使う。既存の合奏ブランチとは独立した機能。
+公開ビルドにも画面・CSS・入口を含め、Worker Static AssetsのSPA fallbackで直接アクセスできるようにする。ローカルの `dev` は従来どおりサーバー上の記録を表示し、ビルド済み `preview` はそのoriginのブラウザ記録を表示する。
 
 ## 確認
 
@@ -63,6 +63,6 @@ npm.cmd run build
 npm.cmd run check:gallery-public
 ```
 
-`test:gallery` は並び順・選択保持・配置の画面内収まり・最新32件の巡回範囲・描画タイミング・保存完了通知・SSE再接続／終了を検証する。`check:gallery-public` は公開ビルドにギャラリーの特徴的なコードやCSSが残っていないことを検証する。
+`test:gallery` は並び順・選択保持・配置の画面内収まり・最新32件の巡回範囲・描画タイミング・保存完了通知・SSE再接続／終了を検証する。`check:gallery-public` は公開ビルドにギャラリーのコード・CSS・入口が入り、ローカルSSE購読が残っていないことを検証する。
 
 実機では投影解像度・会場での音量・デバイスのキー割り当てを合わせる。ギャラリーと作品生成画面は同じ保存先を使うローカルサーバーで開く。

@@ -1,5 +1,6 @@
 # VOICEVOX Cloud Run 容量実測
 
+> 2026-09-22更新: 公開のCloud Run状態確認も実際の認証付き /version を呼ぶ。以下の「設定確認のみ」「liveCheck:false」の記述は旧仕様。現在の仕様は [公開・ローカルの保存と表示](public-local-experience.md)。
 ## 2026-08-31: 本番経路の少数確認
 
 本番のCloudflare Workerだけを入口にして測定しました。リクエストで `cloud-run` を明示指定し、Workerの `X-Voicevox-Backend: cloud-run` を確認したため、WorkerのOIDCプロキシからCloud Runで合成する経路をまとめて検証できています。ブラウザからCloud Runへ直接アクセスする経路は、意図どおり存在しないため測定対象ではありません。

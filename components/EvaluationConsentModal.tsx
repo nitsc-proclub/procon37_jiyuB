@@ -52,10 +52,10 @@ const EvaluationConsentModal: React.FC<EvaluationConsentModalProps> = ({ open, p
       >
         <p className="text-xs font-black tracking-[0.18em] text-sky-500">今回の歌</p>
         <h2 id="evaluation-consent-title" className="mt-1 text-2xl font-black leading-tight text-gray-800">
-          {savesInBrowser && !savesToCloud ? "このブラウザに保存する？" : "この歌を保存してもいい？"}
+          この歌を保存しますか？
         </h2>
         <div id="evaluation-consent-description" className="mt-4 space-y-2 text-sm font-semibold leading-relaxed text-gray-600">
-          {savesInBrowser && <p><span className="font-black text-gray-800">このブラウザ：</span>絵と歌を、あとで開けるように保存します。</p>}
+          {savesInBrowser && <p><strong className="font-black text-gray-800">このブラウザ内に絵と歌を保存します。</strong>{!savesToCloud && "外部への送信はされません。"}</p>}
           {savesToCloud && savesFullArchive && <p><span className="font-black text-gray-800">クラウド：</span>{candidateCount === 1 ? "絵・描いた線・歌を、改善のため1年間保存します。" : "絵・描いた線・2つの歌・回答を、改善のため1年間保存します。"}</p>}
           {savesToCloud && !savesFullArchive && <p><span className="font-black text-gray-800">クラウド：</span>{candidateCount === 1 ? "歌詞と生成時の情報を、アプリの改善に使います。" : "絵の分析・2つの歌詞・選んだ答えを、アプリの改善に使います。"}</p>}
           {savesToCloud && savesFullArchive && <p className="text-xs">非公開です。保護者の方が確認し、このブラウザから削除できます。</p>}

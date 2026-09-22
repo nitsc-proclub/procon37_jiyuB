@@ -4,6 +4,7 @@ import KaraokeLyricsPanel from "../components/KaraokeLyricsPanel";
 import type { DemoRecordDetail } from "../types";
 import { getDrawingAnimationEndProgress, getSingingLineCount } from "../utils/playbackTiming";
 import { GALLERY_SETTINGS } from "./model";
+import { loadGalleryRecord } from "./recordSource";
 
 type Props = {
   recordId: string | null;
@@ -37,6 +38,7 @@ export default function GalleryPlayback({ recordId, audioRef, volume, onVolume, 
     const audio = audioRef.current;
     const controller = new AbortController();
     let objectUrl: string | null = null;
+    let releaseRecord = () => {};
     clearReturn();
     audio?.pause();
     audio?.removeAttribute("src");
@@ -45,9 +47,10 @@ export default function GalleryPlayback({ recordId, audioRef, volume, onVolume, 
     if (recordId) {
       void (async () => {
         try {
-          const response = await fetch(`/api/demo-records/${encodeURIComponent(recordId)}`, { signal: controller.signal, cache: "no-store" });
-          if (!response.ok) throw new Error("この作品を読み込めませんでした。");
-          const detail = await response.json() as DemoRecordDetail;
+          const loaded = await loadGalleryRecord(recordId);
+          if (controller.signal.aborted) { loaded.dispose(); return; }
+          releaseRecord = loaded.dispose;
+          const detail = loaded.record;
           if (!detail.audioUrl) throw new Error("この作品には音声がありません。");
           const audioResponse = await fetch(detail.audioUrl, { signal: controller.signal });
           if (!audioResponse.ok) throw new Error("音声を読み込めませんでした。");
@@ -69,6 +72,7 @@ export default function GalleryPlayback({ recordId, audioRef, volume, onVolume, 
       audio?.removeAttribute("src");
       audio?.load();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
+      releaseRecord();
     };
   }, [recordId, audioRef]);
 

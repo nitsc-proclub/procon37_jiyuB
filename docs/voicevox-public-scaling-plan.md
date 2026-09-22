@@ -1,5 +1,6 @@
 # 公開版 VOICEVOX スケーリング実装メモ
 
+> 2026-09-22更新: 公開のCloud Run状態確認も実際の認証付き /version を呼ぶ。以下の「設定確認のみ」「liveCheck:false」の記述は旧仕様。現在の仕様は [公開・ローカルの保存と表示](public-local-experience.md)。
 作成日: 2026-08-30 (JST)
 
 状態: **2026-08-31に承認取得後、Queue/DLQ用Queue作成・内部DO Worker配置・D1追加schema適用・Cloud Run実音声生成・R2非公開bucket作成まで確認。非同期経路の統合は未完了。公開アプリの生成経路は変更していない。**

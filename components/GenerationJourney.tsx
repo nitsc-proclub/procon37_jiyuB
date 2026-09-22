@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { DrawingData, GenerationTimingEstimate, GenerationTimingPhase, Point } from "../types";
-import { getGenerationPhaseProgressTarget, smoothlyAdvanceProgress } from "../utils/generationProgress";
+import { getGenerationPhaseProgressTarget, smoothlyAdvanceProgress, advanceCompletedProgress } from "../utils/generationProgress";
 
 type GenerationJourneyProps = {
   stageLabel: string;
@@ -115,125 +115,66 @@ const TransformationCanvas: React.FC<{ drawingData: DrawingData }> = ({ drawingD
   return <canvas ref={canvasRef} className="h-full w-full" aria-hidden="true" />;
 };
 
-const COMPLETION_ANIMATION_MS = 500;
-const COMPLETION_HOLD_MS = 600;
-const COMPLETION_FALLBACK_MS = COMPLETION_ANIMATION_MS + COMPLETION_HOLD_MS + 1_000;
-
 type GenerationProgressBarProps = Pick<GenerationJourneyProps, "timingEstimate" | "progressPhase" | "runKey" | "isComplete" | "onCompletionDisplayComplete"> & {
   fullWidth?: boolean;
 };
 
-export const GenerationProgressBar: React.FC<GenerationProgressBarProps> = ({ timingEstimate, progressPhase = "gemini", runKey = 0, isComplete = false, onCompletionDisplayComplete, fullWidth = false }) => {
+// A new run owns fresh refs, timers and animation frames, even in the same view.
+export const GenerationProgressBar: React.FC<GenerationProgressBarProps> = props =>
+  <ProgressRun key={props.runKey ?? 0} {...props} />;
+
+const ProgressRun: React.FC<GenerationProgressBarProps> = ({ timingEstimate, progressPhase = "gemini", runKey = 0, isComplete = false, onCompletionDisplayComplete, fullWidth = false }) => {
   const [value, setValue] = useState(0);
-  const valueRef = useRef(0);
-  const timingEstimateRef = useRef(timingEstimate);
-  const progressPhaseRef = useRef(progressPhase);
-  const phaseStartedAtRef = useRef<number | null>(null);
-  const completionStartedAtRef = useRef<number | null>(null);
-  const completionStartValueRef = useRef(0);
-  const completionReachedAtRef = useRef<number | null>(null);
-  const completionNotifiedRef = useRef(false);
-  const onCompletionDisplayCompleteRef = useRef(onCompletionDisplayComplete);
+  const estimate = useRef(timingEstimate);
+  const phase = useRef(progressPhase);
+  const complete = useRef(isComplete);
+  const callback = useRef(onCompletionDisplayComplete);
+  useEffect(() => { phase.current = progressPhase; complete.current = isComplete; callback.current = onCompletionDisplayComplete; }, [progressPhase, isComplete, onCompletionDisplayComplete]);
+  const notified = useRef(false);
 
   useEffect(() => {
-    timingEstimateRef.current = timingEstimate;
-  }, [timingEstimate]);
-
-  useEffect(() => {
-    onCompletionDisplayCompleteRef.current = onCompletionDisplayComplete;
-  }, [onCompletionDisplayComplete]);
-
-  useEffect(() => {
-    progressPhaseRef.current = progressPhase;
-    phaseStartedAtRef.current = performance.now();
-  }, [progressPhase, runKey]);
-
-  useEffect(() => {
-    if (!isComplete) {
-      completionStartedAtRef.current = null;
-      completionReachedAtRef.current = null;
-      return;
-    }
-
-    completionStartValueRef.current = valueRef.current;
-    completionStartedAtRef.current = performance.now();
-    completionReachedAtRef.current = null;
-    completionNotifiedRef.current = false;
-
-    // requestAnimationFrame can be suspended in a background tab. Keep the
-    // normal visible path tied to the rendered 100% frame, but never leave App
-    // waiting forever when frames are unavailable.
-    let remainingHoldTimer: number | null = null;
-    const notifyCompletion = () => {
-      if (completionNotifiedRef.current) return;
-      completionNotifiedRef.current = true;
-      onCompletionDisplayCompleteRef.current?.(runKey);
-    };
-    const fallbackTimer = window.setTimeout(() => {
-      const completionReachedAt = completionReachedAtRef.current;
-      if (completionReachedAt === null) {
-        notifyCompletion();
-        return;
-      }
-
-      const remainingHoldMs = COMPLETION_HOLD_MS - (performance.now() - completionReachedAt);
-      if (remainingHoldMs <= 0) {
-        notifyCompletion();
-        return;
-      }
-
-      remainingHoldTimer = window.setTimeout(notifyCompletion, remainingHoldMs);
-    }, COMPLETION_FALLBACK_MS);
-    return () => {
-      window.clearTimeout(fallbackTimer);
-      if (remainingHoldTimer !== null) window.clearTimeout(remainingHoldTimer);
-    };
-  }, [isComplete, runKey]);
-
-  useEffect(() => {
-    valueRef.current = 0;
-    completionStartedAtRef.current = null;
-    completionStartValueRef.current = 0;
-    completionReachedAtRef.current = null;
-    completionNotifiedRef.current = false;
-    setValue(0);
-
-    const startedAt = performance.now();
-    phaseStartedAtRef.current = startedAt;
-    let previousFrameAt = startedAt;
-    let frameId = 0;
+    let currentValue = 0;
+    let previousFrame = performance.now();
+    let phaseStarted = previousFrame;
+    let previousPhase = phase.current;
+    let completedAt: number | null = null;
+    let frame = 0;
     const update = (now: number) => {
-      const completionStartedAt = completionStartedAtRef.current;
-      if (completionStartedAt !== null) {
-        const completionProgress = Math.min(1, Math.max(0, (now - completionStartedAt) / COMPLETION_ANIMATION_MS));
-        const nextValue = completionStartValueRef.current + (100 - completionStartValueRef.current) * completionProgress;
-        valueRef.current = nextValue;
-        setValue(nextValue);
-        if (completionProgress === 1) {
-          if (completionReachedAtRef.current === null) {
-            completionReachedAtRef.current = now;
-          } else if (!completionNotifiedRef.current && now - completionReachedAtRef.current >= COMPLETION_HOLD_MS) {
-            completionNotifiedRef.current = true;
-            onCompletionDisplayCompleteRef.current?.(runKey);
+      const elapsed = now - previousFrame;
+      if (phase.current !== previousPhase) { previousPhase = phase.current; phaseStarted = now; }
+      if (complete.current) {
+        currentValue = advanceCompletedProgress(currentValue, elapsed);
+        if (currentValue === 100) {
+          completedAt ??= now;
+          if (!notified.current && now - completedAt >= 600) {
+            notified.current = true;
+            callback.current?.(runKey);
           }
         }
       } else {
-        const phaseStartedAt = phaseStartedAtRef.current ?? startedAt;
-        const target = getGenerationPhaseProgressTarget(progressPhaseRef.current, now - phaseStartedAt, timingEstimateRef.current);
-        const nextValue = smoothlyAdvanceProgress(valueRef.current, target, now - previousFrameAt);
-        valueRef.current = nextValue;
-        setValue(nextValue);
+        currentValue = smoothlyAdvanceProgress(currentValue, getGenerationPhaseProgressTarget(phase.current, now - phaseStarted, estimate.current), elapsed);
       }
-      previousFrameAt = now;
-      frameId = window.requestAnimationFrame(update);
+      setValue(currentValue);
+      previousFrame = now;
+      if (!notified.current) frame = requestAnimationFrame(update);
     };
-    frameId = window.requestAnimationFrame(update);
-    return () => window.cancelAnimationFrame(frameId);
+    frame = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(frame);
   }, [runKey]);
+
+  useEffect(() => {
+    if (!isComplete) return;
+    // Hidden tabs suspend animation frames. A visible view must render 100%
+    // and hold it before opening the next screen.
+    const interval = window.setInterval(() => {
+      if (document.hidden && !notified.current) { notified.current = true; callback.current?.(runKey); }
+    }, 4000);
+    return () => window.clearInterval(interval);
+  }, [isComplete, runKey]);
 
   return <div className={`mt-3 w-full ${fullWidth ? "max-w-none" : "max-w-md"}`} role="progressbar" aria-label="歌を作っています" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value)}>
     <div className="h-1.5 overflow-hidden rounded-full bg-orange-100" aria-hidden="true">
-      <div className={`h-full rounded-full bg-orange-400 ${isComplete ? "" : "transition-[width] duration-200"}`} style={{ width: `${value}%` }} />
+      <div className="h-full rounded-full bg-orange-400" style={{ width: `${value}%` }} />
     </div>
   </div>;
 };
