@@ -845,7 +845,7 @@ const App: React.FC = () => {
     if (generatedPhase1ModelInfo) {
       return (
         <p className="mt-3 text-right text-xs font-bold text-gray-400">
-          画像読み込み: {generatedPhase1ModelInfo.drawingAnalysis}<br />
+          {generatedPhase1ModelInfo.drawingAnalysis !== "not-run" && <>画像読み込み: {generatedPhase1ModelInfo.drawingAnalysis}<br /></>}
           歌詞生成: {generatedPhase1ModelInfo.lyricsGeneration}
           {voicevoxInfo && <><br />{voicevoxInfo}</>}
         </p>
