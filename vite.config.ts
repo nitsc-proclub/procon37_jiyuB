@@ -8,6 +8,7 @@ import react from "@vitejs/plugin-react";
 import { createGeminiMiddleware } from "./server/geminiMiddleware";
 import { createVoicevoxMiddleware } from "./server/voicevoxMiddleware";
 import { createDemoRecordEventHub, type DemoRecordEventHub } from "./server/demoRecordEvents";
+import { demoRecordErrorStatus, DemoRecordRequestError, getRecordDirectory, getRecordFilePath, isAnimationClockAudio, isAnimationClockFile, validateDemoRecordName } from "./server/demoRecordFiles";
 
 const MAX_RECORD_REQUEST_BYTES = 100 * 1024 * 1024;
 const DEFAULT_DEMO_RECORDS_DIR = path.resolve(process.cwd(), "demo-records");
@@ -108,6 +109,7 @@ type StoredDemoRecordMetadata = {
   recordId?: string;
   savedAt?: string;
   status?: DemoRecordStatus;
+  playbackKind?: "voice" | "animation-only";
   favorite?: boolean;
   files?: {
     image?: string;
@@ -301,23 +303,8 @@ const getGenerationTimingEstimate = (entries: StoredGenerationTimingEntry[], voi
   };
 };
 
-const isPathInside = (parentDirectory: string, targetPath: string) => {
-  const relativePath = path.relative(parentDirectory, targetPath);
-  return relativePath === "" || (!!relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath));
-};
-
-const getRecordDirectory = (recordsRoot: string, recordId: string) => {
-  const recordDirectory = path.resolve(recordsRoot, recordId);
-
-  if (!isPathInside(recordsRoot, recordDirectory)) {
-    throw new Error("Invalid demo record id");
-  }
-
-  return recordDirectory;
-};
-
 const readDemoRecordMetadata = async (recordDirectory: string) =>
-  JSON.parse(await fs.readFile(path.join(recordDirectory, "metadata.json"), "utf8")) as StoredDemoRecordMetadata;
+  JSON.parse(await fs.readFile(await getRecordFilePath(recordDirectory, "metadata.json"), "utf8")) as StoredDemoRecordMetadata;
 
 const getTokyoDate = (value: Date) => {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -386,7 +373,7 @@ const initializeUsageStats = async (recordsRoot: string) => {
       .filter((entry) => entry.isDirectory())
       .map(async (entry) => {
         try {
-          const metadata = await readDemoRecordMetadata(getRecordDirectory(recordsRoot, entry.name));
+          const metadata = await readDemoRecordMetadata(await getRecordDirectory(recordsRoot, entry.name));
           const savedAt = typeof metadata.savedAt === "string" ? new Date(metadata.savedAt) : null;
           if (!savedAt || Number.isNaN(savedAt.getTime())) {
             return;
@@ -448,13 +435,26 @@ const runUsageStatsUpdate = <T>(operation: () => Promise<T>) => {
   return result;
 };
 
-const buildRecordUrls = (recordId: string, metadata: StoredDemoRecordMetadata) => ({
+const getDemoRecordPlaybackKind = async (directory: string, metadata: StoredDemoRecordMetadata): Promise<"voice" | "animation-only"> => {
+  if (metadata.playbackKind === "animation-only" || !metadata.files?.audio) return "animation-only";
+  try {
+    const audioPath = await getRecordFilePath(directory, metadata.files.audio);
+    if (!metadata.playbackKind && await isAnimationClockFile(audioPath)) return "animation-only";
+    return "voice";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "animation-only";
+    throw error;
+  }
+};
+
+const buildRecordUrls = (recordId: string, playbackKind: "voice" | "animation-only") => ({
   imageUrl: `/api/demo-records/${encodeURIComponent(recordId)}/image`,
-  audioUrl: metadata.files?.audio ? `/api/demo-records/${encodeURIComponent(recordId)}/audio` : null,
+  audioUrl: playbackKind === "voice" ? `/api/demo-records/${encodeURIComponent(recordId)}/audio` : null,
 });
 
-const buildDemoRecordSummary = (recordId: string, metadata: StoredDemoRecordMetadata) => {
-  const { imageUrl, audioUrl } = buildRecordUrls(recordId, metadata);
+const buildDemoRecordSummary = async (recordId: string, directory: string, metadata: StoredDemoRecordMetadata) => {
+  const playbackKind = await getDemoRecordPlaybackKind(directory, metadata);
+  const { imageUrl, audioUrl } = buildRecordUrls(recordId, playbackKind);
 
   return {
     recordId,
@@ -463,6 +463,8 @@ const buildDemoRecordSummary = (recordId: string, metadata: StoredDemoRecordMeta
     identifiedObject: metadata.lyrics?.identifiedObject?.trim() || "絵",
     imageUrl,
     audioUrl,
+    hasAudio: playbackKind === "voice",
+    playbackKind,
     participantAge: metadata.participantAge ?? metadata.participant?.age ?? null,
     isFavorite: metadata.favorite ?? false,
   };
@@ -473,7 +475,7 @@ const updateDemoRecordMetadata = async (
   recordId: string,
   updater: (metadata: StoredDemoRecordMetadata) => StoredDemoRecordMetadata,
 ) => {
-  const recordDirectory = getRecordDirectory(recordsRoot, recordId);
+  const recordDirectory = await getRecordDirectory(recordsRoot, recordId);
   const currentMetadata = await readDemoRecordMetadata(recordDirectory);
   const nextMetadata = updater(currentMetadata);
 
@@ -491,14 +493,14 @@ const listDemoRecords = async (recordsRoot: string) => {
       .filter((entry) => entry.isDirectory())
       .map(async (entry) => {
         try {
-          const recordDirectory = getRecordDirectory(recordsRoot, entry.name);
+          const recordDirectory = await getRecordDirectory(recordsRoot, entry.name);
           const metadata = await readDemoRecordMetadata(recordDirectory);
 
           if (metadata.status !== "success" || !metadata.files?.image || !metadata.lyrics) {
             return null;
           }
 
-          return buildDemoRecordSummary(entry.name, metadata);
+          return await buildDemoRecordSummary(entry.name, recordDirectory, metadata);
         } catch {
           return null;
         }
@@ -516,20 +518,16 @@ const sendDemoRecordFile = async (
   recordId: string,
   fileType: "image" | "audio",
 ) => {
-  const recordDirectory = getRecordDirectory(recordsRoot, recordId);
+  const recordDirectory = await getRecordDirectory(recordsRoot, recordId);
   const metadata = await readDemoRecordMetadata(recordDirectory);
   const fileName = metadata.files?.[fileType];
 
-  if (!fileName) {
+  if (!fileName || (fileType === "audio" && await getDemoRecordPlaybackKind(recordDirectory, metadata) !== "voice")) {
     sendJson(response, 404, { error: "Demo record file not found" });
     return;
   }
 
-  const filePath = path.resolve(recordDirectory, fileName);
-
-  if (!isPathInside(recordDirectory, filePath)) {
-    throw new Error("Invalid demo record file path");
-  }
+  const filePath = await getRecordFilePath(recordDirectory, fileName);
 
   const file = await fs.readFile(filePath);
   response.statusCode = 200;
@@ -540,19 +538,46 @@ const sendDemoRecordFile = async (
 
 export const createDemoRecordMiddleware =
   (recordsRoot: string, voicevoxTimingProfile: string, events: DemoRecordEventHub) => async (request: IncomingMessage, response: ServerResponse, next: () => void) => {
-    if (!request.url?.startsWith("/api/demo-records")) {
+    const pathname = request.url?.split(/[?#]/, 1)[0] ?? "";
+    if (pathname !== "/api/demo-records" && !pathname.startsWith("/api/demo-records/")) {
       next();
       return;
     }
 
-    const requestUrl = new URL(request.url, "http://localhost");
-    const pathParts = requestUrl.pathname.split("/").filter(Boolean);
-    const recordId = pathParts.length >= 3 ? decodeURIComponent(pathParts[2]) : null;
-    const fileType = pathParts.length >= 4 ? pathParts[3] : null;
+    const origin = request.headers.origin;
+    const site = request.headers["sec-fetch-site"];
+    const protocol = "encrypted" in request.socket && request.socket.encrypted ? "https" : "http";
+    if ((origin && origin !== `${protocol}://${request.headers.host}`) || (site && site !== "same-origin" && site !== "none")) {
+      sendJson(response, 403, { error: "同じサイトからのみ利用できます。" });
+      return;
+    }
+
+    // Parse the raw path before URL normalization can discard dot segments.
+    const pathParts = pathname.replace(/\/$/, "").split("/").slice(1);
+    let recordId: string | null = null;
+    let fileType: string | null = null;
+    try {
+      if (pathParts.length > 4) throw new DemoRecordRequestError("Invalid demo record path");
+      if (pathParts.length >= 3) {
+        recordId = decodeURIComponent(pathParts[2]);
+        validateDemoRecordName(recordId);
+      }
+      if (pathParts.length >= 4) {
+        fileType = decodeURIComponent(pathParts[3]);
+        validateDemoRecordName(fileType);
+      }
+    } catch (error) {
+      sendJson(response, demoRecordErrorStatus(error), { error: "Invalid demo record path" });
+      return;
+    }
 
     if (request.method === "OPTIONS") {
       response.statusCode = 204;
       response.end();
+      return;
+    }
+    if ((request.method === "POST" || request.method === "PATCH") && !/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+      sendJson(response, 415, { error: "Content-Type must be application/json" });
       return;
     }
 
@@ -651,7 +676,7 @@ export const createDemoRecordMiddleware =
         }
 
         if (recordId && pathParts.length === 3) {
-          const recordDirectory = getRecordDirectory(recordsRoot, recordId);
+          const recordDirectory = await getRecordDirectory(recordsRoot, recordId);
           const metadata = await readDemoRecordMetadata(recordDirectory);
 
           if (metadata.status !== "success" || !metadata.lyrics) {
@@ -660,7 +685,7 @@ export const createDemoRecordMiddleware =
           }
 
           sendJson(response, 200, {
-            ...buildDemoRecordSummary(recordId, metadata),
+            ...await buildDemoRecordSummary(recordId, recordDirectory, metadata),
             lyrics: metadata.lyrics,
             drawingData: {
               strokes: metadata.drawing?.strokes ?? [],
@@ -682,20 +707,20 @@ export const createDemoRecordMiddleware =
         sendJson(response, 404, { error: "Demo record not found" });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to read demo records";
-        sendJson(response, 500, { error: message });
+        sendJson(response, demoRecordErrorStatus(error), { error: message });
       }
       return;
     }
 
     if (request.method === "DELETE" && recordId && pathParts.length === 3) {
       try {
-        const recordDirectory = getRecordDirectory(recordsRoot, recordId);
+        const recordDirectory = await getRecordDirectory(recordsRoot, recordId, true);
         await fs.rm(recordDirectory, { recursive: true, force: true });
         events.publish({ kind: "deleted", recordId });
         sendJson(response, 200, { recordId });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to delete demo record";
-        sendJson(response, 500, { error: message });
+        sendJson(response, demoRecordErrorStatus(error), { error: message });
       }
       return;
     }
@@ -723,7 +748,7 @@ export const createDemoRecordMiddleware =
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to update demo record";
-        sendJson(response, 500, { error: message });
+        sendJson(response, demoRecordErrorStatus(error), { error: message });
       }
       return;
     }
@@ -741,7 +766,11 @@ export const createDemoRecordMiddleware =
       };
       const metadata = payload.metadata ?? {};
       const image = parseDataUri(payload.imageDataUri);
-      const audio = payload.audioDataUri ? parseDataUri(payload.audioDataUri) : null;
+      if (metadata.playbackKind !== undefined && metadata.playbackKind !== "voice" && metadata.playbackKind !== "animation-only") {
+        throw new DemoRecordRequestError("Invalid demo record playback kind");
+      }
+      const submittedAudio = metadata.playbackKind !== "animation-only" && payload.audioDataUri ? parseDataUri(payload.audioDataUri) : null;
+      const audio = submittedAudio && !isAnimationClockAudio(submittedAudio.buffer) ? submittedAudio : null;
       const savedAt = new Date().toISOString();
       const timestamp = savedAt.replace(/[:.]/g, "-");
       const title = (metadata.lyrics as { title?: unknown } | undefined)?.title;
@@ -752,7 +781,9 @@ export const createDemoRecordMiddleware =
         image: "input.png",
       };
 
-      await fs.mkdir(recordDirectory, { recursive: true });
+      await fs.mkdir(recordsRoot, { recursive: true });
+      // Do not follow a pre-existing directory or link on an ID collision.
+      await fs.mkdir(recordDirectory);
       await fs.writeFile(path.join(recordDirectory, files.image), image.buffer);
 
       if (audio) {
@@ -764,16 +795,17 @@ export const createDemoRecordMiddleware =
         path.join(recordDirectory, "metadata.json"),
         `${JSON.stringify(
           {
+            ...metadata,
             schemaVersion: 1,
             recordId,
             savedAt,
             status,
+            playbackKind: audio ? "voice" : "animation-only",
             files,
             mimeTypes: {
               image: image.mimeType,
               audio: audio?.mimeType ?? null,
             },
-            ...metadata,
           },
           null,
           2,
@@ -788,7 +820,7 @@ export const createDemoRecordMiddleware =
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save demo record";
-      sendJson(response, 500, { error: message });
+      sendJson(response, demoRecordErrorStatus(error), { error: message });
     }
   };
 

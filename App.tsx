@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import PaintCanvas, { DrawingMetrics } from "./components/PaintCanvas";
+import PaintCanvas, { DrawingMetrics, PaintCanvasDraft } from "./components/PaintCanvas";
 import KaraokeLyricsPanel from "./components/KaraokeLyricsPanel";
 import PrintLayout from "./components/PrintLayout";
 import GenerationJourney from "./components/GenerationJourney";
@@ -411,6 +411,7 @@ const App: React.FC = () => {
   const [selectedDemoDrawing, setSelectedDemoDrawing] = useState<DrawingData | null>(null);
   const [selectedDemoRecordId, setSelectedDemoRecordId] = useState<string | null>(null);
   const [selectedDebugHistoryDrawing, setSelectedDebugHistoryDrawing] = useState<DrawingData | null>(null);
+  const drawingDraftRef = useRef<PaintCanvasDraft | null>(null);
   const [generatedDrawing, setGeneratedDrawing] = useState<DrawingData | null>(null);
   const [playbackScore, setPlaybackScore] = useState<SingingScore | null>(null);
   const [drawingDisplayMode, setDrawingDisplayMode] = useState<DrawingDisplayMode>("animated");
@@ -865,9 +866,10 @@ const App: React.FC = () => {
     try {
       const demoRecord = await getDemoRecord(recordId);
       voicevoxGrantsRef.current = {};
-      let nextAudioUrl = demoRecord.audioUrl;
+      const hasVoice = !!demoRecord.audioUrl && demoRecord.playbackKind !== "animation-only";
+      let nextAudioUrl = hasVoice ? demoRecord.audioUrl : null;
 
-      if (demoRecord.audioUrl) {
+      if (hasVoice && demoRecord.audioUrl) {
         try {
           nextAudioUrl = await fetchSeekableAudioUrl(demoRecord.audioUrl);
         } catch (audioLoadError) {
@@ -877,9 +879,13 @@ const App: React.FC = () => {
         }
       }
 
+      if (!hasVoice && demoRecord.singingScore) {
+        nextAudioUrl = URL.createObjectURL(createSilentPlaybackAudio(demoRecord.singingScore));
+      }
+
       stopAudioPlayback();
       replaceAudioUrl(nextAudioUrl);
-      setPlaybackKind(nextAudioUrl ? "voice" : "animation-only");
+      setPlaybackKind(hasVoice ? "voice" : "animation-only");
       setLyrics(demoRecord.lyrics);
       clearPhase1Generation();
       setError(null);
@@ -1184,7 +1190,7 @@ const App: React.FC = () => {
     if (evaluationStorageConsentRef.current !== "accepted" || !appFeatures.debugHistory) return;
     const write = () => saveEvaluationDraft(nextDraft);
     const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
-    evaluationDraftWriteQueueRef.current = queuedWrite.catch(() => undefined);
+    evaluationDraftWriteQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
     void queuedWrite.catch(() => {
       if (isMountedRef.current) {
         setSaveToast({ message: "このブラウザに保存できませんでした", tone: "error" });
@@ -1248,16 +1254,17 @@ const App: React.FC = () => {
   const saveCurrentResultInBrowser = async (
     activation: Promise<DebugExportSource | null> | null,
     sourceAtConsent: DebugExportSource | null,
+    evaluationDraft: EvaluationDraft | null,
   ) => {
     if (!appFeatures.debugHistory || !sourceAtConsent) return;
-    const saveSource = async (source: DebugExportSource) => {
+    const saveSource = async (source: DebugExportSource, onlyIfExisting = false) => {
       const artifacts = await buildDebugBundleArtifacts({
         source,
         buildId: appBuildId,
         mode: appConfig.mode,
         origin: window.location.origin,
       });
-      await saveDebugHistoryRecord(artifacts);
+      await saveDebugHistoryRecord(artifacts, { evaluationDraft: evaluationDraft ?? undefined, onlyIfExisting });
     };
 
     // Save a complete animation-only version immediately. If VOICEVOX is still
@@ -1267,7 +1274,7 @@ const App: React.FC = () => {
     await saveSource(sourceAtConsent);
     if (activation) {
       void activation
-        .then((readySource) => readySource ? saveSource(readySource) : undefined)
+        .then((readySource) => readySource ? saveSource(readySource, true) : undefined)
         .catch(() => undefined);
     }
   };
@@ -1330,10 +1337,8 @@ const App: React.FC = () => {
       setIsInitialPlaybackPromptVisible(true);
     }
     try {
-      const browserSave = Promise.all([
-        ...(nextDraft && appFeatures.debugHistory ? [saveEvaluationDraft(nextDraft)] : []),
-        saveCurrentResultInBrowser(activationAtConsent, debugSourceAtConsent),
-      ]);
+      const browserSave = saveCurrentResultInBrowser(activationAtConsent, debugSourceAtConsent, nextDraft);
+      evaluationDraftWriteQueueRef.current = browserSave.then(() => undefined, () => undefined);
       const canSaveToCloud = canSaveEvaluationToCloud(nextDraft);
       const evaluationPayload = nextDraft && canSaveToCloud
         ? buildEvaluationSubmission(nextDraft, evaluationReceipt, appBuildId, updatedAt, EVALUATION_EXPERIMENT_ROUND_ID)
@@ -1406,11 +1411,11 @@ const App: React.FC = () => {
       followUpCentralConsent: followUpConsent,
     }, updatedAt);
     evaluationDraftRef.current = nextDraft;
-    if (!appFeatures.debugHistory) return nextDraft;
+    if (!appFeatures.debugHistory) throw new Error("この画面では回答を端末に保存できません。");
     const write = () => saveEvaluationDraft(nextDraft);
     const queuedWrite = evaluationDraftWriteQueueRef.current.then(write, write);
     evaluationDraftWriteQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
-    await queuedWrite;
+    if (!await queuedWrite) throw new Error("保存した作品が見つからないため、回答を保存できませんでした。");
     return nextDraft;
   };
 
@@ -1896,17 +1901,19 @@ const App: React.FC = () => {
         });
         try {
           beginTimingPhase("voicevoxSynthesis");
-          const registration = await registerVoicevoxJobGroup({ generationId: generationResult.generationId!, groupId: generationResult.generationId!, capability: generationResult.voiceJobCapability!, candidates: inputs, signal: abort.signal });
+          const registration = await registerVoicevoxJobGroup({ generationId: generationResult.generationId!, groupId: generationResult.generationId!, capability: generationResult.voiceJobCapability!, candidates: inputs, backendPreference: selectedVoicevoxServer === "cloudflare-vpc" ? "vpc" : "auto", signal: abort.signal });
           const states = await waitForVoicevoxJobs(registration.jobs, generationResult.voiceJobCapability!, { signal: abort.signal });
           for (const job of registration.jobs) {
-            if (!states.find(state => state.jobId === job.jobId)?.audioReady) continue;
+            const state = states.find(state => state.jobId === job.jobId);
+            if (!state?.audioReady) continue;
             try {
               const response = await fetch(voicevoxJobAudioUrl(job.jobId), { headers: { "X-Voicevox-Capability": generationResult.voiceJobCapability! }, signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60_000)]) });
               if (!response.ok) continue;
               const audioBlob = await response.blob();
               if (!audioBlob.size) continue;
               const previous = preparedCandidates.get(job.candidateId)!;
-              preparedCandidates.set(job.candidateId, { ...previous, audioBlob, playbackKind: "voice", voicevoxWarning: null, voicevoxServer: "cloudflare-vpc" });
+              const voicevoxServer = state.backend === "vpc" ? "cloudflare-vpc" : state.backend === "cloud-run" ? "google-cloud-run" : null;
+              preparedCandidates.set(job.candidateId, { ...previous, audioBlob, playbackKind: "voice", voicevoxWarning: null, voicevoxServer });
             } catch { /* Preserve this candidate's animation if downloading fails. */ }
           }
         } catch { /* Registered grants must not be reused through the old route. */ }
@@ -2139,7 +2146,8 @@ const App: React.FC = () => {
           await saveDemoRecord({
             drawingData: groupedDrawingData,
             lyrics: generatedLyrics,
-            audioBlob: generatedAudioBlob,
+            audioBlob: generatedVoiceAudioBlob,
+            playbackKind: generatedVoiceAudioBlob ? "voice" : "animation-only",
             singingScore: generatedScore,
             error: generationErrorMessage,
             startedAt,
@@ -2275,6 +2283,7 @@ const App: React.FC = () => {
   };
 
   const handleClear = () => {
+    drawingDraftRef.current = null;
     generationSequenceRef.current += 1;
     generationRunRef.current = false;
     setIsGenerating(false);
@@ -2322,7 +2331,8 @@ const App: React.FC = () => {
     setVoicevoxWarning(null);
     setVoicevoxResolvedServer(null);
     setSelectedDemoRecordId(null);
-    clearDebugHistoryDrawing();
+    // Keep the drawing source (and its image URL) while editing. PaintCanvas
+    // owns the editable draft; dropping its source here would reset that draft.
     setPlaybackScore(null);
     replaceDebugExportSource(null);
     setDebugExportArtifacts(null);
@@ -3419,6 +3429,7 @@ const App: React.FC = () => {
                 {turnstileSecurityCheck}
               </>}
               initialDrawing={playbackDrawing}
+              draftRef={drawingDraftRef}
               playbackDrawing={playbackDrawing}
               playbackAudioRef={audioRef}
               playbackDisplayMode={drawingDisplayMode}

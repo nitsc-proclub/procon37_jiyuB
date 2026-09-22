@@ -49,6 +49,8 @@ export type RegisterVoicevoxJobGroupRequest = {
   now: number;
   expiresAt: number;
   maxAttempts?: number;
+  /** Explicit choices stay on that backend; omitted/auto may use overflow. */
+  backendPreference?: "auto" | "vpc" | "cloud-run";
   /** Number of other unfinished generations required before Cloud Run overflow. */
   cloudRunOverflowGenerations?: number;
 };
@@ -120,6 +122,7 @@ const snapshotRequest = (request: RegisterVoicevoxJobGroupRequest): RegisterVoic
   now: request.now,
   expiresAt: request.expiresAt,
   ...(request.maxAttempts === undefined ? {} : { maxAttempts: request.maxAttempts }),
+  ...(request.backendPreference === undefined ? {} : { backendPreference: request.backendPreference }),
   ...(request.cloudRunOverflowGenerations === undefined ? {} : { cloudRunOverflowGenerations: request.cloudRunOverflowGenerations }),
 });
 
@@ -136,6 +139,7 @@ const validateRequest = async (request: RegisterVoicevoxJobGroupRequest) => {
   const maxAttempts = request.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   assert(Number.isInteger(maxAttempts) && maxAttempts >= 1 && maxAttempts <= MAX_VOICEVOX_JOB_ATTEMPTS, "invalid-input", "maxAttempts must be between 1 and 5");
   const cloudRunOverflowGenerations = request.cloudRunOverflowGenerations ?? 2;
+  assert(request.backendPreference === undefined || ["auto", "vpc", "cloud-run"].includes(request.backendPreference), "invalid-input", "backendPreference must be auto, vpc, or cloud-run");
   assert(Number.isInteger(cloudRunOverflowGenerations) && cloudRunOverflowGenerations >= 1 && cloudRunOverflowGenerations <= 10, "invalid-input", "cloudRunOverflowGenerations must be between 1 and 10");
   assert([1, 2].includes(request.candidates.length), "invalid-input", "one or two candidates are required");
   const sorted = candidatesInOrder(request.candidates);
@@ -197,7 +201,11 @@ const matchesExisting = (existing: { group: GroupRow | null; jobs: JobRow[] }, r
   }
   const jobs = existing.jobs.map(jobFromRow) as VoicevoxStoredJob[];
   const group = existing.group;
-  const same = group.group_id === request.groupId && group.generation_id === request.generationId && group.expires_at === request.expiresAt &&
+  // A retry keeps the durable routing decision even if queue pressure changed.
+  // Explicit choices must still agree with that decision; never silently reroute.
+  const backendMatches = request.backendPreference === undefined || request.backendPreference === "auto" ||
+    (group.preferred_backend === request.backendPreference && jobs.every(job => job.backend === request.backendPreference));
+  const same = backendMatches && group.group_id === request.groupId && group.generation_id === request.generationId && group.expires_at === request.expiresAt &&
     jobs.every((job, index) => {
       const candidate = candidates[index];
       return job.candidateId === candidate.candidateId && job.jobId === candidate.jobId && job.idempotencyKey === `${request.generationId}:${candidate.candidateId}` &&
@@ -222,8 +230,8 @@ const guardedGroupInsert = (request: RegisterVoicevoxJobGroupRequest, candidates
   const grantPredicate = candidates.map(() => "(SELECT COUNT(*) FROM voicevox_grants WHERE grant_hash = ? AND generation_id = ? AND candidate_id = ? AND issued_at <= ? AND expires_at > ? AND consumed_at IS NULL) = 1").join(" AND ");
   const predicateValues = candidates.flatMap((candidate) => [candidate.grantHash, request.generationId, candidate.candidateId, request.now, request.now]);
   return {
-    query: `/* voicevox-job:guarded-group-insert */ INSERT INTO voicevox_job_groups (group_id, generation_id, status, created_at, updated_at, expires_at, preferred_backend) SELECT ?, ?, CASE WHEN ${grantPredicate} THEN 'accepted' ELSE 'invalid-grant-state' END, ?, ?, ?, CASE WHEN (SELECT COUNT(DISTINCT generation_id) FROM voicevox_jobs WHERE generation_id <> ? AND status IN ('accepted', 'queued', 'running') AND expires_at > ?) >= ? THEN 'cloud-run' ELSE 'vpc' END`,
-    values: [request.groupId, request.generationId, ...predicateValues, request.now, request.now, request.expiresAt, request.generationId, request.now, request.cloudRunOverflowGenerations ?? 2],
+    query: `/* voicevox-job:guarded-group-insert */ INSERT INTO voicevox_job_groups (group_id, generation_id, status, created_at, updated_at, expires_at, preferred_backend) SELECT ?, ?, CASE WHEN ${grantPredicate} THEN 'accepted' ELSE 'invalid-grant-state' END, ?, ?, ?, CASE WHEN ? <> 'auto' THEN ? WHEN (SELECT COUNT(DISTINCT generation_id) FROM voicevox_jobs WHERE generation_id <> ? AND status IN ('accepted', 'queued', 'running') AND expires_at > ?) >= ? THEN 'cloud-run' ELSE 'vpc' END`,
+    values: [request.groupId, request.generationId, ...predicateValues, request.now, request.now, request.expiresAt, request.backendPreference ?? "auto", request.backendPreference ?? "auto", request.generationId, request.now, request.cloudRunOverflowGenerations ?? 2],
   };
 };
 

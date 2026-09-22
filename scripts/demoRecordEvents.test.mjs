@@ -171,7 +171,7 @@ test("partial save failures and rejected mutations do not publish changes or lis
   const list = await (await fetch(`${baseUrl}/api/demo-records`)).json();
   assert.deepEqual(list.records, []);
   assert.equal((await jsonRequest(baseUrl, "/missing", "PATCH", { favorite: "invalid" })).status, 400);
-  assert.equal((await jsonRequest(baseUrl, "/missing", "PATCH", { favorite: true })).status, 500);
+  assert.equal((await jsonRequest(baseUrl, "/missing", "PATCH", { favorite: true })).status, 404);
   assert.equal((await jsonRequest(baseUrl, "/events", "DELETE")).status, 405);
   assert.deepEqual(client.changes(), []);
 });

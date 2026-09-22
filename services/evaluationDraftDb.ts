@@ -1,10 +1,7 @@
+import { openBrowserHistoryDatabase as openDatabase, requestResult, transactionDone, EVALUATION_DRAFTS_STORE, RECORDS_STORE, BROWSER_HISTORY_MAX_BYTES, evaluationDraftByteSize, type StoredEvaluationDraft } from "./browserHistoryStorage";
 import type { DrawingAnalysis, DrawingSubjectFeedbackChoice, EvaluationCentralConsent, EvaluationDraft, EvaluationSelection, EvaluationStructuredRatings, LyricsCandidate, Phase1ModelInfo } from "../types";
 
 export const EVALUATION_DRAFT_SCHEMA_VERSION = 1 as const;
-
-const DB_NAME = "cho-ekaki-uta-evaluation-drafts";
-const DB_VERSION = 1;
-const DRAFTS_STORE = "drafts";
 
 export class EvaluationDraftError extends Error {
   constructor(public readonly code: "unsupported" | "storage", message: string) {
@@ -12,42 +9,6 @@ export class EvaluationDraftError extends Error {
     this.name = "EvaluationDraftError";
   }
 }
-
-let databasePromise: Promise<IDBDatabase> | null = null;
-
-const requestResult = <T>(request: IDBRequest<T>) =>
-  new Promise<T>((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed"));
-  });
-
-const transactionDone = (transaction: IDBTransaction) =>
-  new Promise<void>((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
-    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed"));
-  });
-
-const openDatabase = () => {
-  if (databasePromise) return databasePromise;
-  if (typeof indexedDB === "undefined") {
-    return Promise.reject(new EvaluationDraftError("unsupported", "This browser cannot save evaluation drafts."));
-  }
-
-  databasePromise = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(DRAFTS_STORE)) {
-        const drafts = database.createObjectStore(DRAFTS_STORE, { keyPath: "generationId" });
-        drafts.createIndex("updatedAt", "updatedAt");
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("Failed to open IndexedDB"));
-  });
-  return databasePromise;
-};
 
 const asEvaluationDraftError = (error: unknown) =>
   error instanceof EvaluationDraftError ? error : new EvaluationDraftError("storage", "This browser could not save the evaluation draft.");
@@ -181,24 +142,46 @@ export const withEvaluationDraftSelection = (
   };
 };
 
-export const saveEvaluationDraft = async (draft: EvaluationDraft): Promise<void> => {
+/** Updates an already-saved draft; record creation is atomic in saveDebugHistoryRecord. */
+export const saveEvaluationDraft = async (draft: EvaluationDraft): Promise<boolean> =>
+  updateStoredDraft(draft.generationId, existing => existing.updatedAt > draft.updatedAt ? existing : draft);
+
+const updateStoredDraft = async (generationId: string, update: (draft: EvaluationDraft) => EvaluationDraft): Promise<boolean> => {
   try {
     const database = await openDatabase();
-    const transaction = database.transaction(DRAFTS_STORE, "readwrite");
-    transaction.objectStore(DRAFTS_STORE).put(draft);
+    const transaction = database.transaction([EVALUATION_DRAFTS_STORE, RECORDS_STORE], "readwrite");
+    const store = transaction.objectStore(EVALUATION_DRAFTS_STORE);
+    const drafts = await requestResult(store.getAll() as IDBRequest<StoredEvaluationDraft[]>);
+    const existing = drafts.find(entry => entry.generationId === generationId);
+    if (!existing) { await transactionDone(transaction); return false; }
+    const records = await requestResult(transaction.objectStore(RECORDS_STORE).getAll() as IDBRequest<{ recordId: string; byteSize: number }[]>);
+    const recordIds = existing.recordIds.filter(id => records.some(record => record.recordId === id));
+    if (!recordIds.length) {
+      store.delete(generationId);
+      await transactionDone(transaction);
+      return false;
+    }
+    const draft = update(existing.draft);
+    const byteSize = evaluationDraftByteSize(draft);
+    const storedBytes = records.reduce((total, record) => total + record.byteSize, 0)
+      + drafts.reduce((total, entry) => total + entry.byteSize, 0) - existing.byteSize + byteSize;
+    if (storedBytes > BROWSER_HISTORY_MAX_BYTES) {
+      transaction.abort();
+      throw new EvaluationDraftError("storage", "The saved records would exceed 100 MB.");
+    }
+    store.put({ ...existing, recordIds, draft, byteSize } satisfies StoredEvaluationDraft);
     await transactionDone(transaction);
-  } catch (error) {
-    throw asEvaluationDraftError(error);
-  }
+    return true;
+  } catch (error) { throw asEvaluationDraftError(error); }
 };
 
 export const getEvaluationDraft = async (generationId: string): Promise<EvaluationDraft | null> => {
   try {
     const database = await openDatabase();
-    const transaction = database.transaction(DRAFTS_STORE, "readonly");
-    const draft = await requestResult(transaction.objectStore(DRAFTS_STORE).get(generationId) as IDBRequest<EvaluationDraft | undefined>);
+    const transaction = database.transaction(EVALUATION_DRAFTS_STORE, "readonly");
+    const draft = await requestResult(transaction.objectStore(EVALUATION_DRAFTS_STORE).get(generationId) as IDBRequest<StoredEvaluationDraft | undefined>);
     await transactionDone(transaction);
-    return draft ?? null;
+    return draft?.draft ?? null;
   } catch (error) {
     throw asEvaluationDraftError(error);
   }
@@ -208,19 +191,7 @@ export const updateEvaluationDraftSelection = async (
   generationId: string,
   selection: EvaluationSelection,
   updatedAt: string,
-): Promise<boolean> => {
-  try {
-    const database = await openDatabase();
-    const transaction = database.transaction(DRAFTS_STORE, "readwrite");
-    const store = transaction.objectStore(DRAFTS_STORE);
-    const existing = await requestResult(store.get(generationId) as IDBRequest<EvaluationDraft | undefined>);
-    if (existing) store.put(withEvaluationDraftSelection(existing, selection, updatedAt));
-    await transactionDone(transaction);
-    return !!existing;
-  } catch (error) {
-    throw asEvaluationDraftError(error);
-  }
-};
+): Promise<boolean> => updateStoredDraft(generationId, draft => withEvaluationDraftSelection(draft, selection, updatedAt));
 
 export type EvaluationDraftStatePatch = {
   firstImpressionSelection?: EvaluationSelection;
@@ -260,18 +231,4 @@ export const updateEvaluationDraftState = async (
   generationId: string,
   patch: EvaluationDraftStatePatch,
   updatedAt: string,
-): Promise<boolean> => {
-  try {
-    const database = await openDatabase();
-    const transaction = database.transaction(DRAFTS_STORE, "readwrite");
-    const store = transaction.objectStore(DRAFTS_STORE);
-    const existing = await requestResult(store.get(generationId) as IDBRequest<EvaluationDraft | undefined>);
-    if (existing) {
-      store.put(withEvaluationDraftState(existing, patch, updatedAt));
-    }
-    await transactionDone(transaction);
-    return !!existing;
-  } catch (error) {
-    throw asEvaluationDraftError(error);
-  }
-};
+): Promise<boolean> => updateStoredDraft(generationId, draft => withEvaluationDraftState(draft, patch, updatedAt));

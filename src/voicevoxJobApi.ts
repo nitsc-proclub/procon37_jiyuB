@@ -35,27 +35,34 @@ export const handleVoicevoxJobApi = async (request: Request, env: VoicevoxJobApi
       const value = await body(request); const generationId = typeof value.generationId === "string" ? value.generationId : "";
       if (!await verify(request.headers.get("X-Voicevox-Capability"), generationId, env.EVALUATION_RECEIPT_SECRET, Date.now())) return json({ code: "invalid-capability" }, 403);
       if (!Array.isArray(value.candidates) || ![1, 2].includes(value.candidates.length) || typeof value.groupId !== "string") return json({ code: "invalid-job-request" }, 400);
+      const backendPreference = value.backendPreference === undefined ? "auto" : value.backendPreference;
+      if (backendPreference !== "auto" && backendPreference !== "vpc" && backendPreference !== "cloud-run") return json({ code: "invalid-job-request" }, 400);
       const candidates = await Promise.all(value.candidates.map(async (item) => {
         if (!item || typeof item !== "object") throw new Error("invalid"); const candidate = item as Record<string, unknown>;
         const score = parseSingingScore(candidate.score); const scoreJson = JSON.stringify(score); const rawCandidateId = candidate.candidateId;
         if ((rawCandidateId !== "candidate-a" && rawCandidateId !== "candidate-b") || typeof candidate.voiceGrant !== "string") throw new Error("invalid"); const candidateId: "candidate-a" | "candidate-b" = rawCandidateId;
         return { candidateId, jobId: `${generationId}:${candidateId}`, scoreJson, scoreHash: await hash(scoreJson), grantHash: await hash(candidate.voiceGrant) };
       }));
-      const now = Date.now(); const capabilityExpiry = Number(request.headers.get("X-Voicevox-Capability")?.split(".")[2]); const overflowGenerations = Number(env.CLOUD_RUN_OVERFLOW_GENERATIONS ?? "2"); const registered = await registerVoicevoxJobs(env.EVALUATIONS_DB, { groupId: value.groupId, generationId, candidates, now, expiresAt: capabilityExpiry, cloudRunOverflowGenerations: overflowGenerations });
+      const now = Date.now(); const capabilityExpiry = Number(request.headers.get("X-Voicevox-Capability")?.split(".")[2]); const overflowGenerations = Number(env.CLOUD_RUN_OVERFLOW_GENERATIONS ?? "2"); const registered = await registerVoicevoxJobs(env.EVALUATIONS_DB, { groupId: value.groupId, generationId, candidates, now, expiresAt: capabilityExpiry, cloudRunOverflowGenerations: overflowGenerations, backendPreference });
       // Registration is durable before delivery; the queue only accelerates the outbox pass.
       await Promise.all(registered.jobs.map(job => {
         if (job.backend !== "vpc" && job.backend !== "cloud-run") return Promise.reject(new Error("voice job backend is missing"));
         return env.VOICEVOX_JOB_QUEUES[job.backend].send({ schemaVersion: 1, jobId: job.jobId, generationId, candidateId: job.candidateId });
       })).catch(() => undefined);
-      return json({ groupId: registered.group.groupId, jobs: registered.jobs.map(job => ({ jobId: job.jobId, candidateId: job.candidateId, status: job.status })), duplicate: !registered.created }, 202);
+      return json({ groupId: registered.group.groupId, jobs: registered.jobs.map(job => ({ jobId: job.jobId, candidateId: job.candidateId, status: job.status, backend: job.backend })), duplicate: !registered.created }, 202);
     }
     const rawJobId = suffix.match(/^\/([^/]+)(?:\/(audio|cancel))?$/)?.[1]; const jobId = rawJobId ? decodeURIComponent(rawJobId) : undefined; const action = suffix.match(/^\/[^/]+(?:\/(audio|cancel))?$/)?.[1];
     if (!jobId) return json({ code: "not-found" }, 404);
-    const rows = await env.EVALUATIONS_DB.prepare("SELECT job_id, generation_id, status, result_ref, expires_at FROM voicevox_jobs WHERE job_id = ?").bind(jobId).all<{ job_id: string; generation_id: string; status: string; result_ref: string | null; expires_at: number }>(); const job = rows.results[0];
+    const rows = await env.EVALUATIONS_DB.prepare("SELECT job_id, generation_id, status, backend, result_ref, expires_at FROM voicevox_jobs WHERE job_id = ?").bind(jobId).all<{ job_id: string; generation_id: string; status: string; backend: "vpc" | "cloud-run" | null; result_ref: string | null; expires_at: number }>(); const job = rows.results[0];
     if (!job || !await verify(request.headers.get("X-Voicevox-Capability"), job.generation_id, env.EVALUATION_RECEIPT_SECRET, Date.now())) return json({ code: "not-found" }, 404);
-    if (action === "audio" && request.method === "GET") return job.status === "succeeded" && job.result_ref ? readTemporaryVoicevoxWav(env.TEMPORARY_AUDIO, job.result_ref) : json({ code: "audio-not-ready" }, 409);
+    if (action === "audio" && request.method === "GET") {
+      if (job.status !== "succeeded" || !job.result_ref) return json({ code: "audio-not-ready" }, 409);
+      const audio = await readTemporaryVoicevoxWav(env.TEMPORARY_AUDIO, job.result_ref);
+      if (job.backend) audio.headers.set("X-Voicevox-Backend", job.backend);
+      return audio;
+    }
     if (action === "cancel" && request.method === "POST") { const cancelled = await cancelVoicevoxJob(env.EVALUATIONS_DB, { jobId, now: Date.now() }); return json({ status: cancelled.job?.status }, 202); }
-    if (!action && request.method === "GET") return json({ jobId: job.job_id, status: job.status, audioReady: job.status === "succeeded" && !!job.result_ref, expiresAt: job.expires_at });
+    if (!action && request.method === "GET") return json({ jobId: job.job_id, status: job.status, backend: job.backend, audioReady: job.status === "succeeded" && !!job.result_ref, expiresAt: job.expires_at });
     return json({ code: "method-not-allowed" }, 405);
   } catch { return json({ code: "voice-job-failed" }, 400); }
 };

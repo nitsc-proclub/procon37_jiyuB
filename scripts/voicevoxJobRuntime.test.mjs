@@ -52,14 +52,15 @@ test("Workers runtime: D1 registration -> actual DO lease -> mock VPC -> private
  const register=()=>mf.dispatchFetch("https://app.test/api/voicevox/jobs/register",{method:"POST",headers,body:JSON.stringify(seed)});
  const first=await register();assert.equal(first.status,202,await first.clone().text());
  const registered=await first.json(); const replay=await register();assert.equal(replay.status,202);assert.equal((await replay.json()).duplicate,true);
+ assert.deepEqual(registered.jobs.map(job=>job.backend),["vpc","vpc"]);
  for(const job of registered.jobs){
   const message={schemaVersion:1,jobId:job.jobId,generationId:seed.generationId,candidateId:job.candidateId};
   const consume=()=>mf.dispatchFetch(`https://app.test/consume${job===registered.jobs[0]?"?service=1":""}`,{method:"POST",body:JSON.stringify(message)});
   assert.deepEqual(await (await consume()).json(),{outcome:"ack",calls:2});
   assert.deepEqual(await (await consume()).json(),{outcome:"ack",calls:0});
   const url=`https://app.test/api/voicevox/jobs/${encodeURIComponent(job.jobId)}`;
-  const state=await (await mf.dispatchFetch(url,{headers:{"X-Voicevox-Capability":seed.capability}})).json();assert.equal(state.status,"succeeded");
-  const audio=await mf.dispatchFetch(url+"/audio",{headers:{"X-Voicevox-Capability":seed.capability}});assert.equal(audio.status,200);assert.equal(audio.headers.get("Cache-Control"),"private, no-store");assert.deepEqual(new Uint8Array(await audio.arrayBuffer()),wav);
+  const state=await (await mf.dispatchFetch(url,{headers:{"X-Voicevox-Capability":seed.capability}})).json();assert.equal(state.status,"succeeded");assert.equal(state.backend,"vpc");
+  const audio=await mf.dispatchFetch(url+"/audio",{headers:{"X-Voicevox-Capability":seed.capability}});assert.equal(audio.status,200);assert.equal(audio.headers.get("Cache-Control"),"private, no-store");assert.equal(audio.headers.get("X-Voicevox-Backend"),"vpc");assert.deepEqual(new Uint8Array(await audio.arrayBuffer()),wav);
   assert.equal((await mf.dispatchFetch(url+"/audio")).status,404);
  }
  const denied=await mf.dispatchFetch("https://app.test/api/voicevox/jobs/register",{method:"POST",headers:{"Content-Type":"application/json","X-Voicevox-Capability":seed.capability},body:JSON.stringify(seed)});assert.equal(denied.status,403);
@@ -78,6 +79,17 @@ test("Workers runtime: D1 registration -> actual DO lease -> mock VPC -> private
  // first two remain VPC and the third is atomically fixed to Cloud Run. The
  // captured producer messages prove backend-specific dispatch before consume.
  const overflow=[];
- for(let i=0;i<3;i++){const entry=await (await mf.dispatchFetch("https://app.test/seed")).json();const response=await mf.dispatchFetch("https://app.test/api/voicevox/jobs/register",{method:"POST",headers:{Origin:"https://app.test","Content-Type":"application/json","X-Voicevox-Capability":entry.capability},body:JSON.stringify(entry)});assert.equal(response.status,202);overflow.push(entry.generationId);}
+ for(let i=0;i<3;i++){const entry=await (await mf.dispatchFetch("https://app.test/seed")).json();const response=await mf.dispatchFetch("https://app.test/api/voicevox/jobs/register",{method:"POST",headers:{Origin:"https://app.test","Content-Type":"application/json","X-Voicevox-Capability":entry.capability},body:JSON.stringify(entry)});assert.equal(response.status,202);const jobs=(await response.json()).jobs;assert.deepEqual(jobs.map(job=>job.backend),Array(2).fill(i===2?"cloud-run":"vpc"));for(const job of jobs){const status=await (await mf.dispatchFetch(`https://app.test/api/voicevox/jobs/${encodeURIComponent(job.jobId)}`,{headers:{"X-Voicevox-Capability":entry.capability}})).json();assert.equal(status.backend,job.backend);}overflow.push(entry.generationId);}
  const routed=await (await mf.dispatchFetch("https://app.test/routes")).json();const selected=Object.fromEntries(routed.groups.filter(g=>overflow.includes(g.generation_id)).map(g=>[g.generation_id,g.preferred_backend]));assert.deepEqual(selected,{[overflow[0]]:"vpc",[overflow[1]]:"vpc",[overflow[2]]:"cloud-run"});assert.deepEqual(routed.sent.filter(m=>overflow.includes(m.generationId)).map(m=>m.backend),["vpc","vpc","vpc","vpc","cloud-run","cloud-run"]);
+ // An explicit VPC choice keeps the bounded VPC queue even while automatic
+ // requests are overflowing. Status and delivered audio agree with that choice.
+ const pinned=await (await mf.dispatchFetch("https://app.test/seed")).json();
+ const pinnedHeaders={Origin:"https://app.test","Content-Type":"application/json","X-Voicevox-Capability":pinned.capability};
+ const pinnedResponse=await mf.dispatchFetch("https://app.test/api/voicevox/jobs/register",{method:"POST",headers:pinnedHeaders,body:JSON.stringify({...pinned,backendPreference:"vpc"})});
+ assert.equal(pinnedResponse.status,202);
+ const pinnedJobs=(await pinnedResponse.json()).jobs;assert.deepEqual(pinnedJobs.map(job=>job.backend),["vpc","vpc"]);
+ const pinnedJob=pinnedJobs[0];
+ assert.deepEqual(await (await mf.dispatchFetch("https://app.test/consume",{method:"POST",body:JSON.stringify({schemaVersion:1,jobId:pinnedJob.jobId,generationId:pinned.generationId,candidateId:pinnedJob.candidateId})})).json(),{outcome:"ack",calls:2});
+ const pinnedAudio=await mf.dispatchFetch(`https://app.test/api/voicevox/jobs/${encodeURIComponent(pinnedJob.jobId)}/audio`,{headers:pinnedHeaders});
+ assert.equal(pinnedAudio.headers.get("X-Voicevox-Backend"),"vpc");assert.deepEqual(new Uint8Array(await pinnedAudio.arrayBuffer()),wav);
 });

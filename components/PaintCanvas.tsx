@@ -9,6 +9,16 @@ export type DrawingMetrics = {
   drawingDurationMs: number;
 };
 
+/** Kept by App so changing views preserves both the draft and its undo history. */
+export type PaintCanvasDraft = {
+  source: DrawingData | null;
+  strokes: Stroke[];
+  undoneStrokes: Stroke[];
+  baseImage: HTMLImageElement | null;
+  useBaseImage: boolean;
+  pendingImage: boolean;
+};
+
 interface PaintCanvasProps {
   onComplete: (data: DrawingData) => void;
   onClear: () => void;
@@ -29,6 +39,7 @@ interface PaintCanvasProps {
   generationDisabledRetryLabel?: string;
   generationSecurityCheck?: React.ReactNode;
   initialDrawing?: DrawingData | null;
+  draftRef?: React.RefObject<PaintCanvasDraft | null>;
   playbackDrawing?: DrawingData | null;
   playbackAudioRef?: React.RefObject<HTMLAudioElement | null>;
   playbackDisplayMode?: DrawingDisplayMode;
@@ -94,6 +105,7 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   generationDisabledRetryLabel = "もう一度確認する",
   generationSecurityCheck,
   initialDrawing,
+  draftRef,
   playbackDrawing,
   playbackAudioRef,
   playbackDisplayMode = "animated",
@@ -122,11 +134,13 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const generationButtonRef = useRef<HTMLButtonElement>(null);
   const wasInteractionBlockedRef = useRef(false);
   const strokesRef = useRef<Stroke[]>([]);
+  const undoneStrokesRef = useRef<Stroke[]>([]);
   const currentStrokeRef = useRef<Point[]>([]);
   const activePointerIdRef = useRef<number | null>(null);
   const lineWidthRef = useRef(6);
   const wasFocusedRef = useRef(false);
   const imageLoadIdRef = useRef(0);
+  const pendingImageRef = useRef(false);
   const baseImageRef = useRef<HTMLImageElement | null>(null);
   const shouldUseBaseImageRef = useRef(false);
   const resetRequestKeyRef = useRef(resetRequestKey);
@@ -185,10 +199,28 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
     });
   };
 
+  const rememberDraft = () => {
+    if (draftRef) draftRef.current = {
+      source: initialDrawing ?? null,
+      strokes: strokesRef.current,
+      undoneStrokes: undoneStrokesRef.current,
+      baseImage: baseImageRef.current,
+      useBaseImage: shouldUseBaseImageRef.current,
+      pendingImage: pendingImageRef.current,
+    };
+  };
+
+  const updateUndoneStrokes = (nextStrokes: Stroke[]) => {
+    undoneStrokesRef.current = nextStrokes;
+    setUndoneStrokes(nextStrokes);
+    rememberDraft();
+  };
+
   const commitStrokes = (nextStrokes: Stroke[]) => {
     strokesRef.current = nextStrokes;
     setStrokes(nextStrokes);
     redrawStrokes(nextStrokes);
+    rememberDraft();
   };
 
   useEffect(() => {
@@ -207,35 +239,58 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
 
   useEffect(() => {
     const loadId = ++imageLoadIdRef.current;
+    const draft = draftRef?.current;
+    if (draft && draft.source === (initialDrawing ?? null) && !draft.pendingImage) {
+      pendingImageRef.current = false;
+      baseImageRef.current = draft.baseImage;
+      shouldUseBaseImageRef.current = draft.useBaseImage;
+      commitStrokes(draft.strokes);
+      updateUndoneStrokes(draft.undoneStrokes);
+      return;
+    }
     if (!initialDrawing) {
+      pendingImageRef.current = false;
       baseImageRef.current = null;
       shouldUseBaseImageRef.current = false;
       commitStrokes([]);
-      setUndoneStrokes([]);
+      updateUndoneStrokes([]);
       return;
     }
+
+    // Current records already describe their coordinates. Restore strokes now,
+    // so an asynchronous image decode cannot erase a stroke drawn meanwhile.
+    const sourceSize = initialDrawing.canvasSize ?? inferLegacySourceSize(initialDrawing.strokes ?? []);
+    baseImageRef.current = null;
+    shouldUseBaseImageRef.current = false;
+    const initialStrokes = scaleStrokes(initialDrawing.strokes ?? [], sourceSize.width, sourceSize.height);
+    pendingImageRef.current = !(initialStrokes.length > 0 && initialDrawing.canvasSize);
+    commitStrokes(initialStrokes);
+    updateUndoneStrokes([]);
+    setIsClearConfirmOpen(false);
+    if (initialStrokes.length > 0 && initialDrawing.canvasSize) return;
 
     const image = new Image();
     image.onload = () => {
       if (loadId !== imageLoadIdRef.current) return;
+      // An edit (including undo) supersedes the original image load.
+      if (strokesRef.current !== initialStrokes || currentStrokeRef.current.length > 0) return;
       const sourceSize = initialDrawing.canvasSize ?? {
         width: Math.max(1, image.naturalWidth),
         height: Math.max(1, image.naturalHeight),
       };
       const normalized = scaleStrokes(initialDrawing.strokes ?? [], sourceSize.width, sourceSize.height);
+      pendingImageRef.current = false;
       baseImageRef.current = image;
       shouldUseBaseImageRef.current = normalized.length === 0;
       commitStrokes(normalized);
-      setUndoneStrokes([]);
+      updateUndoneStrokes([]);
       setIsClearConfirmOpen(false);
     };
     image.onerror = () => {
       if (loadId !== imageLoadIdRef.current) return;
-      const inferred = initialDrawing.canvasSize ?? inferLegacySourceSize(initialDrawing.strokes ?? []);
-      baseImageRef.current = null;
-      shouldUseBaseImageRef.current = false;
-      commitStrokes(scaleStrokes(initialDrawing.strokes ?? [], inferred.width, inferred.height));
-      setUndoneStrokes([]);
+      // The vector draft is already usable even when its preview image fails.
+      pendingImageRef.current = false;
+      rememberDraft();
     };
     image.src = initialDrawing.imageUri;
 
@@ -304,12 +359,13 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const startDrawing = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (isCanvasLocked || event.button !== 0 || activePointerIdRef.current !== null) return;
     onEditStart?.();
+    pendingImageRef.current = false;
     event.preventDefault();
     shouldUseBaseImageRef.current = false;
     activePointerIdRef.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
     currentStrokeRef.current = [getCoordinates(event)];
-    setUndoneStrokes([]);
+    updateUndoneStrokes([]);
     setIsDrawing(true);
   };
 
@@ -356,10 +412,11 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   };
 
   const clearCanvas = () => {
+    pendingImageRef.current = false;
     shouldUseBaseImageRef.current = false;
     baseImageRef.current = null;
     commitStrokes([]);
-    setUndoneStrokes([]);
+    updateUndoneStrokes([]);
     setIsClearConfirmOpen(false);
     onClear();
   };
@@ -379,18 +436,20 @@ const PaintCanvas: React.FC<PaintCanvasProps> = ({
   const handleUndo = () => {
     if (isCanvasLocked || strokesRef.current.length === 0) return;
     onEditStart?.();
+    pendingImageRef.current = false;
     shouldUseBaseImageRef.current = false;
     const undone = strokesRef.current.at(-1)!;
     commitStrokes(strokesRef.current.slice(0, -1));
-    setUndoneStrokes((current) => [undone, ...current]);
+    updateUndoneStrokes([undone, ...undoneStrokesRef.current]);
   };
 
   const handleRedo = () => {
     if (isCanvasLocked || undoneStrokes.length === 0) return;
     onEditStart?.();
+    pendingImageRef.current = false;
     shouldUseBaseImageRef.current = false;
     commitStrokes([...strokesRef.current, undoneStrokes[0]]);
-    setUndoneStrokes((current) => current.slice(1));
+    updateUndoneStrokes(undoneStrokesRef.current.slice(1));
   };
 
   const handleGenerate = () => {

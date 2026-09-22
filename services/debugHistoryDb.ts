@@ -1,18 +1,13 @@
+import { openBrowserHistoryDatabase as openDatabase, requestResult, transactionDone, RECORDS_STORE, ASSETS_STORE, IMAGES_STORE, GENERATIONS_STORE, EVALUATION_DRAFTS_STORE, BROWSER_HISTORY_MAX_BYTES, evaluationDraftByteSize, type StoredEvaluationDraft } from "./browserHistoryStorage";
 import { DebugBundleArtifacts } from "./debugBundleService";
-import { DebugBundleManifest, UsageStats } from "../types";
+import { DebugBundleManifest, EvaluationDraft, UsageStats } from "../types";
 import { notifyBrowserRecordsChanged } from "./browserRecordEvents";
 
 export const DEBUG_HISTORY_MAX_RECORDS = 50;
-export const DEBUG_HISTORY_MAX_BYTES = 100 * 1024 * 1024;
+export const DEBUG_HISTORY_MAX_BYTES = BROWSER_HISTORY_MAX_BYTES;
 
-const DB_NAME = "cho-ekaki-uta-debug-history";
-const DB_VERSION = 3;
-const RECORDS_STORE = "records";
-const ASSETS_STORE = "assets";
-const IMAGES_STORE = "images";
-const GENERATIONS_STORE = "generations";
-type BrowserGeneration = { recordId: string; date: string; recorded: boolean };
 const japanDate = (iso: string) => new Date(iso).toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+type BrowserGeneration = { recordId: string; date: string; recorded: boolean };
 
 type StoredDebugHistoryRecord = {
   recordId: string;
@@ -55,84 +50,7 @@ export class DebugHistoryError extends Error {
   }
 }
 
-let databasePromise: Promise<IDBDatabase> | null = null;
 const textEncoder = new TextEncoder();
-
-const requestResult = <T>(request: IDBRequest<T>) =>
-  new Promise<T>((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed"));
-  });
-
-const transactionDone = (transaction: IDBTransaction) =>
-  new Promise<void>((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
-    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed"));
-  });
-
-const openDatabase = () => {
-  if (databasePromise) return databasePromise;
-  if (typeof indexedDB === "undefined") {
-    return Promise.reject(new DebugHistoryError("unsupported", "This browser cannot save debug history."));
-  }
-
-  databasePromise = new Promise<IDBDatabase>((resolve, reject) => {
-    let blocked = false;
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(RECORDS_STORE)) {
-        const records = database.createObjectStore(RECORDS_STORE, { keyPath: "recordId" });
-        records.createIndex("createdAt", "createdAt");
-      }
-      if (!database.objectStoreNames.contains(ASSETS_STORE)) {
-        database.createObjectStore(ASSETS_STORE, { keyPath: "recordId" });
-      }
-      if (!database.objectStoreNames.contains(IMAGES_STORE)) {
-        const images = database.createObjectStore(IMAGES_STORE, { keyPath: "recordId" });
-        // Split existing assets once, atomically. Gallery refreshes then read
-        // images independently without cloning every saved audio Blob.
-        const cursor = request.transaction!.objectStore(ASSETS_STORE).openCursor();
-        cursor.onsuccess = () => {
-          const current = cursor.result;
-          if (!current) return;
-          const asset = current.value as StoredDebugHistoryAssets & { imageBlob?: Blob };
-          if (asset.imageBlob instanceof Blob) images.put({ recordId: asset.recordId, imageBlob: asset.imageBlob,
-            hasVoice: asset.voiceAudioBlob instanceof Blob && asset.voiceAudioBlob.size > 0 } satisfies StoredDebugHistoryImage);
-          current.update({ recordId: asset.recordId, voiceAudioBlob: asset.voiceAudioBlob } satisfies StoredDebugHistoryAssets);
-          current.continue();
-        };
-      }
-      if (!database.objectStoreNames.contains(GENERATIONS_STORE)) {
-        const generations = database.createObjectStore(GENERATIONS_STORE, { keyPath: "recordId" });
-        // Older public builds only retained saved records. Recover those once;
-        // unknown unsaved generations cannot be reconstructed.
-        const cursor = request.transaction!.objectStore(RECORDS_STORE).openCursor();
-        cursor.onsuccess = () => {
-          const current = cursor.result;
-          if (!current) return;
-          const record = current.value as StoredDebugHistoryRecord;
-          const startedAt = record.manifest?.generation?.startedAt;
-          if (startedAt && Number.isFinite(Date.parse(startedAt))) {
-            generations.put({ recordId: record.recordId, date: japanDate(startedAt), recorded: true } satisfies BrowserGeneration);
-          }
-          current.continue();
-        };
-      }
-    };
-    request.onsuccess = () => {
-      const database = request.result;
-      if (blocked) { database.close(); return; }
-      database.onversionchange = () => { database.close(); databasePromise = null; };
-      resolve(database);
-    };
-    request.onblocked = () => { blocked = true; databasePromise = null; reject(new Error("ほかのタブで開いているアプリを更新してから、もう一度お試しください。")); };
-    request.onerror = () => { databasePromise = null; reject(request.error ?? new Error("Failed to open IndexedDB")); };
-  });
-
-  return databasePromise;
-};
 
 const getSummary = (record: StoredDebugHistoryRecord): DebugHistoryRecordSummary => ({
   ...record,
@@ -195,29 +113,47 @@ export const isDebugHistoryError = (value: unknown, code?: DebugHistoryErrorCode
  * Callers must pass artifacts created by buildDebugBundleArtifacts. The
  * manifest/audio pair is checked again here before either Blob is persisted.
  */
-export const saveDebugHistoryRecord = async (artifacts: DebugBundleArtifacts): Promise<DebugHistoryRecordSummary> => {
+export const saveDebugHistoryRecord = async (
+  artifacts: DebugBundleArtifacts,
+  { evaluationDraft = null, onlyIfExisting = false }: { evaluationDraft?: EvaluationDraft | null; onlyIfExisting?: boolean } = {},
+): Promise<DebugHistoryRecordSummary | null> => {
   if ((artifacts.manifest.audio !== null) !== (artifacts.voiceAudioBlob !== null)) {
     throw new DebugHistoryError("corrupt", "Voice metadata and audio do not match.");
   }
 
   const byteSize = getArtifactByteSize(artifacts);
-  if (byteSize > DEBUG_HISTORY_MAX_BYTES) {
+  const requestedByteSize = byteSize + (evaluationDraft ? evaluationDraftByteSize(evaluationDraft) : 0);
+  if (requestedByteSize > DEBUG_HISTORY_MAX_BYTES) {
     throw new DebugHistoryError("size-limit", "This record is larger than the debug history limit.");
   }
 
   const estimate = await getStorageEstimate();
-  if (estimate.usage !== null && estimate.quota !== null && estimate.quota - estimate.usage < byteSize) {
+  if (estimate.usage !== null && estimate.quota !== null && estimate.quota - estimate.usage < requestedByteSize) {
     throw new DebugHistoryError("origin-quota", "This browser does not have enough free storage.");
   }
 
   try {
     const database = await openDatabase();
-    const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, IMAGES_STORE, GENERATIONS_STORE], "readwrite");
+    const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, IMAGES_STORE, GENERATIONS_STORE, EVALUATION_DRAFTS_STORE], "readwrite");
     const recordsStore = transaction.objectStore(RECORDS_STORE);
     const records = await requestResult(recordsStore.getAll() as IDBRequest<StoredDebugHistoryRecord[]>);
     const generations = transaction.objectStore(GENERATIONS_STORE);
     const generation = await requestResult(generations.get(artifacts.manifest.recordId) as IDBRequest<BrowserGeneration | undefined>);
     const replacing = records.find((record) => record.recordId === artifacts.manifest.recordId);
+    // A voice request finishing after deletion must never recreate the record.
+    if (onlyIfExisting && !replacing) {
+      await transactionDone(transaction);
+      return null;
+    }
+    const draftsStore = transaction.objectStore(EVALUATION_DRAFTS_STORE);
+    const drafts = await requestResult(draftsStore.getAll() as IDBRequest<StoredEvaluationDraft[]>);
+    const existingDraft = evaluationDraft ? drafts.find(entry => entry.generationId === evaluationDraft.generationId) : undefined;
+    // Async audio completion carries a consent-time snapshot, which may be
+    // older than ratings/preferences already saved by the participant.
+    const draftToSave = existingDraft && (onlyIfExisting || existingDraft.draft.updatedAt >= (evaluationDraft?.updatedAt ?? ""))
+      ? existingDraft.draft : evaluationDraft;
+    const draftBytes = drafts.reduce((total, entry) => total + entry.byteSize, 0)
+      - (existingDraft?.byteSize ?? 0) + (draftToSave ? evaluationDraftByteSize(draftToSave) : 0);
     const remainingRecords = replacing ? records.filter((record) => record.recordId !== replacing.recordId) : records;
     const storedBytes = remainingRecords.reduce((total, record) => total + record.byteSize, 0);
 
@@ -225,7 +161,7 @@ export const saveDebugHistoryRecord = async (artifacts: DebugBundleArtifacts): P
       transaction.abort();
       throw new DebugHistoryError("record-limit", "The debug history already contains 50 records.");
     }
-    if (storedBytes + byteSize > DEBUG_HISTORY_MAX_BYTES) {
+    if (storedBytes + byteSize + draftBytes > DEBUG_HISTORY_MAX_BYTES) {
       transaction.abort();
       throw new DebugHistoryError("size-limit", "The debug history would exceed 100 MB.");
     }
@@ -237,14 +173,24 @@ export const saveDebugHistoryRecord = async (artifacts: DebugBundleArtifacts): P
       byteSize,
       isFavorite: replacing?.isFavorite === true,
     };
-    recordsStore.put(storedRecord);
-    if (generation) generations.put({ ...generation, recorded: true });
-    transaction.objectStore(ASSETS_STORE).put({
-      recordId: artifacts.manifest.recordId,
-      voiceAudioBlob: artifacts.voiceAudioBlob,
-    } satisfies StoredDebugHistoryAssets);
-    transaction.objectStore(IMAGES_STORE).put({ recordId: artifacts.manifest.recordId, imageBlob: artifacts.imageBlob,
-      hasVoice: artifacts.voiceAudioBlob !== null && artifacts.voiceAudioBlob.size > 0 } satisfies StoredDebugHistoryImage);
+    try {
+      recordsStore.put(storedRecord);
+      if (draftToSave) draftsStore.put({ generationId: draftToSave.generationId, draft: draftToSave,
+        recordIds: [...new Set([...(existingDraft?.recordIds ?? []), storedRecord.recordId])],
+        byteSize: evaluationDraftByteSize(draftToSave) } satisfies StoredEvaluationDraft);
+      if (generation) generations.put({ ...generation, recorded: true });
+      transaction.objectStore(ASSETS_STORE).put({
+        recordId: artifacts.manifest.recordId,
+        voiceAudioBlob: artifacts.voiceAudioBlob,
+      } satisfies StoredDebugHistoryAssets);
+      transaction.objectStore(IMAGES_STORE).put({ recordId: artifacts.manifest.recordId, imageBlob: artifacts.imageBlob,
+        hasVoice: artifacts.voiceAudioBlob !== null && artifacts.voiceAudioBlob.size > 0 } satisfies StoredDebugHistoryImage);
+    } catch (error) {
+      // Synchronous quota/clone failures must also roll back writes already
+      // queued in this transaction, including the associated draft.
+      transaction.abort();
+      throw error;
+    }
     await transactionDone(transaction);
     notifyBrowserRecordsChanged();
     return getSummary(storedRecord);
@@ -323,7 +269,15 @@ export const getDebugHistoryRecord = async (recordId: string): Promise<DebugHist
 
 export const deleteDebugHistoryRecord = async (recordId: string) => {
   const database = await openDatabase();
-  const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, IMAGES_STORE], "readwrite");
+  const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, IMAGES_STORE, EVALUATION_DRAFTS_STORE], "readwrite");
+  const drafts = transaction.objectStore(EVALUATION_DRAFTS_STORE);
+  const savedDrafts = await requestResult(drafts.getAll() as IDBRequest<StoredEvaluationDraft[]>);
+  for (const saved of savedDrafts) {
+    if (!saved.recordIds.includes(recordId)) continue;
+    const recordIds = saved.recordIds.filter(id => id !== recordId);
+    if (recordIds.length) drafts.put({ ...saved, recordIds });
+    else drafts.delete(saved.generationId);
+  }
   transaction.objectStore(RECORDS_STORE).delete(recordId);
   transaction.objectStore(ASSETS_STORE).delete(recordId);
   transaction.objectStore(IMAGES_STORE).delete(recordId);
@@ -333,10 +287,11 @@ export const deleteDebugHistoryRecord = async (recordId: string) => {
 
 export const clearDebugHistoryRecords = async () => {
   const database = await openDatabase();
-  const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, IMAGES_STORE], "readwrite");
+  const transaction = database.transaction([RECORDS_STORE, ASSETS_STORE, IMAGES_STORE, EVALUATION_DRAFTS_STORE], "readwrite");
   transaction.objectStore(RECORDS_STORE).clear();
   transaction.objectStore(ASSETS_STORE).clear();
   transaction.objectStore(IMAGES_STORE).clear();
+  transaction.objectStore(EVALUATION_DRAFTS_STORE).clear();
   await transactionDone(transaction);
   notifyBrowserRecordsChanged();
 };
@@ -381,9 +336,13 @@ export const getBrowserUsageStats = async (): Promise<UsageStats> => {
 
 export const getDebugHistoryStats = async (): Promise<DebugHistoryStats> => {
   const [records, estimate] = await Promise.all([listDebugHistoryRecords(), getStorageEstimate()]);
+  const database = await openDatabase();
+  const transaction = database.transaction(EVALUATION_DRAFTS_STORE, "readonly");
+  const drafts = await requestResult(transaction.objectStore(EVALUATION_DRAFTS_STORE).getAll() as IDBRequest<StoredEvaluationDraft[]>);
+  await transactionDone(transaction);
   return {
     count: records.length,
-    storedBytes: records.reduce((total, record) => total + record.byteSize, 0),
+    storedBytes: records.reduce((total, record) => total + record.byteSize, 0) + drafts.reduce((total, draft) => total + draft.byteSize, 0),
     originUsageBytes: estimate.usage,
     originQuotaBytes: estimate.quota,
   };

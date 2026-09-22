@@ -178,6 +178,45 @@ test("the third overlapping generation is fixed to cloud-run, while the first tw
   assert.deepEqual(result.jobs.map((job) => job.backend), ["cloud-run", "cloud-run"]);
 });
 
+for (const candidateCount of [1, 2]) test(`explicit backend choice stays fixed under overflow (${candidateCount} candidates)`, async () => {
+  const database = await createDatabase();
+  for (let index = 0; index < 2; index += 1) {
+    const active = fixture(); insertGrants(database, active);
+    await repository.registerVoicevoxJobs(database, active.request);
+  }
+  const entry = fixture(); insertGrants(database, entry);
+  const request = { ...entry.request, candidates: entry.candidates.slice(0, candidateCount), backendPreference: "vpc" };
+  const registered = await repository.registerVoicevoxJobs(database, request);
+  assert.equal(registered.group.preferredBackend, "vpc");
+  assert.deepEqual(registered.jobs.map(job => job.backend), Array(candidateCount).fill("vpc"));
+  assert.equal((await repository.registerVoicevoxJobs(database, request)).created, false);
+  // Old clients that omit the preference must not move an existing job either.
+  assert.equal((await repository.registerVoicevoxJobs(database, { ...request, backendPreference: undefined })).group.preferredBackend, "vpc");
+  await assert.rejects(repository.registerVoicevoxJobs(database, { ...request, backendPreference: "cloud-run" }), error => error.code === "idempotency-conflict");
+  assert.deepEqual(database.rows("SELECT backend FROM voicevox_jobs WHERE generation_id = ?", request.generationId).map(job => job.backend), Array(candidateCount).fill("vpc"));
+});
+
+test("explicit Cloud Run works without overflow and auto retries preserve that route", async () => {
+  const database = await createDatabase();
+  const entry = fixture(); insertGrants(database, entry);
+  const request = { ...entry.request, backendPreference: "cloud-run" };
+  const registered = await repository.registerVoicevoxJobs(database, request);
+  assert.equal(registered.group.preferredBackend, "cloud-run");
+  assert.deepEqual(registered.jobs.map(job => job.backend), ["cloud-run", "cloud-run"]);
+  assert.equal((await repository.registerVoicevoxJobs(database, { ...request, backendPreference: "auto" })).group.preferredBackend, "cloud-run");
+  await assert.rejects(repository.registerVoicevoxJobs(database, { ...request, backendPreference: "vpc" }), error => error.code === "idempotency-conflict");
+});
+
+test("invalid backend preferences are rejected without consuming grants", async () => {
+  const database = await createDatabase();
+  const entry = fixture(); insertGrants(database, entry);
+  for (const backendPreference of [null, "", "local", "cloudflare-vpc", 123, {}]) {
+    await assert.rejects(repository.registerVoicevoxJobs(database, { ...entry.request, backendPreference }), error => error.code === "invalid-input");
+  }
+  assert.equal(database.rows("SELECT * FROM voicevox_job_groups").length, 0);
+  assert.equal(database.rows("SELECT * FROM voicevox_grants WHERE consumed_at IS NOT NULL").length, 0);
+});
+
 test("an expired or not-yet-issued grant cannot create a partial group or consume either grant", async () => {
   const database = await createDatabase();
   const entry = fixture();

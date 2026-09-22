@@ -291,7 +291,10 @@ const validateManifest = (value: unknown): DebugBundleManifest => {
   if (value.lyrics !== null) {
     if (!isObject(value.lyrics)) importError("lyrics が不正です。");
     const lyricKeys = Object.keys(value.lyrics);
-    if (lyricKeys.some((key) => !["title", "lines", "singingKanaLines", "identifiedObject", "lineStrokeMappings", "modelName"].includes(key))) importError("lyrics に未対応の項目があります。");
+    if (lyricKeys.some((key) => !["title", "lines", "singingKanaLines", "identifiedObject", "lineStrokeMappings", "modelName", "candidateId"].includes(key))) importError("lyrics に未対応の項目があります。");
+    if (value.lyrics.candidateId !== undefined && value.lyrics.candidateId !== "candidate-a" && value.lyrics.candidateId !== "candidate-b") {
+      importError("lyrics.candidateId が不正です。");
+    }
     assertString(value.lyrics.title, "lyrics.title", 500);
     assertString(value.lyrics.identifiedObject, "lyrics.identifiedObject", 500);
     if (!Array.isArray(value.lyrics.lines) || value.lyrics.lines.length > 100) importError("lyrics.lines が不正です。");

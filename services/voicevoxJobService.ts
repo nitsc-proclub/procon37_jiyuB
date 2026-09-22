@@ -1,6 +1,10 @@
 export type VoicevoxJobCapability = string;
+export type VoicevoxJobBackend = "vpc" | "cloud-run";
+export type VoicevoxJobBackendPreference = "auto" | VoicevoxJobBackend;
 export type VoicevoxJobCandidate = { candidateId: "candidate-a" | "candidate-b"; voiceGrant: string; score: unknown };
-export type VoicevoxJobRegistration = { groupId: string; jobs: readonly { jobId: string; candidateId: "candidate-a" | "candidate-b"; status: string }[]; duplicate: boolean };
+export type VoicevoxJobRegistration = { groupId: string; jobs: readonly { jobId: string; candidateId: "candidate-a" | "candidate-b"; status: string; backend: VoicevoxJobBackend | null }[]; duplicate: boolean };
+export type VoicevoxJobStatusResponse = { jobId: string; status: string; backend: VoicevoxJobBackend | null; audioReady: boolean; expiresAt: number };
+const normalizeBackend = (backend: unknown): VoicevoxJobBackend | null => backend === "vpc" || backend === "cloud-run" ? backend : null;
 const json = async <T>(response: Response): Promise<T> => { const value = await response.json().catch(() => ({})); if (!response.ok) throw new Error(typeof (value as { code?: unknown }).code === "string" ? (value as { code: string }).code : "voice-job-failed"); return value as T; };
 const headers = (capability: VoicevoxJobCapability) => ({ "Content-Type": "application/json", "X-Voicevox-Capability": capability });
 const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => { const abort = () => { clearTimeout(timer); reject(signal?.reason ?? new DOMException("Aborted", "AbortError")); }; const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, ms); signal?.addEventListener("abort", abort, { once: true }); if (signal?.aborted) abort(); });
@@ -9,20 +13,25 @@ const assertRegistration = (value: VoicevoxJobRegistration, candidates: readonly
   if (!value || typeof value.groupId !== "string" || !Array.isArray(value.jobs) || value.jobs.length !== expected.size
     || new Set(value.jobs.map((job) => job.candidateId)).size !== expected.size
     || value.jobs.some((job) => !expected.has(job.candidateId) || typeof job.jobId !== "string" || job.jobId.length < 1)) throw new Error("voice-job-invalid-registration");
-  return value;
+  // Older deployed Workers may omit backend while frontend assets roll forward.
+  // Keep audio usable without inventing a server attribution for those jobs.
+  return { ...value, jobs: value.jobs.map(job => ({ ...job, backend: normalizeBackend(job.backend) })) };
 };
-export const registerVoicevoxJobGroup = async (input: { capability: VoicevoxJobCapability; groupId: string; generationId: string; candidates: readonly VoicevoxJobCandidate[]; signal?: AbortSignal }) => {
+export const registerVoicevoxJobGroup = async (input: { capability: VoicevoxJobCapability; groupId: string; generationId: string; candidates: readonly VoicevoxJobCandidate[]; backendPreference?: VoicevoxJobBackendPreference; signal?: AbortSignal }) => {
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     input.signal?.throwIfAborted();
     try {
-      const response = await fetch("/api/voicevox/jobs/register", { method: "POST", headers: headers(input.capability), body: JSON.stringify({ groupId: input.groupId, generationId: input.generationId, candidates: input.candidates }), signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) });
+      const response = await fetch("/api/voicevox/jobs/register", { method: "POST", headers: headers(input.capability), body: JSON.stringify({ groupId: input.groupId, generationId: input.generationId, candidates: input.candidates, backendPreference: input.backendPreference ?? "auto" }), signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) });
       return assertRegistration(await json<VoicevoxJobRegistration>(response), input.candidates);
     } catch (error) { lastError = error; if (attempt === 0 && !input.signal?.aborted) await sleep(250, input.signal); }
   }
   throw lastError;
 };
-export const getVoicevoxJob = async (jobId: string, capability: VoicevoxJobCapability, signal?: AbortSignal) => json<{ jobId: string; status: string; audioReady: boolean; expiresAt: number }>(await fetch(`/api/voicevox/jobs/${encodeURIComponent(jobId)}`, { headers: { "X-Voicevox-Capability": capability }, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) }));
+export const getVoicevoxJob = async (jobId: string, capability: VoicevoxJobCapability, signal?: AbortSignal): Promise<VoicevoxJobStatusResponse> => {
+  const value = await json<VoicevoxJobStatusResponse>(await fetch(`/api/voicevox/jobs/${encodeURIComponent(jobId)}`, { headers: { "X-Voicevox-Capability": capability }, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) }));
+  return { ...value, backend: normalizeBackend(value.backend) };
+};
 /** Poll only the registered jobs. Never call the old synchronous synthesis route after grants are consumed. */
 export const waitForVoicevoxJobs = async (jobs: readonly { jobId: string }[], capability: VoicevoxJobCapability, options: { signal?: AbortSignal; timeoutMs?: number; intervalMs?: number } = {}) => {
   const timeoutMs = options.timeoutMs ?? 8 * 60_000, interval = options.intervalMs ?? 1_500, controller = new AbortController(); const timer = setTimeout(() => controller.abort(new Error("voice-job-timeout")), timeoutMs); const abort = () => controller.abort(options.signal?.reason ?? new DOMException("Aborted", "AbortError")); options.signal?.addEventListener("abort", abort, { once: true });

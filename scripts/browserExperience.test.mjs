@@ -162,7 +162,7 @@ test("empty/failed demo lists stop; explicit retry, revisit and new saves refres
 
 test("gallery skips damaged records and reads audio only when a song is opened", async t => {
   for (const id of ["healthy", "missing-image", "missing-audio", "invalid-metadata"]) await api.saveDebugHistoryRecord(artifacts(id));
-  const db = await request(indexedDB.open("cho-ekaki-uta-debug-history", 3));
+  const db = await request(indexedDB.open("cho-ekaki-uta-debug-history", 4));
   const tx = db.transaction(["images", "assets", "records"], "readwrite");
   tx.objectStore("images").delete("missing-image");
   tx.objectStore("assets").delete("missing-audio");
@@ -215,7 +215,7 @@ test("version 2 migration retains images, audio, favorites and generation counts
     assert.equal(await record.artifacts.imageBlob.text(), "image");
     assert.equal(await record.artifacts.voiceAudioBlob.text(), "RIFF0000WAVE");
     assert.equal((await upgraded.getBrowserUsageStats()).unrecordedGenerations, 1);
-    const db = await request(isolated.open("cho-ekaki-uta-debug-history", 3));
+    const db = await request(isolated.open("cho-ekaki-uta-debug-history", 4));
     const read = db.transaction("assets", "readonly");
     assert.equal("imageBlob" in await request(read.objectStore("assets").get("version-two")), false);
     await upgraded.deleteDebugHistoryRecord("version-two");

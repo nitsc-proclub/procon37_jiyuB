@@ -246,6 +246,8 @@ export interface DemoRecordSummary {
   isFavorite: boolean;
   /** Browser galleries defer loading the audio Blob until playback. */
   hasAudio?: boolean;
+  /** Local records distinguish a sung recording from the drawing's silent clock. */
+  playbackKind?: "voice" | "animation-only";
 }
 
 export interface DemoRecordDetail extends DemoRecordSummary {

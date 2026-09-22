@@ -4,6 +4,7 @@ type DemoRecordStatus = "success" | "error";
 
 interface DemoRecordMetadata {
   status: DemoRecordStatus;
+  playbackKind: "voice" | "animation-only";
   favorite: boolean;
   startedAt: string;
   completedAt: string;
@@ -28,6 +29,8 @@ interface SaveDemoRecordParams {
   drawingData: DrawingData;
   lyrics: LyricsResponse | null;
   audioBlob: Blob | null;
+  /** Animation clocks must never be stored or advertised as a recorded voice. */
+  playbackKind?: "voice" | "animation-only";
   singingScore: SingingScore | null;
   error: string | null;
   startedAt: string;
@@ -47,6 +50,7 @@ export const saveDemoRecord = async ({
   drawingData,
   lyrics,
   audioBlob,
+  playbackKind = audioBlob ? "voice" : "animation-only",
   singingScore,
   error,
   startedAt,
@@ -54,8 +58,10 @@ export const saveDemoRecord = async ({
   aiModel,
 }: SaveDemoRecordParams) => {
   const completedAt = new Date().toISOString();
+  const voiceAudioBlob = playbackKind === "voice" ? audioBlob : null;
   const metadata: DemoRecordMetadata = {
     status: error ? "error" : "success",
+    playbackKind: voiceAudioBlob ? "voice" : "animation-only",
     favorite: false,
     startedAt,
     completedAt,
@@ -83,7 +89,7 @@ export const saveDemoRecord = async ({
     },
     body: JSON.stringify({
       imageDataUri: drawingData.imageUri,
-      audioDataUri: audioBlob ? await blobToDataUri(audioBlob) : null,
+      audioDataUri: voiceAudioBlob ? await blobToDataUri(voiceAudioBlob) : null,
       metadata,
     }),
   });
