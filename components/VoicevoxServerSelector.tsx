@@ -88,7 +88,7 @@ const VoicevoxServerSelector: React.FC<VoicevoxServerSelectorProps> = ({
           </label>
 
           <p className="leading-relaxed text-gray-500">
-            自動では、ローカルVOICEVOXを確認してから、みらいサーバー、Google Cloud Runの順に切り替えます。
+            自動ではローカルVOICEVOXを優先し、使えない場合はクラウドの歌声サーバーを使います。公開版は混雑時にGoogle Cloud Runを使うことがあります。
           </p>
 
           {isLocal && (

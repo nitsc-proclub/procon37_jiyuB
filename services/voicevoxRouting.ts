@@ -1,8 +1,8 @@
 /**
  * Visitor-selectable VOICEVOX routing.
  *
- * `auto` is the normal production mode. The Worker owns the remote fallback
- * order (みらいサーバー, then Cloud Run), while the browser may try its own
+ * `auto` is the normal production mode. The Worker chooses the remote backend
+ * (including queue overflow to Cloud Run), while the browser may try its own
  * loopback Engine before asking the Worker. The other values are intentional
  * debug overrides and must not be treated as health checks.
  */
@@ -12,7 +12,7 @@ export type VoicevoxServerId = (typeof VOICEVOX_SERVER_IDS)[number];
 export type VoicevoxResolvedServerId = Exclude<VoicevoxServerId, "auto">;
 
 export const VOICEVOX_SERVER_LABELS: Record<VoicevoxServerId, string> = {
-  auto: "自動（ローカル → みらいサーバー → Google Cloud Run）",
+  auto: "自動（ローカル優先・クラウド振り分け）",
   local: "ローカルVOICEVOX",
   "cloudflare-vpc": "みらいサーバー",
   "google-cloud-run": "Google Cloud Run",
