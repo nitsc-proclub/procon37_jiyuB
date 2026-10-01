@@ -2,10 +2,12 @@ import { resolveGeminiImageMaxDimension, resolveLyricsCandidateCount, resolvePar
 
 const isDeploymentPreview = import.meta.env.VITE_APP_MODE === "deployment-preview";
 const isProductionBuild = import.meta.env.PROD;
+const isPublicBuild = isProductionBuild && !isDeploymentPreview;
 
 export const appConfig = {
   mode: isDeploymentPreview ? "deployment-preview" : "full",
   isDeploymentPreview,
+  isPublicBuild,
   lyricsCandidateCount: resolveLyricsCandidateCount(import.meta.env.VITE_LYRICS_CANDIDATE_COUNT),
   geminiImageMaxDimension: resolveGeminiImageMaxDimension(import.meta.env.VITE_GEMINI_IMAGE_MAX_DIMENSION),
   hideParticipantAgeUi: resolveParticipantAgeUiHidden(import.meta.env.VITE_HIDE_PARTICIPANT_AGE),
@@ -26,6 +28,8 @@ export const appFeatures = {
   demoRecords: !isDeploymentPreview && !isProductionBuild,
   dataSaving: !isDeploymentPreview && !isProductionBuild,
   generationTelemetry: !isDeploymentPreview && !isProductionBuild,
+  browserGenerationStats: !isPublicBuild,
+  debugExport: !isPublicBuild,
   // Public debug records stay entirely in the visitor's IndexedDB. The
   // deployment-preview flag remains useful for a built local confirmation
   // version, while production builds use the same browser-only boundary.

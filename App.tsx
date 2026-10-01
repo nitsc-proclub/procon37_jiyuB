@@ -12,6 +12,7 @@ import DebugExportDialog from "./components/DebugExportDialog";
 import EvaluationConsentModal from "./components/EvaluationConsentModal";
 import EvaluationFollowUpModal, { EvaluationFollowUpAnswers } from "./components/EvaluationFollowUpModal";
 import DebugHistoryView from "./components/DebugHistoryView";
+import PublicDemoRecordsView from "./components/PublicDemoRecordsView";
 import VoicevoxServerSelector from "./components/VoicevoxServerSelector";
 import { DrawingDisplayMode } from "./components/DrawingPlaybackCanvas";
 import { appConfig, appFeatures } from "./config/appConfig";
@@ -1714,7 +1715,7 @@ const App: React.FC = () => {
     };
     const startedAt = new Date().toISOString();
     const debugRecordId = createDebugRecordId();
-    if (appFeatures.debugHistory) void recordBrowserGeneration(debugRecordId, startedAt).catch(() => undefined);
+    if (appFeatures.debugHistory && appFeatures.browserGenerationStats) void recordBrowserGeneration(debugRecordId, startedAt).catch(() => undefined);
     let generatedLyrics: LyricsResponse | null = null;
     let generatedCandidates: LyricsCandidate[] | null = null;
     let evaluationDraft: EvaluationDraft | null = null;
@@ -2566,7 +2567,7 @@ const App: React.FC = () => {
   };
 
   const openDebugExport = () => {
-    if ((!debugExportSource && !debugExportArtifacts) || isGenerating) return;
+    if (!appFeatures.debugExport || (!debugExportSource && !debugExportArtifacts) || isGenerating) return;
     setDebugBundleError(null);
     setIsDebugExportOpen(true);
   };
@@ -2577,7 +2578,7 @@ const App: React.FC = () => {
   };
 
   const handleDownloadDebugBundle = async () => {
-    if (!debugExportSource && !debugExportArtifacts) return;
+    if (!appFeatures.debugExport || (!debugExportSource && !debugExportArtifacts)) return;
 
     setIsDebugBundleDownloading(true);
     setDebugBundleError(null);
@@ -2602,7 +2603,7 @@ const App: React.FC = () => {
   };
 
   const renderDebugExportButton = () => {
-    if (isCompactMakerLayout || (!debugExportSource && !debugExportArtifacts) || isGenerating) return null;
+    if (!appFeatures.debugExport || isCompactMakerLayout || (!debugExportSource && !debugExportArtifacts) || isGenerating) return null;
     return (
       <button
         type="button"
@@ -2755,7 +2756,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {isDebugExportOpen && (debugExportSource || debugExportArtifacts) && (
+      {appFeatures.debugExport && isDebugExportOpen && (debugExportSource || debugExportArtifacts) && (
         <DebugExportDialog
           hasLyrics={debugExportArtifacts ? !!debugExportArtifacts.manifest.lyrics : !!debugExportSource?.lyrics}
           hasScore={debugExportArtifacts ? !!debugExportArtifacts.manifest.singingScore : !!debugExportSource?.singingScore}
@@ -2963,11 +2964,18 @@ const App: React.FC = () => {
       )}
 
       {appView === "debugHistory" && appFeatures.debugHistory ? (
-        <DebugHistoryView
-          onOpenRecord={handleOpenDebugHistoryRecord}
-          onBack={() => setAppView("maker")}
-          onToast={setSaveToast}
-        />
+        appConfig.isPublicBuild ? (
+          <PublicDemoRecordsView
+            onOpenRecord={handleOpenDebugHistoryRecord}
+            onToast={setSaveToast}
+          />
+        ) : (
+          <DebugHistoryView
+            onOpenRecord={handleOpenDebugHistoryRecord}
+            onBack={() => setAppView("maker")}
+            onToast={setSaveToast}
+          />
+        )
       ) : appView === "demoRecords" ? (
         <main className="mb-16 w-full max-w-6xl">
           <section className="rounded-3xl border-8 border-orange-100 bg-white p-5 shadow-xl md:p-7">
