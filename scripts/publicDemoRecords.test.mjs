@@ -45,7 +45,7 @@ test("public demos retain browser saves, favorites, opening and deletion without
     assert.equal(audioReads, 0, "Lists do not load voice blobs");
     assert.equal(document.querySelectorAll('[role="progressbar"]').length, 2);
     assert.equal(document.querySelector('[aria-label="保存件数"]').getAttribute("aria-valuenow"), "2");
-    for (const text of ["生成回数", "ZIP", "Browser-only", "このブラウザ", "保存するかは", "ブラウザ全体", "メーカーへ戻る", "すべて削除"]) assert.ok(!document.body.textContent.includes(text), text);
+    for (const text of ["デモ記録", "生成回数", "ZIP", "Browser-only", "このブラウザ", "保存するかは", "ブラウザ全体", "メーカーへ戻る", "すべて削除"]) assert.ok(!document.body.textContent.includes(text), text);
     await click("ねこのうたのお気に入り");
     assert.equal((await api.getDebugHistoryRecord("ねこのうた")).isFavorite, true);
     await React.act(() => root.unmount());

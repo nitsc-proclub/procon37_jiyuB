@@ -59,7 +59,7 @@ test("App keeps unfinished drawing and undo/redo across record navigation, and e
     await React.act(() => root.render(React.createElement(React.StrictMode, null, React.createElement(App))));
     await draw(); await draw(100); assert.equal(count(), 2);
     await click("ひとつ戻す"); assert.equal(count(), 1);
-    await click("デモ記録"); await settle();
+    await click("保存した作品"); await settle();
     assert.equal(canvas(), null);
     await click("メーカー"); assert.equal(count(), 1);
     await click("ひとつ進める"); assert.equal(count(), 2);
@@ -68,7 +68,7 @@ test("App keeps unfinished drawing and undo/redo across record navigation, and e
     assert.ok(dialog);
     const confirm = [...dialog.querySelectorAll("button")].find(el => el.textContent.includes("消す"));
     await React.act(() => confirm.click()); assert.equal(count(), 0);
-    await click("デモ記録"); await settle(); await click("メーカー");
+    await click("保存した作品"); await settle(); await click("メーカー");
     assert.equal(count(), 0); assert.equal(button("ひとつ戻す").disabled, true);
   } finally { await React.act(() => root.unmount()); }
 });
@@ -86,13 +86,13 @@ test("App editing a browser record retains original strokes, then navigating ret
   const root = createRoot(document.getElementById("root"));
   try {
     await React.act(() => root.render(React.createElement(App)));
-    await click("デモ記録"); await settle();
+    await click("保存した作品"); await settle();
     const record = [...document.querySelectorAll("button")].find(el => el.querySelector("p")?.textContent === "編集テスト");
     assert.ok(record); await React.act(() => record.click()); await settle();
     assert.equal(count(), 2);
     await draw(200); assert.equal(count(), 3, "editing must retain the two stored strokes");
     await click("ひとつ戻す"); assert.equal(count(), 2);
-    await click("デモ記録"); await settle(); await click("メーカー");
+    await click("保存した作品"); await settle(); await click("メーカー");
     assert.equal(count(), 2); await click("ひとつ進める"); assert.equal(count(), 3);
     assert.equal((await getDebugHistoryRecord("drawing-edit-regression")).manifest.drawing.strokes.length, 2, "editing does not mutate the saved original");
   } finally { await React.act(() => root.unmount()); }

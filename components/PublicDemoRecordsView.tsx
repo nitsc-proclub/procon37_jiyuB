@@ -51,7 +51,7 @@ const PublicDemoRecordsView: React.FC<Props> = ({ onOpenRecord, onToast }) => {
       setRecords(nextRecords);
       setStats(nextStats);
     } catch (cause) {
-      if (sequence === refreshSequence.current.value) setError(cause instanceof Error ? cause.message : "記録を読み込めませんでした。");
+      if (sequence === refreshSequence.current.value) setError(cause instanceof Error ? cause.message : "作品を読み込めませんでした。");
     } finally {
       if (sequence === refreshSequence.current.value) setLoading(false);
     }
@@ -88,7 +88,7 @@ const PublicDemoRecordsView: React.FC<Props> = ({ onOpenRecord, onToast }) => {
       if (record) onOpenRecord(record);
       else await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "記録を開けませんでした。");
+      setError(cause instanceof Error ? cause.message : "作品を開けませんでした。");
     } finally { setBusy(null); }
   };
 
@@ -109,8 +109,8 @@ const PublicDemoRecordsView: React.FC<Props> = ({ onOpenRecord, onToast }) => {
     try {
       await deleteDebugHistoryRecord(record.recordId);
       await refresh();
-      onToast("記録を削除しました。", "success");
-    } catch { setError("記録を削除できませんでした。"); }
+      onToast("作品を削除しました。", "success");
+    } catch { setError("作品を削除できませんでした。"); }
     finally { setBusy(null); }
   };
 
@@ -133,7 +133,7 @@ const PublicDemoRecordsView: React.FC<Props> = ({ onOpenRecord, onToast }) => {
     <main className="mb-16 w-full max-w-6xl">
       <section className="rounded-3xl border-8 border-violet-100 bg-white p-4 shadow-xl md:p-7">
         <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <h2 className="shrink-0 text-2xl font-black text-gray-800">デモ記録</h2>
+          <h2 className="shrink-0 text-2xl font-black text-gray-800">保存した作品</h2>
           <div className="flex flex-wrap items-center gap-2">
             <a href="/gallery" target="_blank" rel="noopener noreferrer" className="rounded-full border-2 border-yellow-300 bg-yellow-100 px-4 py-2 text-sm font-black text-orange-800 hover:bg-yellow-200">展示ギャラリーを開く</a>
             <button type="button" onClick={() => void refresh()} disabled={loading || busy !== null} className="rounded-full border border-violet-100 px-4 py-2 text-sm font-black text-gray-600 hover:bg-violet-50 disabled:opacity-50">更新</button>
@@ -146,11 +146,11 @@ const PublicDemoRecordsView: React.FC<Props> = ({ onOpenRecord, onToast }) => {
         </div>
         {stats && <div className="mb-6 grid gap-4 rounded-2xl bg-violet-50/50 px-4 py-3 sm:grid-cols-2 sm:gap-8">
           <UsageBar label="保存件数" value={stats.count} max={DEBUG_HISTORY_MAX_RECORDS} caption={`${stats.count} / ${DEBUG_HISTORY_MAX_RECORDS}`} />
-          <UsageBar label="履歴の容量" value={stats.storedBytes} max={DEBUG_HISTORY_MAX_BYTES} caption={`${(stats.storedBytes / 1024 / 1024).toFixed(1)} / ${DEBUG_HISTORY_MAX_BYTES / 1024 / 1024} MB`} />
+          <UsageBar label="保存容量" value={stats.storedBytes} max={DEBUG_HISTORY_MAX_BYTES} caption={`${(stats.storedBytes / 1024 / 1024).toFixed(1)} / ${DEBUG_HISTORY_MAX_BYTES / 1024 / 1024} MB`} />
         </div>}
         {error && <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</p>}
         {loading ? <p role="status" className="py-12 text-center text-sm font-bold text-gray-400">読み込み中…</p> : visibleRecords.length === 0 ? (
-          <p className="py-12 text-center text-sm font-bold text-gray-400">{favoriteOnly ? "お気に入りはありません" : "まだ記録はありません"}</p>
+          <p className="py-12 text-center text-sm font-bold text-gray-400">{favoriteOnly ? "お気に入りはありません" : "まだ保存した作品はありません"}</p>
         ) : browseMode === "drawings" ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {visibleRecords.map(record => <div key={record.recordId} className="relative">

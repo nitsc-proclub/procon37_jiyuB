@@ -300,13 +300,15 @@ type ShortcutGroup = {
   requiresBackend?: boolean;
 };
 
+const savedWorksLabel = appConfig.isPublicBuild ? "保存した作品" : "デモ記録";
+
 const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: "共通",
     items: [
       { keys: "Ctrl/Cmd + 1", description: "メーカーに切り替え" },
       { keys: "Ctrl/Cmd + 2", description: "実験に切り替え", requiresBackend: true },
-      { keys: "Ctrl/Cmd + 3", description: "デモ記録に切り替え", requiresBackend: true },
+      { keys: "Ctrl/Cmd + 3", description: `${savedWorksLabel}に切り替え`, requiresBackend: true },
       { keys: "Ctrl/Cmd + /", description: "この一覧を開閉" },
       { keys: "Esc", description: "一覧や確認ダイアログを閉じる" },
     ],
@@ -337,7 +339,7 @@ const APP_SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
-    title: "デモ記録",
+    title: savedWorksLabel,
     requiresBackend: true,
     items: [
       { keys: "D", description: "絵の一覧に切り替え" },
@@ -1102,7 +1104,7 @@ const App: React.FC = () => {
     setDrawingDisplayMode("animated");
     setIsInitialPlaybackPromptVisible(false);
     setAppView("maker");
-    setSaveToast({ message: "端末の記録を開きました", tone: "success" });
+    setSaveToast({ message: appConfig.isPublicBuild ? "保存した作品を開きました" : "端末の記録を開きました", tone: "success" });
   };
 
   const checkVoicevoxConnection = async (forceRefresh = false) => {
@@ -2937,11 +2939,11 @@ const App: React.FC = () => {
           {appFeatures.debugHistory && !appFeatures.demoRecords && <button
             type="button"
             onClick={() => setAppView("debugHistory")}
-            title="デモ記録"
+            title={savedWorksLabel}
             className={`rounded-full px-5 py-2 text-sm font-black transition-all ${appView === "debugHistory" ? "bg-violet-500 text-white shadow-sm" : "text-gray-600 hover:bg-violet-50"
               }`}
           >
-            デモ記録
+            {savedWorksLabel}
           </button>}
         </div>
       </header>
@@ -2955,9 +2957,9 @@ const App: React.FC = () => {
               type="button"
               onClick={() => setAppView(appFeatures.demoRecords ? "demoRecords" : "debugHistory")}
               className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-2 text-xs font-black text-violet-700 shadow-sm"
-              aria-label="デモ記録を開く"
+              aria-label={`${savedWorksLabel}を開く`}
             >
-              🎵 デモ記録
+              🎵 {savedWorksLabel}
             </button>
           )}
         </div>
