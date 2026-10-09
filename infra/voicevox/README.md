@@ -1,5 +1,11 @@
 # VOICEVOX内部基盤
 
+現行の構成は[技術概要](../../docs/guide/technical-overview.md)と[音声経路の運用](../../docs/operations/cloud-run-voicevox.md)を参照してください。公開ジョブAPIとの接続は実装済み、通常候補数は1、Cloud Runの接続確認は実際のversion要求を行います。
+
+## 2026-08-31〜09-01の導入記録
+
+以下は当時の段階導入・検証の履歴です。「未接続」「次の実装」「liveCheck:false」、Version ID、依存監査件数は当時の記録であり、現在の状態を示しません。
+
 2026-08-31に作成した段階導入用の基盤。公開アプリのHTTP経路にはまだ接続していない。
 
 ## 配置済み
@@ -70,7 +76,7 @@ VPC consumerはbatch 1・concurrency 1、Cloud Run consumerはbatch 1・concurre
 - `src/voicevoxJobDispatcher.ts`: accepted/queuedを永続的な再送対象として読み、送信枠取得→Queue.send→送信済み記録を行う。曖昧な失敗は期限後に再送する。初期10件/回・逐次処理、再送判定5分、送信lease30秒。
 - `src/voicevoxTemporaryAudio.ts`: `wav/`配下の試行別音声、一時保持の論理期限、非公開/no-store配信、サイズ上限、期限後削除。既存bucketの1日lifecycleと併用する。
 
-これらの関数を追加しただけでは、Queue consumer・scheduled handler・公開job APIは動かない。新しいクラウド保存同意や長期保管も未接続。長期保管は[作品データ保存拡張メモ](../../docs/creation-archive-plan.md)に分けて定義し、同意済み画像・線・A/B音声を一時bucketへ無期限に残す構成にはしない。
+これらの関数を追加しただけでは、Queue consumer・scheduled handler・公開job APIは動かない。新しいクラウド保存同意や長期保管も未接続。長期保管は[作品データ保存拡張メモ](../../docs/archive/creation-archive-plan.md)に分けて定義し、同意済み画像・線・A/B音声を一時bucketへ無期限に残す構成にはしない。
 
 次回の結線では、`claimVoicevoxJob`の`applied`だけが合成開始の権利を持つ。`duplicate`を合成開始と解釈しない。DO枠取得→D1 claim→VPC合成→R2 put→D1 fenced complete→DO解放の順序を守り、キャンセル/期限切れ/失敗時の解放と孤児削除も試験する。D1の期限切れpayload削除と、結果参照を含むjob/groupの削除は別工程である。
 
@@ -87,6 +93,6 @@ VPC consumerはbatch 1・concurrency 1、Cloud Run consumerはbatch 1・concurre
 
 Cloud Run初回のWorker総時間は約20.7秒、後続2回のEngine合成部分は約11.5〜12.3秒。2026-09-01の追加2回は全体約23.6秒と18.9秒だった。厳密なcold開始や後続のWorker総時間は未確定である。現状はCloud Runをmax 3/min 0、Queue consumerとDOを3枠に揃え、3番目の重複世代から自動振り分けする。次は実利用ログで3並列時の待ち時間、失敗率、Cloud Run利用量を確認する。
 
-詳細: [計画](../../docs/voicevox-public-scaling-plan.md)、[Cloud Run実測](../../docs/voicevox-cloud-run-capacity.md)。
+詳細: [計画](../../docs/archive/voicevox-public-scaling-plan.md)、[Cloud Run実測](../../docs/archive/voicevox-cloud-run-capacity.md)。
 
 既存の開発依存には`npm audit`で4件（high 3・low 1）が報告される。VOICEVOX基盤とは別にVite/PostCSS等の更新が必要である。`npm audit --omit=dev`は0件だった。開発サーバーはloopbackで利用する。

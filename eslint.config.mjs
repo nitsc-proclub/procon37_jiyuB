@@ -28,7 +28,7 @@ export default [
     rules: {
       ...js.configs.recommended.rules,
       // Introduce correctness checks without changing unrelated legacy code.
-      // Unused declarations are tracked as a separate follow-up (docs/code-quality.md).
+      // Unused declarations are tracked as a separate follow-up (docs/development/code-quality.md).
       'no-unused-vars': 'off',
       'no-empty': ['error', { allowEmptyCatch: true }],
       'no-irregular-whitespace': ['error', { skipRegExps: true }],

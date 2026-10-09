@@ -1,124 +1,57 @@
-!["超えかき歌！ロゴ画像"](https://github.com/nitsc-proclub/procon37_jiyuB/blob/0527e8a7458230c1254441e4f1d14eb4ca0e5c04/dist/logo.png)
-
 # 超えかき歌！
 
-ユーザーがブラウザ上で描いた絵をもとに、Google Gemini が日本語の「絵描き歌」の歌詞を生成し、VOICEVOX Engine で歌声に変換する Web アプリケーションです。
+**自分で描いた絵が、自分だけの絵描き歌になる。**
 
-このリポジトリでは、体験用アプリ本体に加えて、デモ記録の閲覧・保存、歌詞生成、歌声生成、描画軌跡の再生同期をまとめて扱います。
+ブラウザに描いた絵と描く順序をもとにAIが歌詞を作り、VOICEVOXで歌声にします。歌声に合わせて絵が描かれていく様子を、歌詞と一緒に楽しめます。
 
-## セットアップ
+## [▶ 公開版を試す](https://cho-ekaki-uta.nitsc-proclub.workers.dev/)
 
-### 必要なもの
+インストールせずにブラウザから開けます。歌の生成にはインターネット接続が必要です。
 
-- Node.js
-- npm
-- Google Gemini API キー
-- VOICEVOX Engine
+## 描く → 歌をつくる → 再生する
 
-VOICEVOX Engine は開発時に `http://127.0.0.1:50021` で起動しておく必要があります。
+### 1. 好きな絵を描く
 
-### インストール
+マウスや指でキャンバスに描きます。完成画像だけでなく、描いた線の順序も記録します。
 
-```bash
-npm install
-```
+<a href="docs/assets/manual/draw.png"><img src="docs/assets/manual/draw.png" width="453" alt="1. キャンバスに猫の絵を描く画面"></a>
 
-`.env.local.example` を参考に `.env.local` を作成し、Gemini API キーを設定します。
+### 2. 「歌をつくる！」を押す
 
-```env
-GEMINI_API_KEY=your_api_key_here
-GEMINI_MODEL=gemini-3.6-flash
-GEMINI_MODEL_SUB=gemini-2.5-flash-lite
-# Optional: explicit fallback order
-# GEMINI_MODEL_CANDIDATES=gemini-3.6-flash,gemini-3.5-flash,gemini-3.1-flash-lite,gemini-2.5-flash-lite
-```
+絵と描画情報から歌詞を生成し、歌唱用の楽譜と歌声を作ります。
 
-`GEMINI_MODEL_CANDIDATES` を省略した場合は、`GEMINI_MODEL` を第一候補にしたうえで Gemini API のモデル一覧を取得し、利用可能な Flash 系モデルを優先順でフォールバック候補に加えます。
+<a href="docs/assets/manual/generate.png"><img src="docs/assets/manual/generate.png" width="480" alt="2. 歌をつくるボタンと、絵から歌を生成している進捗画面"></a>
 
-## 開発
+### 3. 歌と一緒に絵を楽しむ
 
-```bash
-npm run dev
-```
+再生ボタンを押すと、歌詞に合わせて描画が進みます。保存した作品はあとから開いて楽しめます。
 
-ブラウザで `http://localhost:3000` を開きます。
+<a href="docs/assets/manual/play.png"><img src="docs/assets/manual/play.png" width="480" alt="3. 再生ボタンと、猫の絵・生成した歌詞を同時に表示する画面"></a>
 
-Windows では `超えかき歌_サーバー管理セット/超えかき歌！_管理.bat`（またはルートの `manage-local.cmd`）を開くと、通常版の起動・停止・再起動を操作できます。管理画面の `[8]` でデスクトップとスタートメニューのショートカットを作成・修復できます。詳しくは[ローカル管理画面の使い方](docs/local-server-manager.md)を参照してください。
+画像は提供された操作マニュアルの画面例です。現行版では表示名や配置が異なる場合があります。画像をクリックすると拡大できます。[画像の出典・加工](docs/assets/manual/README.md)／[詳しい操作ガイド](docs/guide/manual.md)
 
-主な npm script は以下です。
+## 作品の特徴と実装の根拠
 
-| コマンド | 内容 |
-| --- | --- |
-| `npm run dev` | Vite 開発サーバーを起動 |
-| `npm run build` | 本番用ビルドを作成 |
-| `npm run preview` | ビルド結果をローカルで確認 |
-| `npm run type-check` | TypeScript の型チェック |
-| `npm test` | 楽譜・生成・保存・音声基盤の自動テスト |
-| `npm run lint` | 静的検査（既存抑制の内訳は docs/code-quality.md） |
-| `npm run audit` | 依存パッケージの既知の脆弱性監査 |
+以下は審査に向けた説明観点です。公式の採点項目・配点を示すものではありません。
 
-公開版の暫定仕様は [公開生成の整合](docs/public-generation-parity.md)、品質確認は [code-quality.md](docs/code-quality.md) を参照。
+| 観点 | 伝えたい特徴・確認する体験 | 実装の入口 |
+| --- | --- | --- |
+| 独創性 | 完成した絵だけでなく描画の軌跡も使い、描く・歌う・見る体験をつなぐ。再生時の線と歌詞を確認 | [描画のグループ化](services/strokeGroupingService.ts)、[描画同期](components/DrawingPlaybackCanvas.tsx) |
+| 技術性 | 歌唱用かなを音高・長さのある楽譜に変換し、VOICEVOXで合成。生成した歌声を確認 | [楽譜生成](services/melodyService.ts)、[歌声合成](services/voicevoxService.ts) |
+| 実用性 | 保存した作品を再閲覧し、ギャラリーで楽しめる。保存した作品の画面から確認 | [ブラウザ保存](services/debugHistoryDb.ts)、[ギャラリー](gallery/useGalleryRecords.ts) |
 
-## 主な機能
+[詳しい審査説明・デモ手順・実装対応表](docs/guide/judging-evidence.md)には、確認場所と関数名、公式資料の確認状況を記載しています。
 
-- ブラウザ上のキャンバスに自由に描画
-- 描画画像とストローク情報を Gemini に送信
-- 4 行程度の絵描き歌と歌声合成用のひらがな歌詞を自動生成
-- 歌声合成用のひらがな歌詞 `singingKanaLines` を生成
-- 歌詞から簡易的な `SingingScore` を作成し、VOICEVOX で再生
-- VOICEVOX Engine で歌声を合成
-- 生成結果を `demo-records` に保存し、一覧表示・お気に入り・削除を行う
-- 保存済みデモを一覧から読み込み、再生や確認に使う
-- 歌声再生に合わせて描画軌跡を同期表示する
+## 操作と技術を詳しく知る
 
-## プロジェクト構成
+- [操作ガイド](docs/guide/manual.md)：描画から生成・再生まで
+- [技術概要](docs/guide/technical-overview.md)：処理の流れ、採用技術、公開版とローカル展示版の違い
+- [資料一覧](docs/README.md)：目的別の案内
 
-```txt
-.
-├── App.tsx
-├── components/
-│   ├── DrawingPlaybackCanvas.tsx
-│   └── PaintCanvas.tsx
-├── docs/
-│   ├── drawing-playback-sync.md
-│   ├── ekaki-uta-generation.md
-│   ├── operations.md
-│   └── system-overview.md
-├── server/
-│   └── geminiMiddleware.ts
-├── services/
-│   ├── demoRecordService.ts
-│   ├── geminiService.ts
-│   ├── melodyService.ts
-│   ├── voicevoxAccentService.ts
-│   └── voicevoxService.ts
-├── types.ts
-└── vite.config.ts
-```
+公開版の作品は同じブラウザに保存されます。ローカル展示版は展示用サーバーの記録を使います。通常は1候補を生成し、新規のクラウド長期保存は停止中です。歌声が生成できない場合は、無音で描画を再生することがあります。
 
-## 処理の流れ
+公開URL確認日：**2026-10-09（日本時間）**。HTTP 200とブラウザでの描画画面表示を確認しました。今回の資料整理では新規生成・音声合成・実音声再生は試していません。[確認範囲](docs/operations/verification-2026-10-09.md)
 
-1. `PaintCanvas` が描画ストロークと完成画像を `DrawingData` として作成します。
-2. `App.tsx` が必要に応じて `strokeGroups` を付けた `DrawingData` を `geminiService` に渡します。
-3. `server/geminiMiddleware.ts` が Gemini API を呼び、`LyricsResponse` と `lineStrokeMappings` を返します。
-4. `melodyService` が `singingKanaLines` から `SingingScore` を作ります。
-5. `voicevoxService` が VOICEVOX Engine に `SingingScore` を送り、音声 Blob を取得します。
-6. `App.tsx` が歌詞、音声プレイヤー、描画同期表示、デモ記録ビューを管理します。
-7. 保存が有効な場合、`demoRecordService` が入力画像、音声、メタデータを `demo-records` に保存します。
+## 開発・展示運用
 
-## ドキュメント
-
-- [システム全体の概要](docs/system-overview.md)
-- [絵描き歌生成の流れ](docs/ekaki-uta-generation.md)
-- [適応型・絵描き歌生成 第一段階 設計メモ](docs/adaptive-lyrics-learning-phase1.md)
-- [描画軌跡の同期再生](docs/drawing-playback-sync.md)
-- [運用・トラブルシュート](docs/operations.md)
-- [Cloudflare Pages 公開確認版のデプロイ](docs/cloudflare-deployment.md)
-- [Cloud Run VOICEVOX（準備段階）](docs/cloud-run-voicevox.md)
-
-## 注意点
-
-- `.env.local` は Git 管理しません。
-- Gemini API キーはブラウザに埋め込まず、Vite middleware 側で扱います。
-- `demo-records` 保存 API は Vite middleware です。本番ホスティングにそのまま置く場合は、別途 API サーバーや serverless function への移植が必要です。
-- 既存ドキュメントは UTF-8 の日本語として保存しています。
+[開発環境の起動](docs/development/getting-started.md)／[展示・保守の案内](docs/operations/README.md)／[資料の置き方](docs/README.md#資料の管理方針)
