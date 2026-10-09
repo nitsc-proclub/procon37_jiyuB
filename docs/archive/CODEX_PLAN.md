@@ -1,6 +1,6 @@
 # UI改善計画の履歴
 
-> 履歴資料（2026-10-09に移動）。本文の状態・数値・計画は記載当時のものです。現行の入口は[資料案内](../README.md)、未解決事項は[保留事項](../development/BACKLOG.md)を参照してください。
+> 履歴資料。本文の状態・数値・計画は記載当時のものです。現行の入口は[資料案内](../README.md)、未解決事項は[保留事項](../development/BACKLOG.md)を参照してください。
 
 2026-07-17の完了済み計画。現在の公開生成対応は [公開生成の暫定仕様](../guide/public-generation-parity.md)、今後の保留事項は [BACKLOG.md](../development/BACKLOG.md) を参照。
 

@@ -17,7 +17,7 @@
 
 ## 保存と評価
 
-2026-09-22の追加指示で、新規クラウド保存は暫定停止した。現在のフラグ・文言・ギャラリー・回数は [公開・ローカルの保存と表示](public-local-experience.md) を参照。以下のクラウド形式は、保持している実装と再開時の仕様を示す。
+新規クラウド保存は2026-09-22から暫定停止している。現在のフラグ・文言・ギャラリー・回数は [公開・ローカルの保存と表示](public-local-experience.md) を参照。以下のクラウド形式は、保持している実装と再開時の仕様を示す。
 
 1段生成も `candidate-a` を持つ共通応答（`pipelineMode: single`）を返す。実行していない画像解析は `drawingAnalysis: null` / モデル名 `not-run` として記録する。架空の分析結果は作らない。
 
@@ -27,10 +27,10 @@
 
 ## 2段生成へ戻す設定
 
-コードと `GEMINI_VISION_MODEL=gemini-3.8-flash` / `LYRICS_BASE_MODEL=gemini-3.5-flash` を保持する。必要時は `LYRICS_PIPELINE_MODE=phase1` に変更する。A/B比較も必要ならWorkerの `LYRICS_CANDIDATE_COUNT` とブラウザの `VITE_LYRICS_CANDIDATE_COUNT` を両方 `2` にし、再ビルド・再デプロイする。画像縮小は別設定であり、`VITE_GEMINI_IMAGE_MAX_DIMENSION=0` で停止できる。これは暫定機能の復帰設定であり、公開事故時の包括的な切り戻し手順の整備は今回の対象外。
+コードと `GEMINI_VISION_MODEL=gemini-3.8-flash` / `LYRICS_BASE_MODEL=gemini-3.5-flash` を保持する。必要時は `LYRICS_PIPELINE_MODE=phase1` に変更する。A/B比較も必要ならWorkerの `LYRICS_CANDIDATE_COUNT` とブラウザの `VITE_LYRICS_CANDIDATE_COUNT` を両方 `2` にし、再ビルド・再デプロイする。画像縮小は別設定であり、`VITE_GEMINI_IMAGE_MAX_DIMENSION=0` で停止できる。これは暫定機能の復帰設定であり、公開事故時の包括的な切り戻し手順は未整備。
 
 ## 確認範囲と保留
 
 自動テストは通常1段、短縮2回、上限停止、アクセント失敗、最終署名、1候補の評価・音声ジョブ、JPEG保管・再送・削除、既存A/B互換性を対象にする。品質確認コマンドは [code-quality.md](../development/code-quality.md)。公開直後は配信版・主要API・通常1作品の生成経路を確認する。
 
-ユーザー判断で今回は行わない項目は [BACKLOG.md](../development/BACKLOG.md) に集約する。弱回線・スマホ縦横の網羅検証、追加の通信軽量化、同時負荷試験、バグ報告導線、AI学習は今回の完了条件に含めない。
+継続中の課題は [BACKLOG.md](../development/BACKLOG.md) に集約する。弱回線・スマホ縦横の網羅検証、追加の通信軽量化、同時負荷試験、バグ報告導線、AI学習は未対応。

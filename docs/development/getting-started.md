@@ -22,7 +22,7 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-ブラウザで`http://localhost:3000`を開きます。Windowsの展示運用は[サーバー管理画面](../operations/local-server-manager.md)も利用できます。コマンドは移動先のdocsフォルダーではなくリポジトリルートで実行します。
+起動したら、ブラウザで`http://localhost:3000`を開いてください。Windowsの展示運用は[サーバー管理画面](../operations/local-server-manager.md)も利用できます。コマンドはリポジトリルートで実行してください。
 
 ## 変更時の検証
 
@@ -35,6 +35,6 @@ npm.cmd run build
 npm.cmd run check:gallery-public
 ```
 
-ビルドは`dist`を更新します。既存の未コミット生成物を保持したい資料作業では、`npm.cmd run build -- --outDir <一時出力先>`を使い、`npm.cmd run check:gallery-public -- <一時出力先>`で同じ成果物を確認できます。`preview`はビルド済みアプリの確認用であり、Vite開発時と保存・公開フラグが異なります。
+ビルドは`dist`を更新します。別の出力先で検証する場合は、`npm.cmd run build -- --outDir <一時出力先>`を使い、`npm.cmd run check:gallery-public -- <一時出力先>`で同じ成果物を確認できます。`preview`はビルド済みアプリの確認用であり、Vite開発時と保存・公開フラグが異なります。
 
-`main`へのpushは既存のWorkers Buildsによる自動デプロイにつながります。[公開運用](../operations/cloudflare-deployment.md)を確認し、資料編集だけの作業でCI設定変更や手動デプロイを追加しないでください。
+`main`へのpushは既存のWorkers Buildsによる自動デプロイにつながります。[公開運用](../operations/cloudflare-deployment.md)を確認し、公開設定と反映先を確認してください。

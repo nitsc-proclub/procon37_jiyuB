@@ -1,6 +1,6 @@
 # Cloudflare Workers: Gemini lyrics generation (Goal 1)
 
-> 履歴資料（2026-10-09に移動）。本文の状態・数値・計画は記載当時のものです。現行の入口は[資料案内](../README.md)、未解決事項は[保留事項](../development/BACKLOG.md)を参照してください。
+> 履歴資料。本文の状態・数値・計画は記載当時のものです。現行の入口は[資料案内](../README.md)、未解決事項は[保留事項](../development/BACKLOG.md)を参照してください。
 
 > Historical Goal 1 handoff. The current deployment also supports optional local VOICEVOX and animation-only playback; see `docs/operations/cloudflare-deployment.md` for the active procedure.
 

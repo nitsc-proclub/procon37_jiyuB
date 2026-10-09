@@ -1,38 +1,37 @@
-# 資料案内
+# ドキュメント
 
-はじめて見る方は[作品紹介と公開デモ](../README.md)からご覧ください。
+超えかき歌！の使い方、仕組み、開発・運用に必要な情報をまとめています。[作品紹介と公開版](../README.md)から体験できます。
 
-## 審査・体験
+## 作品と使い方
 
 | 知りたいこと | 資料 |
 | --- | --- |
+| コンセプトと開発の背景 | [作品紹介](guide/overview.md) |
 | 描画・生成・再生の操作 | [操作ガイド](guide/manual.md) |
-| 特徴とコードの対応、短いデモの進め方 | [審査説明と実装根拠](guide/judging-evidence.md) |
-| 構成、処理の流れ、公開版と展示版の違い | [技術概要](guide/technical-overview.md) |
-| 保存先・同期・進捗の詳細 | [公開・ローカルの保存と表示](guide/public-local-experience.md) |
-| 生成設定と容量検査 | [公開生成の仕様](guide/public-generation-parity.md) |
+| 処理の流れと公開版・展示版の違い | [技術概要](guide/technical-overview.md) |
+| 保存先と画面の動作 | [保存と表示の仕様](guide/public-local-experience.md) |
+| 歌詞と歌声の生成設定 | [公開生成の仕様](guide/public-generation-parity.md) |
 
-## 開発・運用
+## 開発と運用
 
-- [開発環境の起動](development/getting-started.md)と[品質確認](development/code-quality.md)
-- [展示・保守の案内](operations/README.md)
-- 実装詳細：[絵描き歌生成](development/ekaki-uta-generation.md)／[描画同期](development/drawing-playback-sync.md)
-- [保留事項](development/BACKLOG.md)と[今回の検証範囲](operations/verification-2026-10-09.md)
+開発を始める方は[環境の準備と起動](development/getting-started.md)をご覧ください。展示や保守には[運用案内](operations/README.md)を用意しています。
 
-## 過去の資料
-
-[履歴一覧と移動先](archive/README.md)に、進捗、完了済み計画、旧仕様、当時の計測を保管しています。過去の検証結果は現在の稼働状態を保証しません。
+処理の詳細は[絵描き歌生成](development/ekaki-uta-generation.md)と[描画同期](development/drawing-playback-sync.md)で説明しています。変更時の検査は[品質確認](development/code-quality.md)、継続中の課題は[保留事項](development/BACKLOG.md)を参照してください。
 
 ## 資料の管理方針
 
-- `guide/`：作品を理解・操作するための現行資料。実装根拠と確認日を示し、公開版と展示版を区別します。
-- `operations/`：起動、展示、保守、障害対応。確認結果には日付・環境・未確認範囲を残します。
-- `development/`：現在使う開発手順、設計の説明、未解決事項。
-- `archive/`：終了した計画、旧仕様、進捗と実測の履歴。本文の日付と出典を残し、現行の説明から区別します。有効な手順や課題は現行資料にも残します。
-- `assets/`：公開を許可された説明画像。出典・ページ・加工内容を記録し、読みやすさを確認して圧縮します。私的資料や認証情報を含めません。
+| フォルダー | 内容 |
+| --- | --- |
+| `guide/` | 作品紹介、使い方、技術概要 |
+| `operations/` | 起動、展示、保守、トラブル対応 |
+| `development/` | 開発手順、現在の設計、未解決事項 |
+| `archive/` | 過去の計画、旧仕様、進捗と実測の記録 |
+| `assets/` | 説明用画像と出典 |
 
-ファイルを動かしたらMarkdown・画像・実装リンクを修正し、旧パスを全体検索します。外部共有済みの旧URLが判明している場合は短い移転案内を残します。今回の移動対応は[履歴一覧](archive/README.md)に記録しました。
+[過去の資料](archive/README.md)には、記録時点の日付や条件を残しています。現在の仕様や稼働状態は、現行資料と設定を確認してください。
 
-アプリ本体、設定、起動スクリプト、`AGENTS.md`の配置は維持します。`dist/index.html`と`dist/logo.png`は既存のGit管理対象、`dist/assets`は既存の除外対象です。Workers Buildsはビルドして`dist`を配信するため、生成物を一括削除・一括除外しません。今回`.gitignore`は変更していません。
+画像には出典と加工内容を記録します。ファイルを移動したときは参照リンクも更新し、外部共有済みの旧URLには必要に応じて移転案内を残してください。
 
-検証出力・一時プレビューはOSの一時フォルダーを使い、コミットしません。展示データ・ZIP・`.local-resources/`は公開資料に混ぜず、新規生成物は用途と配布方法を確認してからGit管理の要否を決めます。コミット前に差分とステージ対象を確認してください。
+アプリ本体、設定、起動スクリプトはリポジトリルートに置きます。`dist/index.html`と`dist/logo.png`はGit管理対象、`dist/assets`は除外対象です。公開時はWorkers Buildsでビルドした`dist`を配信します。
+
+検証用の一時ファイルや展示データはコミットしません。`.local-resources/`は非公開の参照資料です。公開する画像やデータとは分けて管理してください。
