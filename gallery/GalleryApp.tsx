@@ -94,8 +94,13 @@ export default function GalleryApp() {
   }, [select]);
 
   const onSnapshot = useCallback((next: DemoRecordSummary[], initial: boolean) => {
-    pauseSelectionScroll();
     const previous = recordsRef.current;
+    if (!initial && previous.length === next.length && previous.every((record, index) => {
+      const other = next[index];
+      return Object.keys(record).length === Object.keys(other).length &&
+        (Object.keys(record) as (keyof DemoRecordSummary)[]).every(key => record[key] === other[key]);
+    })) return;
+    pauseSelectionScroll();
     const previousIds = new Set(previous.map(record => record.recordId));
     const nextIds = new Set(next.map(record => record.recordId));
     const added = initial ? [] : next.filter(record => !previousIds.has(record.recordId)).map(record => record.recordId);

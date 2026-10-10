@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LyricsResponse, SingingScore } from "../types";
 import { buildLineTimings, findActiveLineTiming, getLineStartTimeSeconds, getPlaybackTimelinePosition } from "../utils/playbackTiming";
 
@@ -40,7 +40,22 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
 }) => {
     const lineCount = lyrics.lines.length;
     const lineTimings = useMemo(() => buildLineTimings(singingScore, lineCount), [lineCount, singingScore]);
-    const [renderTick, setRenderTick] = useState(0);
+    const segmentedLines = useMemo(() => lyrics.lines.map(splitTextSegments), [lyrics.lines]);
+    const [highlight, setHighlight] = useState({ activeLineIndex: -1, segmentCount: 0, tail: false });
+    const lastHighlight = useRef(highlight);
+    const scheduleTick = useCallback(() => {
+        const frame = getPlaybackTimelinePosition(audioRef?.current ?? null, singingScore, lineCount);
+        const timing = findActiveLineTiming(lineTimings, frame);
+        const activeLineIndex = timing?.lineIndex ?? -1;
+        const progress = timing ? Math.max(0, Math.min(1, (frame - timing.startFrame) / Math.max(1, timing.endFrame - timing.startFrame))) : 0;
+        const next = { activeLineIndex, segmentCount: Math.floor((segmentedLines[activeLineIndex]?.length ?? 0) * progress), tail: progress > 0 && progress < 1 };
+        const previous = lastHighlight.current;
+        if (previous.activeLineIndex !== next.activeLineIndex || previous.segmentCount !== next.segmentCount || previous.tail !== next.tail) {
+            lastHighlight.current = next;
+            setHighlight(next);
+        }
+    }, [audioRef, singingScore, lineCount, lineTimings, segmentedLines]);
+    const { activeLineIndex } = highlight;
     const compactLyricsRef = useRef<HTMLDivElement>(null);
     const compactLineButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
     const compactLineProbeRefs = useRef<Array<HTMLSpanElement | null>>([]);
@@ -59,9 +74,6 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
 
         let rafId: number | null = null;
 
-        const scheduleTick = () => {
-            setRenderTick((current) => current + 1);
-        };
 
         const startLoop = () => {
             const loop = () => {
@@ -119,25 +131,7 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
             audio.removeEventListener("seeking", handleTimeUpdate);
             audio.removeEventListener("loadedmetadata", handleTimeUpdate);
         };
-    }, [audioRef]);
-
-    const { activeLineIndex, activeLineProgress } = useMemo(() => {
-        const currentFrame = getPlaybackTimelinePosition(audioRef?.current ?? null, singingScore, lineCount);
-        const activeLineIndexValue = findActiveLineTiming(lineTimings, currentFrame)?.lineIndex ?? -1;
-        const activeTiming = lineTimings[activeLineIndexValue];
-
-        if (!activeTiming) {
-            return { activeLineIndex: -1, activeLineProgress: 0 };
-        }
-
-        const span = Math.max(1, activeTiming.endFrame - activeTiming.startFrame);
-        const progress = (currentFrame - activeTiming.startFrame) / span;
-
-        return {
-            activeLineIndex: activeLineIndexValue,
-            activeLineProgress: Math.max(0, Math.min(1, progress)),
-        };
-    }, [audioRef, lineCount, lineTimings, renderTick, singingScore]);
+    }, [audioRef, scheduleTick]);
 
     const playFromLine = (lineIndex: number) => {
         const audio = audioRef?.current;
@@ -147,12 +141,12 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
         const startTime = getLineStartTimeSeconds(timing, audio.duration, singingScore, lineCount);
         if (startTime === null) return;
         audio.currentTime = startTime;
-        setRenderTick((current) => current + 1);
+        scheduleTick();
         void audio.play().catch((playError) => {
             // A synthetic click can be rejected by autoplay policy. Seeking is
             // still useful on its own, so preserve the child's selected line.
             audio.currentTime = startTime;
-            setRenderTick((current) => current + 1);
+            scheduleTick();
             if (import.meta.env.DEV) console.error("Failed to play selected lyric line", playError);
         });
     };
@@ -255,9 +249,9 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
                         : isDone
                             ? "border-orange-100 bg-orange-50/60 text-orange-600"
                             : "border-gray-100 bg-white text-gray-700";
-                    const lineSegments = splitTextSegments(line);
+                    const lineSegments = segmentedLines[index];
                     const activeSegmentCount = isActive
-                        ? Math.max(0, Math.min(lineSegments.length, Math.floor(lineSegments.length * activeLineProgress)))
+                        ? highlight.segmentCount
                         : isDone
                             ? lineSegments.length
                         : 0;
@@ -303,7 +297,7 @@ const KaraokeLyricsPanel: React.FC<KaraokeLyricsPanelProps> = ({
                             <span className={`block font-bold ${compact ? "text-[1.0625rem] leading-snug sm:text-lg" : "text-xl leading-relaxed md:text-2xl"} ${isActive ? "tracking-wide" : ""}`} style={lyricTextStyle}>
                                 {lineSegments.map((segment, segmentIndex) => {
                                     const isHighlighted = segmentIndex < activeSegmentCount;
-                                    const isTail = segmentIndex === activeSegmentCount && isActive && activeLineProgress > 0 && activeLineProgress < 1;
+                                    const isTail = segmentIndex === activeSegmentCount && isActive && highlight.tail;
 
                                     return (
                                         <span

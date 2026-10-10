@@ -10,6 +10,8 @@ import { createVoicevoxMiddleware } from "./server/voicevoxMiddleware";
 import { createDemoRecordEventHub, type DemoRecordEventHub } from "./server/demoRecordEvents";
 import { demoRecordErrorStatus, DemoRecordRequestError, getRecordDirectory, getRecordFilePath, isAnimationClockAudio, isAnimationClockFile, validateDemoRecordName } from "./server/demoRecordFiles";
 
+import { createDemoRecordLister } from "./server/demoRecordListCache";
+
 const MAX_RECORD_REQUEST_BYTES = 100 * 1024 * 1024;
 const DEFAULT_DEMO_RECORDS_DIR = path.resolve(process.cwd(), "demo-records");
 const USAGE_STATS_FILE_NAME = "usage-stats.json";
@@ -484,34 +486,6 @@ const updateDemoRecordMetadata = async (
   return nextMetadata;
 };
 
-const listDemoRecords = async (recordsRoot: string) => {
-  await fs.mkdir(recordsRoot, { recursive: true });
-
-  const entries = await fs.readdir(recordsRoot, { withFileTypes: true });
-  const records = await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory())
-      .map(async (entry) => {
-        try {
-          const recordDirectory = await getRecordDirectory(recordsRoot, entry.name);
-          const metadata = await readDemoRecordMetadata(recordDirectory);
-
-          if (metadata.status !== "success" || !metadata.files?.image || !metadata.lyrics) {
-            return null;
-          }
-
-          return await buildDemoRecordSummary(entry.name, recordDirectory, metadata);
-        } catch {
-          return null;
-        }
-      }),
-  );
-
-  return records
-    .filter((record): record is NonNullable<(typeof records)[number]> => record !== null)
-    .sort((first, second) => second.savedAt.localeCompare(first.savedAt));
-};
-
 const sendDemoRecordFile = async (
   response: ServerResponse,
   recordsRoot: string,
@@ -536,8 +510,12 @@ const sendDemoRecordFile = async (
   response.end(file);
 };
 
-export const createDemoRecordMiddleware =
-  (recordsRoot: string, voicevoxTimingProfile: string, events: DemoRecordEventHub) => async (request: IncomingMessage, response: ServerResponse, next: () => void) => {
+export const createDemoRecordMiddleware = (recordsRoot: string, voicevoxTimingProfile: string, events: DemoRecordEventHub) => {
+  const listRecords = createDemoRecordLister(readDemoRecordMetadata, async (id, directory, metadata) => {
+    if (metadata.status !== "success" || !metadata.files?.image || !metadata.lyrics) return null;
+    return buildDemoRecordSummary(id, directory, metadata);
+  });
+  return async (request: IncomingMessage, response: ServerResponse, next: () => void) => {
     const pathname = request.url?.split(/[?#]/, 1)[0] ?? "";
     if (pathname !== "/api/demo-records" && !pathname.startsWith("/api/demo-records/")) {
       next();
@@ -671,7 +649,7 @@ export const createDemoRecordMiddleware =
     if (request.method === "GET") {
       try {
         if (pathParts.length === 2) {
-          sendJson(response, 200, { records: await listDemoRecords(recordsRoot) });
+          sendJson(response, 200, { records: (await listRecords(recordsRoot)).sort((a, b) => b.savedAt.localeCompare(a.savedAt)) });
           return;
         }
 
@@ -823,6 +801,7 @@ export const createDemoRecordMiddleware =
       sendJson(response, demoRecordErrorStatus(error), { error: message });
     }
   };
+};
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");

@@ -198,3 +198,67 @@ test("client excludes animation clocks from local saves even when supplied a Blo
   assert.equal(bodies[0].metadata.playbackKind, "animation-only");
   assert.equal(bodies[0].metadata.status, "success", "successful lyrics and drawing remain available");
 });
+
+
+test("cached listings reread only changed records and observe external audio changes", async t => {
+  const { root, request } = await fixture(t);
+  const id = await createRecord(request);
+  const metadataPath = path.join(root, id, "metadata.json");
+  const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  delete metadata.playbackKind;
+  await fs.writeFile(metadataPath, JSON.stringify(metadata));
+  const originalRead = fs.readFile.bind(fs);
+  let reads = 0;
+  t.mock.method(fs, "readFile", async (...args) => {
+    if (String(args[0]) === metadataPath) reads++;
+    return originalRead(...args);
+  });
+  assert.equal((await request()).json().records.length, 1);
+  const initialReads = reads;
+  await request();
+  assert.equal(reads, initialReads, "unchanged metadata is not read again");
+  await request('/' + id, "PATCH", { favorite: true });
+  assert.equal((await request()).json().records[0].isFavorite, true);
+  metadata.lyrics.title = "外部変更";
+  await fs.writeFile(metadataPath, JSON.stringify(metadata));
+  assert.equal((await request()).json().records[0].title, "外部変更");
+  const audioPath = path.join(root, id, metadata.files.audio);
+  await fs.rm(audioPath);
+  assert.equal((await request()).json().records[0].hasAudio, false);
+  await fs.writeFile(audioPath, "restored voice");
+  assert.equal((await request()).json().records[0].hasAudio, true);
+  await fs.writeFile(metadataPath, "broken");
+  assert.equal((await request()).json().records.length, 0);
+  await fs.writeFile(metadataPath, JSON.stringify(metadata));
+  assert.equal((await request()).json().records.length, 1);
+  await request('/' + id, "DELETE");
+  assert.equal((await request()).json().records.length, 0);
+});
+
+
+test("list cache shares concurrent scans, bounds reads, and handles a missing root without writing", async t => {
+  const { root } = await fixture(t);
+  const { createDemoRecordLister } = await loader.ssrLoadModule("/server/demoRecordListCache.ts");
+  for (let i = 0; i < 20; i++) {
+    const directory = path.join(root, String(i));
+    await fs.mkdir(directory);
+    await fs.writeFile(path.join(directory, "metadata.json"), "{}");
+  }
+  let reads = 0, active = 0, peak = 0;
+  const list = createDemoRecordLister(async () => {
+    reads++; active++; peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 2));
+    active--; return {};
+  }, async id => ({ id }));
+  const [a, b] = await Promise.all([list(root), list(root)]);
+  assert.equal(a.length, 20);
+  assert.strictEqual(a, b);
+  assert.equal(reads, 20);
+  assert.ok(peak <= 8);
+  await list(root);
+  assert.equal(reads, 20);
+  const missing = path.join(root, "missing");
+  const empty = createDemoRecordLister(async () => ({}), async () => null);
+  assert.deepEqual(await empty(missing), []);
+  await assert.rejects(fs.stat(missing), { code: "ENOENT" });
+});

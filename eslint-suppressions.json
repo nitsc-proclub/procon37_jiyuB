@@ -4,7 +4,7 @@
     "react-hooks/exhaustive-deps": { "count": 2 }
   },
   "components/KaraokeLyricsPanel.tsx": {
-    "react-hooks/exhaustive-deps": { "count": 2 }
+    "react-hooks/exhaustive-deps": { "count": 1 }
   },
   "components/PaintCanvas.tsx": {
     "react-hooks/exhaustive-deps": { "count": 5 }
