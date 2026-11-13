@@ -349,7 +349,7 @@ test("local Gemini middleware retries long lyrics in legacy and phase1 without r
       const prompts = [];
       globalThis.fetch = async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
-        if (!url.includes(":generateContent")) return Response.json({ models: [{ name: "models/test-model", supportedGenerationMethods: ["generateContent"] }] });
+        if (!url.includes(":generateContent")) return Response.json({ models: [{ name: "models/gemini-4-hydrogen", supportedGenerationMethods: ["generateContent"] }] });
         const body = input instanceof Request ? await input.json() : JSON.parse(init.body);
         let value;
         if (url.includes("vision-model")) { visionCalls++; value = analysis; }
@@ -363,7 +363,7 @@ test("local Gemini middleware retries long lyrics in legacy and phase1 without r
         return Response.json({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(value) }] }, finishReason: "STOP" }] });
       };
       const middleware = createGeminiMiddleware({ GEMINI_API_KEY: "test-only", LYRICS_PIPELINE_MODE: mode,
-        GEMINI_MODEL: "test-model", GEMINI_VISION_MODEL: "vision-model", LYRICS_BASE_MODEL: "test-model", VITE_SINGING_BPM: "120" });
+        GEMINI_MODEL: "gemini-4-hydrogen", GEMINI_VISION_MODEL: "vision-model", LYRICS_BASE_MODEL: "test-model", VITE_SINGING_BPM: "120" });
       const request = Readable.from([Buffer.from(JSON.stringify({ drawingData: { imageUri: "data:image/png;base64,YQ==", strokes: [] } }))]);
       request.url = "/api/gemini/generate-ekaki-uta";
       request.method = "POST";
@@ -376,6 +376,7 @@ test("local Gemini middleware retries long lyrics in legacy and phase1 without r
       assert.match(prompts[1], /12モーラ/);
       assert.equal(visionCalls, mode === "phase1" ? 1 : 0);
       const generated = mode === "phase1" ? payload.candidates[0] : payload;
+      if (mode === "legacy") assert.equal(generated.modelName, "gemini-4-hydrogen");
       assert.deepEqual(generated.singingKanaLines, Array(4).fill("ねこ"));
       assert.doesNotThrow(() => buildSingingScore(generated, melody.createSingingSeed(generated)));
     }

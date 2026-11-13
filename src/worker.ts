@@ -79,8 +79,8 @@ const TURNSTILE_SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0
 const TURNSTILE_SITEVERIFY_TIMEOUT_MS = 8_000;
 const MODEL_LIST_CACHE_MS = 10 * 60 * 1000;
 const DEFAULT_MODEL = "gemini-2.5-flash-lite";
-const DEFAULT_VISION_MODEL = "gemini-3.7-flash";
-const DEFAULT_LYRICS_BASE_MODEL = "gemini-3.5-flash";
+const DEFAULT_VISION_MODEL = "gemini-4-hydrogen";
+const DEFAULT_LYRICS_BASE_MODEL = "gemini-4-hydrogen";
 const DEFAULT_LYRICS_PROMPT_VERSION = "3";
 const GENERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const VOICE_GRANT_TTL_MS = 5 * 60 * 1_000;
@@ -150,7 +150,7 @@ const getModelCandidates = async (env: Env) => {
   const explicit = parseModelNames(env.GEMINI_MODEL_CANDIDATES);
   if (explicit.length > 0) return explicit;
 
-  const configured = parseModelNames(env.GEMINI_MODEL);
+  const configured = parseModelNames(env.GEMINI_MODEL || "gemini-4-hydrogen");
   try {
     return unique([...configured, ...(await getDynamicModels(env.GEMINI_API_KEY!)), ...parseModelNames(env.GEMINI_MODEL_SUB), DEFAULT_MODEL]);
   } catch {

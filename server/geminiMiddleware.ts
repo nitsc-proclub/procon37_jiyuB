@@ -20,8 +20,8 @@ import { generateSingableLyrics } from "../services/singableLyricsGeneration";
 import { resolveSingingBpm, SingingCapacityError } from "../services/melodyService";
 
 const DEFAULT_MODEL_NAME = "gemini-2.5-flash-lite";
-const DEFAULT_VISION_MODEL = "gemini-3.7-flash";
-const DEFAULT_LYRICS_BASE_MODEL = "gemini-3.5-flash";
+const DEFAULT_VISION_MODEL = "gemini-4-hydrogen";
+const DEFAULT_LYRICS_BASE_MODEL = "gemini-4-hydrogen";
 const DEFAULT_LYRICS_PROMPT_VERSION = "2";
 const MODEL_LIST_CACHE_MS = 10 * 60 * 1000;
 const MAX_GEMINI_REQUEST_BYTES = 15 * 1024 * 1024;
@@ -147,7 +147,7 @@ const isCandidateGeminiModel = (modelName: string) => {
     !normalized.includes("tts") &&
     !normalized.includes("robotics") &&
     !normalized.includes("learnlm") &&
-    (normalized.includes("flash") || normalized.includes("pro"))
+    (normalized.includes("flash") || normalized.includes("pro") || normalized === "gemini-4-hydrogen")
   );
 };
 
@@ -222,7 +222,7 @@ const fetchAvailableModelNames = async (apiKey: string) => {
 
 const getExplicitModelCandidates = (env: GeminiEnv) => parseModelList(env.GEMINI_MODEL_CANDIDATES);
 
-const getPrimaryModelCandidates = (env: GeminiEnv) => parseModelList(env.GEMINI_MODEL);
+const getPrimaryModelCandidates = (env: GeminiEnv) => parseModelList(env.GEMINI_MODEL || "gemini-4-hydrogen");
 
 const getFallbackModelCandidates = (env: GeminiEnv) =>
   uniqueModelNames([...parseModelList(env.GEMINI_MODEL_SUB), DEFAULT_MODEL_NAME]);

@@ -2,7 +2,7 @@
 
 ## 通常設定
 
-公開Workerとstagingは `LYRICS_PIPELINE_MODE=legacy` で画像・線の要約から1段生成する。通常は1候補。モデル優先順はローカル設定と同じ `gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.1-flash-lite, gemini-2.5-flash-lite`。通常の成功時に画像解析用・作詞用の2回の生成依頼は行わない。サービスエラー時のモデル切替と、容量不足時の短縮再生成は例外として残す。
+公開Workerとstagingは `LYRICS_PIPELINE_MODE=legacy` で画像・線の要約から1段生成する。通常は1候補。モデル優先順はローカル設定と同じ `gemini-4-hydrogen, gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.1-flash-lite, gemini-2.5-flash-lite`。通常の成功時に画像解析用・作詞用の2回の生成依頼は行わない。サービスエラー時のモデル切替と、容量不足時の短縮再生成は例外として残す。
 
 ブラウザの `VITE_GEMINI_IMAGE_MAX_DIMENSION=768` により、長辺が768pxを超える画像を白背景・長辺768px以下・JPEG品質0.82へ縮小する。小さい画像、変換不能な画像は元の画像を使う。署名・クラウド保管の対象は、AIへ実際に送った同一の画像バイト列。線の座標やローカル表示の元画像は縮小しない。公開保存APIはJPEG・PNG・WebPを受け付ける。
 
@@ -27,7 +27,7 @@
 
 ## 2段生成へ戻す設定
 
-コードと `GEMINI_VISION_MODEL=gemini-3.8-flash` / `LYRICS_BASE_MODEL=gemini-3.5-flash` を保持する。必要時は `LYRICS_PIPELINE_MODE=phase1` に変更する。A/B比較も必要ならWorkerの `LYRICS_CANDIDATE_COUNT` とブラウザの `VITE_LYRICS_CANDIDATE_COUNT` を両方 `2` にし、再ビルド・再デプロイする。画像縮小は別設定であり、`VITE_GEMINI_IMAGE_MAX_DIMENSION=0` で停止できる。これは暫定機能の復帰設定であり、公開事故時の包括的な切り戻し手順は未整備。
+コードと `GEMINI_VISION_MODEL=gemini-4-hydrogen` / `LYRICS_BASE_MODEL=gemini-4-hydrogen` を保持する。必要時は `LYRICS_PIPELINE_MODE=phase1` に変更する。A/B比較も必要ならWorkerの `LYRICS_CANDIDATE_COUNT` とブラウザの `VITE_LYRICS_CANDIDATE_COUNT` を両方 `2` にし、再ビルド・再デプロイする。画像縮小は別設定であり、`VITE_GEMINI_IMAGE_MAX_DIMENSION=0` で停止できる。これは暫定機能の復帰設定であり、公開事故時の包括的な切り戻し手順は未整備。
 
 ## 確認範囲と保留
 

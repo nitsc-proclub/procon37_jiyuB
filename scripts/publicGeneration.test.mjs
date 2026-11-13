@@ -38,7 +38,7 @@ function setup(t, { replies = [lyrics()], mode = "legacy", accentFailure = false
     return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }] });
   });
   const env = {
-    GEMINI_API_KEY: "test", GEMINI_MODEL_CANDIDATES: "gemini-3.8-flash,gemini-3.5-flash", GEMINI_VISION_MODEL: "vision-model", LYRICS_BASE_MODEL: "lyrics-model", LYRICS_CANDIDATE_COUNT: "1",
+    GEMINI_API_KEY: "test", GEMINI_MODEL_CANDIDATES: "gemini-4-hydrogen,gemini-3.8-flash", GEMINI_VISION_MODEL: "vision-model", LYRICS_BASE_MODEL: "lyrics-model", LYRICS_CANDIDATE_COUNT: "1",
     LYRICS_PIPELINE_MODE: mode, SINGING_BPM: "120", TURNSTILE_SECRET: "test", TURNSTILE_EXPECTED_HOSTNAME: "app.test",
     EVALUATION_CENTRAL_STORAGE_ENABLED: "true", EVALUATION_RECEIPT_SECRET: secret,
     VOICEVOX_ACCENT_ENABLED: "true", VOICEVOX_JOBS_ENABLED: "true", VOICEVOX_JOBS: {}, TEMPORARY_AUDIO: {}, CREATION_ARCHIVES_ENABLED: "true", CREATION_ARCHIVES: {},
@@ -54,7 +54,7 @@ test("public single-stage creates one candidate, aligned phrases and final bound
   const run = setup(t);
   const response = await run.request(), result = await response.json();
   assert.equal(response.status, 200, JSON.stringify(result));
-  assert.deepEqual(run.models, ["gemini-3.8-flash"]);
+  assert.deepEqual(run.models, ["gemini-4-hydrogen"]);
   assert.equal(result.pipelineMode, "single");
   assert.equal(result.drawingAnalysis, null);
   assert.equal(result.modelInfo.drawingAnalysis, "not-run");
