@@ -1,6 +1,6 @@
 # Windows のローカル管理画面
 
-通常版を `main` ブランチで使うための管理画面です。合奏用の起動・ビルド処理は含みません。
+通常版をローカルで使うための管理画面です。歌詞生成にはGeminiまたはOpenAIを選べます。
 
 ## 起動方法
 
@@ -8,7 +8,7 @@
 - ルートの `manage-local.cmd` からも同じ画面を開けます。
 - 既存のデスクトップ・タスクバーの管理ショートカットも、従来と同じ `cho_ekakiuta_manager.ps1` を呼び出すため、そのまま使用できます。
 
-管理画面で `[1]` を選ぶと通常版を起動し、`http://localhost:3000` を開きます。既に起動している場合はブラウザーを開きます。
+管理画面で `[1]` を選び、続けて `[1] Gemini` または `[2] OpenAI` を選ぶと、通常版を起動して `http://localhost:3000` を開きます。同じAPIで起動済みならブラウザーを開き、別のAPIを選んだ場合はサーバーを再起動します。画面には起動中のAPIと設定モデルを表示します。Geminiが別モデルに切り替わった場合、生成結果には実際に使ったモデル名を記録します。
 
 | 操作 | 内容 |
 | --- | --- |
@@ -18,11 +18,37 @@
 | `4` | ブラウザーを開く。停止中なら起動する |
 | `5` | 起動ログ・エラーログを開く |
 | `6` | プロジェクトフォルダーを開く |
+| `7` | APIキー・モデルの設定ファイルを開く |
 | `8` | デスクトップ・スタートメニューのショートカットを作成・修復する |
 | `9` | 状態を更新する |
 | `0` | 管理画面を閉じる。サーバーは継続する |
 
 サーバーはバックグラウンドで起動します。終了するときは `[2]` を選びます。
+
+## OpenAIキーの設定
+
+1. 管理画面の `[7]` で `.env.local` を開きます。
+2. `OPENAI_API_KEY=` の右側に取得したキーを貼り付け、保存します。
+3. 管理画面の `[3]`、続けて `[2] OpenAI` を選びます。
+4. ブラウザーで絵を描き、歌を生成します。この操作でOpenAI APIの利用料金が発生します。
+
+設定項目は次のとおりです。既存のGeminiキーは残したまま使えます。
+
+```dotenv
+AI_PROVIDER=gemini
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-6.1-terra
+OPENAI_REASONING_EFFORT=low
+LYRICS_PIPELINE_MODE=legacy
+```
+
+管理画面で選んだAPIは、そのサーバーが動いている間に適用されます。選択操作では `.env.local` の `AI_PROVIDER` を書き換えません。APIを指定せずに起動すると、環境変数または `.env.local` の設定を使います。コマンドからAPI指定なしで再起動した場合は、起動中のAPIを引き継ぎます。
+
+OpenAIの初期モデルは `gpt-6.1-terra` です。比較用に `gpt-6-luna` や `gpt-6.1-sol` へ変更できます。モデルの利用可否はキーの権限に依存します。設定変更後は再起動してください。
+
+OpenAIは現在、画像と描画順から歌詞を作る `legacy` 方式に対応しています。`phase1` はGemini用です。歌詞が楽譜に収まらない場合は最大2回作り直します。OpenAIの失敗時にGeminiへ自動で切り替えることはありません。歌声生成は引き続きVOICEVOXを使います。
+
+`.env.local` はGit管理外です。キーに `VITE_` を付けたり、バッチや共有用ファイルへ記載したりしないでください。設定画面を開くだけではAPI通信を行いません。起動時の「設定済み」はキーの入力有無を示し、認証成功を保証するものではありません。この切り替えはローカルのViteサーバーに適用され、公開サイトには反映されません。
 
 ## ショートカット
 
@@ -70,13 +96,15 @@ VOICEVOX_LOCAL_ACCESS_TOKEN=<32バイトの暗号学的乱数をbase64url化し�
 
 - `.dev-server.pid` だけを根拠にプロセスを停止しません。待受ポートと実行中の Node.js のスクリプトパスを確認します。
 - バッチ起動時・ショートカットからの起動時とも、開始に失敗した場合はメッセージを表示して入力を待ちます。コマンドとして実行する場合の終了コードは失敗時 `1` です。
-- バッチ、入口のPowerShell、管理処理はすべてGit管理対象です。Windows PowerShell 5.1向けに、日本語を含む `.ps1` は UTF-8 BOM付きで保存します。
+- バッチ、呼び出されるPowerShell、管理処理はすべてGit管理対象です。Windows PowerShell 5.1向けに、日本語を含む `.ps1` は UTF-8 BOM付きで保存します。
 
 ## コマンドからの操作と確認
 
 ```powershell
 .\manage-local.cmd -Action Status
 .\manage-local.cmd -Action Start -NoBrowser
+.\manage-local.cmd -Action Start -Provider OpenAI -NoBrowser
+.\manage-local.cmd -Action Restart -Provider Gemini -NoBrowser
 .\manage-local.cmd -Action Restart -NoBrowser
 .\manage-local.cmd -Action Stop
 ```

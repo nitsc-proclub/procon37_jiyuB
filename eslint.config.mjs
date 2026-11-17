@@ -12,6 +12,7 @@ export default [
       '**/.wrangler/**',
       '**/.local-resources/**',
       '**/.exhibition-build/**',
+      '**/logs/**',
       '**/demo-records/**',
       '**/worker-configuration.d.ts',
     ],

@@ -5,7 +5,7 @@ import { promises as fs } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
 import { defineConfig, loadEnv, type ViteDevServer, type PreviewServer } from "vite";
 import react from "@vitejs/plugin-react";
-import { createGeminiMiddleware } from "./server/geminiMiddleware";
+import { createLocalGenerationMiddleware } from "./server/localGenerationMiddleware";
 import { createVoicevoxMiddleware } from "./server/voicevoxMiddleware";
 import { createDemoRecordEventHub, type DemoRecordEventHub } from "./server/demoRecordEvents";
 import { demoRecordErrorStatus, DemoRecordRequestError, getRecordDirectory, getRecordFilePath, isAnimationClockAudio, isAnimationClockFile, validateDemoRecordName } from "./server/demoRecordFiles";
@@ -850,11 +850,11 @@ export default defineConfig(({ mode }) => {
         name: "local-api",
         configureServer(server) {
           server.middlewares.use(createVoicevoxMiddleware(env));
-          server.middlewares.use(createGeminiMiddleware(env));
+          server.middlewares.use(createLocalGenerationMiddleware(env));
           attachDemoRecords(server);
         },
         configurePreviewServer(server) {
-          server.middlewares.use(createGeminiMiddleware(env));
+          server.middlewares.use(createLocalGenerationMiddleware(env));
           attachDemoRecords(server);
         },
         closeBundle() {

@@ -10,7 +10,12 @@ Copy-Item -LiteralPath (Join-Path $project 'manage-local.cmd') -Destination (Joi
 $fixture = @'
 const http = require('node:http');
 const port = Number(process.argv[process.argv.indexOf('--port') + 1]);
-http.createServer((_req, res) => res.end('manager test')).listen(port, '0.0.0.0');
+http.createServer((req, res) => {
+  if (req.url === '/api/local/generation-config') {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ provider: process.env.AI_PROVIDER || 'gemini', model: 'fixture-model', keyConfigured: false }));
+  } else res.end('manager test');
+}).listen(port, '0.0.0.0');
 '@
 [IO.File]::WriteAllText((Join-Path $sandbox 'node_modules/vite/bin/vite.js'), $fixture)
 [IO.File]::WriteAllText((Join-Path $sandbox 'foreign.cjs'), $fixture)
@@ -35,9 +40,10 @@ function Read-Capture([string]$Path) {
     try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
 }
 
-function Run([string]$Action, [string]$InputText = '', [string]$Route = 'Wrapper') {
+function Run([string]$Action, [string]$InputText = '', [string]$Route = 'Wrapper', [string]$Provider = '') {
     $executable = 'powershell.exe'
     $arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $wrapper + '" -Action ' + $Action + ' -NormalPort ' + $port + ' -NoBrowser'
+    if ($Provider) { $arguments += ' -Provider ' + $Provider }
     if ($Route -eq 'Batch') {
         $executable = $env:ComSpec
         $arguments = '/d /c ""' + (Join-Path $sandbox '超えかき歌_サーバー管理セット/超えかき歌！_管理.bat') + '" -Action ' + $Action + ' -NormalPort ' + $port + ' -NoBrowser"'
@@ -48,7 +54,7 @@ function Run([string]$Action, [string]$InputText = '', [string]$Route = 'Wrapper
     # Background servers can inherit pipe handles on Windows; use files so their
     # lifetime cannot keep ReadToEndAsync pending after the launcher has exited.
     $capture = Join-Path $sandbox ([guid]::NewGuid().ToString('N'))
-    [IO.File]::WriteAllText(($capture + '.input'), $InputText + "`r`n", $utf8Bom)
+    [IO.File]::WriteAllText(($capture + '.input'), $InputText + "`r`n", [Text.UTF8Encoding]::new($false))
     $process = Start-Process -FilePath $executable -ArgumentList $arguments -WorkingDirectory $env:TEMP -WindowStyle Hidden -RedirectStandardInput ($capture + '.input') -RedirectStandardOutput ($capture + '.out') -RedirectStandardError ($capture + '.err') -PassThru
     try {
         $null = $process.Handle # Cache the handle before exit so Windows PowerShell retains ExitCode.
@@ -58,7 +64,7 @@ function Run([string]$Action, [string]$InputText = '', [string]$Route = 'Wrapper
 }
 
 function ListeningPid {
-    $connection = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1
+    $connection = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Where-Object { $_.RemotePort -eq 0 -and $_.OwningProcess -gt 0 } | Select-Object -First 1
     if ($connection) { return $connection.OwningProcess }
     return 0
 }
@@ -74,10 +80,25 @@ try {
     $firstPid = ListeningPid
     $result = Run 'Start'
     Assert ($result.Code -eq 0 -and (ListeningPid) -eq $firstPid) 'Repeated Start does not create a duplicate server'
+    $result = Run 'Start' '' 'Wrapper' 'OpenAI'
+    Assert ($result.Code -eq 0 -and (ListeningPid) -ne $firstPid) 'Selecting OpenAI replaces the Gemini server'
+    $firstPid = ListeningPid
+    $result = Run 'Status'
+    Assert ($result.Output -match 'Provider\s*:\s*openai' -and $result.Output -match 'fixture-model') 'Status reads provider and model from the running server'
+    $result = Run 'Start' '' 'Wrapper' 'OpenAI'
+    Assert ($result.Code -eq 0 -and (ListeningPid) -eq $firstPid) 'Selecting the active provider does not restart'
     $result = Run 'Restart'
     Assert ($result.Code -eq 0 -and (ListeningPid) -gt 0 -and (ListeningPid) -ne $firstPid) 'Restart replaces the managed server'
+    $result = Run 'Status'
+    Assert ($result.Output -match 'Provider\s*:\s*openai') 'Restart preserves the active provider'
+    $result = Run 'Start' '' 'Wrapper' 'Gemini'
+    $result = Run 'Status'
+    Assert ($result.Output -match 'Provider\s*:\s*gemini') 'Switching back to Gemini works'
     $result = Run 'Stop' '' 'Root'
     Assert ($result.Code -eq 0 -and (ListeningPid) -eq 0) 'Root launcher stops the managed server'
+    $result = Run 'Menu' "1`n2`n`n0"
+    Assert ($result.Code -eq 0 -and $result.Output -match 'openai / fixture-model') 'Interactive menu selects OpenAI and starts the server'
+    $result = Run 'Stop'
 
     $npmEntry = Join-Path $sandbox 'node_modules/.bin/../vite/bin/vite.js'
     $npmStyle = Start-Process node.exe -ArgumentList @(('"' + $npmEntry + '"'), '--port', [string]$port) -WindowStyle Hidden -PassThru

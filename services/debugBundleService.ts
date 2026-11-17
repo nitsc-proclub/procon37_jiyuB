@@ -61,6 +61,7 @@ export const redactDebugBundleText = (value: string | null, maxLength = MAX_ERRO
   if (!value) return null;
 
   const redacted = value
+    .replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}/g, "[REDACTED_OPENAI_API_KEY]")
     .replace(/AIza[\w-]{20,}/g, "[REDACTED_GEMINI_API_KEY]")
     .replace(/\bBearer\s+[\w.~+\/-]+=*/gi, "Bearer [REDACTED]")
     .replace(/([?&](?:key|api[_-]?key|token|authorization|password|secret)=)[^&#\s]+/gi, "$1[REDACTED]")
